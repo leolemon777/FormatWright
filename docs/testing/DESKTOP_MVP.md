@@ -11,6 +11,7 @@ The Tauri 2 desktop application now invokes the same `formatwright-core::prepare
 - Convert can **Add to queue** (`queue_desktop_conversion`) which persists an immutable Plan as `Queued` without immediate execution.
 - Start and Add-to-queue carry the exact visible preview `plan_hash`; the backend reprepares from the current input, options, and engine identities and rejects missing or stale approval before creating a job.
 - Jobs can **Run queue window**, **Pause after current** (finish-current), and **Stop now** (immediate) via shared `JobExecutionService` / `QueueWindowControl`.
+- Immediate pause moves admitted work to recoverable `Interrupted / QUEUE_PAUSED_IMMEDIATE`; Jobs shows **Resume** for interrupted/blocked jobs and **Retry** for failed/cancelled jobs. Requeued work is re-inspected and runs in the next queue window; successful terminal jobs cannot be requeued.
 - Typed Plan steps show engine, operation, loss class, capability, preserved/changed/dropped/unknown fields, and expert arguments without accepting shell text.
 - A cancellation command reaches the active Rust `CancellationToken` and process-tree runner for single-shot converts; queue pause modes use `QueueWindowControl`.
 - SQLite jobs live under the Tauri application data directory. On startup, active jobs become interrupted instead of disappearing.
@@ -25,7 +26,7 @@ The Tauri 2 desktop application now invokes the same `formatwright-core::prepare
 
 - `pnpm --dir apps/desktop test -- --run`: two files and six tests pass, covering the 10,000-job coalesced projection, duplicate-batch refusal, target recommendations, non-overwriting output suggestions, PDF page-directory suggestions, and typed error parsing.
 - `pnpm --dir apps/desktop build`: TypeScript project build and Vite production bundle pass.
-- Current ordinary Rust baseline: 101 tests pass (80 core, 7 schema-contract, 10 desktop and 4 engine-SDK tests), including exact preview approval, queue failure drain, report-before-terminal persistence/recovery, engine-pack activation, atomic batch queueing, cancellation at the validation boundary, deterministic resource admission, and the bounded queue bridge. The separate 10,000-conversion release gate is opt-in.
+- Current ordinary Rust baseline: 103 tests pass (81 core, 7 schema-contract, 11 desktop and 4 engine-SDK tests), including exact preview approval, in-flight immediate-pause recovery, Desktop Resume/Retry policy, queue failure drain, report-before-terminal persistence/recovery, engine-pack activation, atomic batch queueing, cancellation at the validation boundary, deterministic resource admission, and the bounded queue bridge. The separate 10,000-conversion release gate is opt-in.
 - Workspace Clippy with warnings denied passes for the desktop IPC and persistence implementation.
 - `formatwright-desktop.exe` starts a native window titled `FormatWright`, remains responsive, and is then terminated by the harness.
 - Edge headless rendered the local production UI at 1440×1000. The captured Convert page, including native-picker affordances, was visually checked for navigation, hierarchy, clipping, contrast, disabled controls, bilingual typography, and responsive column boundaries.
@@ -37,4 +38,4 @@ Generated screenshots and application data are local development artifacts and a
 
 This is Windows development evidence, not Desktop Beta certification. The picker plugin, its least-privilege capabilities, frontend calls, TypeScript types, Rust registration, and native executable startup are verified. The Orca computer-use runtime was unavailable (`runtime_unavailable`), so automated interaction with the native picker and accessibility tree could not be performed in this run; keyboard/screen-reader behavior still needs a live assistive-technology pass.
 
-Remaining Phase 4 work includes recovery banner, filtered/bulk history actions, report export/redaction controls, open-file/open-folder actions, folder-as-input, a certified-pack download/install experience backed by the Phase 5 signature keyring, Windows context-menu registration, macOS/Linux integration, RTL UI fixtures, signed installers, and the three-minute first-user study.
+Remaining Phase 4 work includes a startup recovery banner, filtered/bulk history actions, report export/redaction controls, open-file/open-folder actions, folder-as-input, a certified-pack download/install experience backed by the Phase 5 signature keyring, Windows context-menu registration, macOS/Linux integration, RTL UI fixtures, signed installers, and the three-minute first-user study.

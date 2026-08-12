@@ -324,7 +324,12 @@ impl JobExecutionService {
                         }
                     }
                     Err(error) if error.code == ErrorCode::Cancelled => {
-                        store.transition(outcome.job_id, JobState::Cancelled, "QUEUE_CANCELLED")?;
+                        let (state, code) = if control.workers_cancelled() {
+                            (JobState::Interrupted, "QUEUE_PAUSED_IMMEDIATE")
+                        } else {
+                            (JobState::Cancelled, "QUEUE_CANCELLED")
+                        };
+                        store.transition(outcome.job_id, state, code)?;
                         cancelled = cancelled.saturating_add(1);
                     }
                     Err(_) => {
@@ -362,7 +367,7 @@ impl JobExecutionService {
             blocked,
             failed,
             cancelled,
-            stopped: terminal < jobs.len(),
+            stopped: control.admission_cancelled() || terminal < jobs.len(),
             parallelism: policy.max_processes,
             peak_active,
         })
@@ -894,6 +899,54 @@ mod tests {
             store.get_job(job_id).expect("read").expect("exists").state,
             JobState::Queued
         );
+    }
+
+    #[tokio::test]
+    async fn in_flight_immediate_pause_is_recoverable_in_the_next_window() {
+        let suite = tempdir().expect("suite");
+        let mut store = SqliteJobStore::open(suite.path().join("jobs.sqlite3")).expect("store");
+        let input = suite.path().join("item.json");
+        let output = suite.path().join("item.yaml");
+        let job_id =
+            queue_structured_job_with_test_controls(&mut store, &input, &output, Some(250), false)
+                .await;
+        let control = QueueWindowControl::new();
+        let pause = control.clone();
+        let pause_task = tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            pause.pause_immediate();
+        });
+
+        let paused =
+            JobExecutionService::run_window_observed(&mut store, 8, 1, control, |_, _| Ok(()))
+                .await
+                .expect("pause window");
+        pause_task.await.expect("pause task");
+        assert!(paused.stopped);
+        assert_eq!(paused.cancelled, 1);
+        let details = store
+            .get_job_details(job_id)
+            .expect("read details")
+            .expect("details");
+        assert_eq!(details.job.state, JobState::Interrupted);
+        assert_eq!(
+            details.events.last().expect("last event").code,
+            "QUEUE_PAUSED_IMMEDIATE"
+        );
+        assert!(!output.exists());
+
+        store
+            .transition(job_id, JobState::Queued, "DESKTOP_JOB_RESUMED")
+            .expect("resume interrupted job");
+        let resumed = JobExecutionService::run_window(&mut store, 8, 1, CancellationToken::new())
+            .await
+            .expect("resume window");
+        assert_eq!(resumed.completed, 1);
+        assert_eq!(
+            store.get_job(job_id).expect("read").expect("exists").state,
+            JobState::Completed
+        );
+        assert!(output.is_file());
     }
 
     #[tokio::test]

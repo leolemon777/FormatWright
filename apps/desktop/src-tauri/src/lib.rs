@@ -433,6 +433,41 @@ fn cancel_desktop_job(
     }
 }
 
+fn requeue_job(store: &mut SqliteJobStore, job_id: Uuid) -> formatwright_core::Result<JobRecord> {
+    let job = store.get_job(job_id)?.ok_or_else(|| {
+        formatwright_core::FormatWrightError::new(
+            formatwright_core::ErrorCode::StorageFailed,
+            formatwright_core::Stage::Store,
+            format!("Job does not exist: {job_id}"),
+            "Refresh the job list.",
+        )
+    })?;
+    let code = match job.state {
+        JobState::Interrupted | JobState::Blocked => "DESKTOP_JOB_RESUMED",
+        JobState::Failed | JobState::Cancelled => "DESKTOP_JOB_RETRIED",
+        state => {
+            return Err(formatwright_core::FormatWrightError::new(
+                formatwright_core::ErrorCode::PolicyBlocked,
+                formatwright_core::Stage::Store,
+                format!("Job in state {state:?} cannot be queued again"),
+                "Only interrupted, blocked, failed, or cancelled jobs can be resumed or retried.",
+            ));
+        }
+    };
+    store.transition(job_id, JobState::Queued, code)
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+fn requeue_desktop_job(
+    state: tauri::State<'_, DesktopState>,
+    job_id: String,
+) -> Result<JobRecord, String> {
+    let job_id = Uuid::parse_str(&job_id).map_err(|error| error.to_string())?;
+    let mut guard = lock(&state.store)?;
+    requeue_job(require_store(&mut guard)?, job_id).map_err(serialize_error)
+}
+
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)]
 fn list_desktop_jobs(
@@ -986,6 +1021,7 @@ pub fn run() {
             pause_desktop_queue_window,
             cancel_desktop_queue_window,
             cancel_desktop_job,
+            requeue_desktop_job,
             list_desktop_jobs,
             get_desktop_report,
             list_desktop_presets,
@@ -1015,7 +1051,8 @@ mod tests {
     use super::{
         DesktopConversionRequest, DesktopEngineRegistryEntry, backup_path, bundled_manifest_paths,
         load_preset_library, persist_preset_library, persist_report_before_terminal,
-        prepare_approved_desktop_conversion, read_report, registered_manifest_paths, save_report,
+        prepare_approved_desktop_conversion, read_report, registered_manifest_paths, requeue_job,
+        save_report,
     };
 
     fn plan(output_path: PathBuf) -> Plan {
@@ -1219,6 +1256,70 @@ mod tests {
         assert_eq!(
             read_report(&reports, job_id).expect("read report"),
             Some(validation)
+        );
+    }
+
+    #[test]
+    fn desktop_requeues_recoverable_jobs_and_rejects_terminal_success() {
+        let suite = tempdir().expect("suite");
+        let mut store = SqliteJobStore::open(suite.path().join("jobs.sqlite3")).expect("store");
+
+        let interrupted_output = suite.path().join("interrupted.yaml");
+        let interrupted = store
+            .create_job(
+                suite.path().join("interrupted.json"),
+                &interrupted_output,
+                &plan(interrupted_output.clone()),
+            )
+            .expect("create interrupted job");
+        store
+            .transition(interrupted.id, JobState::Running, "TEST_STARTED")
+            .expect("start interrupted job");
+        store
+            .transition(interrupted.id, JobState::Interrupted, "TEST_INTERRUPTED")
+            .expect("interrupt job");
+        let resumed = requeue_job(&mut store, interrupted.id).expect("resume job");
+        assert_eq!(resumed.state, JobState::Queued);
+        let details = store
+            .get_job_details(interrupted.id)
+            .expect("read resumed details")
+            .expect("resumed details");
+        assert_eq!(
+            details.events.last().expect("resume event").code,
+            "DESKTOP_JOB_RESUMED"
+        );
+
+        let failed_output = suite.path().join("failed.yaml");
+        let failed = store
+            .create_job(
+                suite.path().join("failed.json"),
+                &failed_output,
+                &plan(failed_output.clone()),
+            )
+            .expect("create failed job");
+        store
+            .transition(failed.id, JobState::Running, "TEST_STARTED")
+            .expect("start failed job");
+        store
+            .transition(failed.id, JobState::Failed, "TEST_FAILED")
+            .expect("fail job");
+        let retried = requeue_job(&mut store, failed.id).expect("retry job");
+        assert_eq!(retried.state, JobState::Queued);
+
+        let completed = validating_job(&mut store, suite.path());
+        store
+            .transition(completed, JobState::Completed, "TEST_COMPLETED")
+            .expect("complete job");
+        let error = requeue_job(&mut store, completed)
+            .expect_err("successful terminal job must not be requeued");
+        assert_eq!(error.code, formatwright_core::ErrorCode::PolicyBlocked);
+        assert_eq!(
+            store
+                .get_job(completed)
+                .expect("read")
+                .expect("exists")
+                .state,
+            JobState::Completed
         );
     }
 

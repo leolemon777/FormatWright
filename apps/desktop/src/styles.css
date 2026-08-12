@@ -97,6 +97,8 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .job-list { display: grid; margin-top: 10px; }
 .job-list article { display: grid; grid-template-columns: 1fr 120px auto; align-items: center; gap: 14px; border-bottom: 1px solid #292f28; padding: 13px 0; }
 .job-list article > div { display: flex; min-width: 0; flex-direction: column; }
+.job-actions { display: flex; justify-content: flex-end; gap: 7px; }
+.job-actions .primary { color: #101410; background: #b9ff66; }
 .job-list strong, .job-list small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .job-list small { margin-top: 4px; color: #788175; }
 .status { font: 700 10px ui-monospace, monospace; text-transform: uppercase; }

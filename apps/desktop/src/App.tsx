@@ -185,6 +185,7 @@ export default function App() {
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [presetNotice, setPresetNotice] = useState<string | null>(null);
   const [presetBusy, setPresetBusy] = useState(false);
+  const [jobActionBusy, setJobActionBusy] = useState<string | null>(null);
   const mounted = useRef(true);
   const copy = messages[language];
 
@@ -421,6 +422,20 @@ export default function App() {
       setJobs(await invoke<JobRecord[]>("list_desktop_jobs", { limit: 100 }));
     } catch {
       // Browser-only development and first setup can render without an IPC backend.
+    }
+  }
+
+  async function requeueJob(job: JobRecord) {
+    setJobActionBusy(job.id);
+    setError(null);
+    try {
+      await invoke<JobRecord>("requeue_desktop_job", { jobId: job.id });
+      setQueueReport(null);
+      await refreshJobs();
+    } catch (reason) {
+      setError(parseDesktopError(reason));
+    } finally {
+      setJobActionBusy(null);
     }
   }
 
@@ -704,7 +719,7 @@ export default function App() {
               {copy.queueReport}: selected {queueReport.selected} · completed {queueReport.completed} · warning {queueReport.warning} · blocked {queueReport.blocked} · failed {queueReport.failed} · cancelled {queueReport.cancelled} · peak {queueReport.peak_active}/{queueReport.parallelism}{queueReport.stopped ? " · stopped" : ""}
             </p>
           )}
-          <div className="job-list">{jobs.length === 0 ? <p className="empty">{copy.historyEmpty}</p> : jobs.map((job) => <article key={job.id}><div><strong>{job.output_path}</strong><small>{job.input_path}</small></div><span className={`status status-${job.state}`}>{job.state}</span><button type="button" onClick={() => loadReport(job.id)}>{copy.selectJob}</button></article>)}</div>
+          <div className="job-list">{jobs.length === 0 ? <p className="empty">{copy.historyEmpty}</p> : jobs.map((job) => { const resumable = job.state === "interrupted" || job.state === "blocked"; const retryable = job.state === "failed" || job.state === "cancelled"; return <article key={job.id}><div><strong>{job.output_path}</strong><small>{job.input_path}</small></div><span className={`status status-${job.state}`}>{job.state}</span><span className="job-actions">{(resumable || retryable) && <button className="primary" type="button" disabled={jobActionBusy !== null || busy === "queue-run"} onClick={() => requeueJob(job)}>{jobActionBusy === job.id ? (resumable ? copy.resumingJob : copy.retryingJob) : (resumable ? copy.resumeJob : copy.retryJob)}</button>}<button type="button" onClick={() => loadReport(job.id)}>{copy.selectJob}</button></span></article>; })}</div>
           <details className="benchmark"><summary>{copy.benchmark}</summary><button type="button" onClick={runBenchmark}>{copy.benchmark}</button>{benchmark && <p>{benchmark.total_jobs.toLocaleString()} / {benchmark.emitted_batches} batches / {benchmark.elapsed_milliseconds} ms</p>}<p>{queueSnapshot.totalJobs.toLocaleString()} projected · {queueSnapshot.completed.toLocaleString()} completed</p></details>
         </section>
       )}

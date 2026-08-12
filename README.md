@@ -6,7 +6,7 @@ FormatWright is an open-source, local-first file conversion platform. It is desi
 
 ## Status
 
-FormatWright is under active **Windows development Alpha**. The current installer contains no conversion engine and is not yet an out-of-box usable release. It is not Public Beta or Certified, and it is not ready for production data.
+FormatWright is under active **Windows development Alpha**. The unsigned Windows development installer embeds pinned PDF and Media Starter packs and has passed local real-file conversion, but clean-machine offline certification, complete engine licensing/SBOM work, trusted signatures, upgrade/rollback, and code signing are still pending. It is not Public Beta or Certified, and it is not ready for production data.
 
 - Product scope and release gates: [SPEC_PLAN.md](SPEC_PLAN.md)
 - Living completed / pending checklist, architecture, and ordered gates: [docs/MASTER_EXECUTION_PLAN.md](docs/MASTER_EXECUTION_PLAN.md) (see §1.1 progress snapshot)
@@ -14,10 +14,10 @@ FormatWright is under active **Windows development Alpha**. The current installe
 
 **Latest engineering milestones (2026-08-12):**
 1. CLI durable-queue execution runs through shared `JobExecutionService` in Core.
-2. Desktop can enqueue Plans, run the same durable queue window, persist reports, and expose finish-current/immediate pause controls.
-3. Release audit identified missing engine delivery and unsafe ambient-PATH fallback as P1 defects R-008/R-009.
+2. Desktop binds execution to the visible Plan hash, persists reports before terminal state, and supports recoverable immediate pause plus per-job Resume/Retry.
+3. Release resolves only activated exact pack paths; capability-driven UI and backend gates agree on which routes are runnable.
 
-The next gate is a verified Windows Starter pack, exact-path Release resolution, capability-driven UI, and offline clean-machine conversion. Queue consistency and broader Desktop Beta controls follow that usable vertical slice.
+The next engineering gate closes Windows path-identity and long-lived cancellation/concurrency defects, then adds maintenance, bulk recovery, and live queue access. Release certification still requires a clean offline Windows VM and the supply-chain work above.
 
 ## Product promises
 

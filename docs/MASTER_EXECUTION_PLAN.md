@@ -18,7 +18,7 @@
 - **未开始**：只有规格或方向，没有可运行实现。
 - **发布阻断**：不完成就不能发布 Public Beta；不是一般优化项。
 
-当前产品结论：**FormatWright 已具备 Windows 自包含开发候选：Release 内嵌并首次启动安装 PDF/Media Starter，生产只解析激活 pack 的精确路径，UI 与后端共同按 capability snapshot 门控；真实 PDF→PNG/JPG、GIF 与结构化链路已在本机通过；R-001 控制面错误收口、R-002 Plan 批准、R-003 报告/终态一致性与 R-010 PDF 验证缺陷已关闭。** 但这仍不是 Public Beta：R-008/R-009 尚缺离线干净虚拟机、完整引擎 SBOM/许可证与源码义务、可信签名/吊销、升级回滚和正式代码签名证据；R-004 至 R-007 仍按顺序阻断发布。不得用于唯一副本或不可替代数据，也不得宣称“已认证”或“正式发布”。
+当前产品结论：**FormatWright 已具备 Windows 自包含开发候选：Release 内嵌并首次启动安装 PDF/Media Starter，生产只解析激活 pack 的精确路径，UI 与后端共同按 capability snapshot 门控；真实 PDF→PNG/JPG、GIF 与结构化链路已在本机通过；R-001 至 R-004 与 R-010 已关闭，立即暂停的活跃任务可在 Desktop 恢复并由下一窗口继续。** 但这仍不是 Public Beta：R-008/R-009 尚缺离线干净虚拟机、完整引擎 SBOM/许可证与源码义务、可信签名/吊销、升级回滚和正式代码签名证据；R-005 至 R-007 仍按顺序阻断发布。不得用于唯一副本或不可替代数据，也不得宣称“已认证”或“正式发布”。
 
 ### 1.1 近期进度快照（2026-08-12）
 
@@ -32,7 +32,7 @@
 - [x] Desktop 接入同一执行器：`queue_desktop_conversion`、`run_desktop_queue_window`、`pause_desktop_queue_window`（finish-current / immediate）、`cancel_desktop_queue_window`；Convert「加入队列」、Jobs「运行 / 完成当前后暂停 / 立即停止」。
 - [x] 队列窗口通过 `run_window_observed` 在终态前提交 ValidationReport 文件（Desktop `reports/`）。
 - [x] Core `QueueWindowControl`：finish-current 只停准入；immediate 同时取消活跃 worker。
-- [x] 2026-08-12 最新验证：101 项普通 Rust 测试、6 项前端测试、TypeScript、生产构建、Rustfmt、Clippy、仓库合同与 pnpm production audit 通过；10k release test 按设计默认忽略。
+- [x] 2026-08-12 最新验证：103 项普通 Rust 测试、6 项前端测试、TypeScript、生产构建、Rustfmt、Clippy、仓库合同与 pnpm production audit 通过；10k release test 按设计默认忽略。
 - [x] 初次审查确认仓库没有提交；已用验证后的完整快照建立首个可回滚 Git 基线。
 - [x] 建立首个 Git 基线 `412c475`；Release/Development 引擎隔离提交 `7782e47`。
 - [x] 实现并验证 Release 精确 pack 路径、Windows 脚本包装拒绝、Desktop/Core capability snapshot 双重门控。
@@ -46,7 +46,7 @@
 |---|---|---|---|
 | 1 | 建立首个可回滚 Git 基线、保护分支和缺陷台账 | Gate 0 | 本地基线完成；远端保护待仓库托管 |
 | 2 | 关闭 R-008/R-009：Starter 引擎包、Release 精确解析、能力门控、干净机离线真实转换 | Gate U | 实现与本机 E2E 完成；认证/干净机待完成 |
-| 3 | 关闭审查 P1：worker 失败收口、Plan hash 批准、报告/终态顺序、immediate pause 可恢复 | Gate 1 | R-001/R-002/R-003 已关闭；R-004 待完成 |
+| 3 | 关闭审查 P1：worker 失败收口、Plan hash 批准、报告/终态顺序、immediate pause 可恢复 | Gate 1 | R-001/R-002/R-003/R-004 已关闭 |
 | 4 | 补 Windows 路径预约规范化、运行中 pause/failure-injection 测试、取消桥接任务生命周期 | Gate 1 | 未开始 |
 | 5 | 抽取完整 `ConversionService` 和 `ReportService`；删除入口层重复编排 | Gate 1 | 部分 |
 | 6 | Desktop 恢复横幅、批量取消/重试、实时队列读取 | Gate 1 / 2 | 未开始 |
@@ -66,8 +66,8 @@
 | Phase 0 基础 | 已完成 | Monorepo、Apache-2.0、6 个公共 Schema、6 个 ADR、三平台 CI 配置、贡献/安全/隐私文档 | 名称/商标、最低 OS、签名账户等产品决策仍需冻结 |
 | Phase 1 架构 Spike | Windows 已完成；跨平台部分完成 | 安全子进程、10 GiB 稀疏文件、partial/原子提交、SQLite 恢复、10k WebView 投影、引擎 Manifest | 物理 10 GiB、macOS/Linux 真实进程树与引擎分发认证 |
 | Phase 2 Core + CLI Alpha | Windows 自包含候选完成；认证未完成 | Inspect/Plan/Convert/Batch/Doctor/Jobs/Engines；Starter PDF/Media；能力门控；12 条工作流均有开发环境实验路径 | R-008/R-009 干净机/供应链关闭证据、完整语料与跨平台工作流认证 |
-| Phase 3 队列/恢复/质量 | Windows 开发门槛完成；失败收口待修 | 10k 持久任务与真实转换、确定性资源调度、暂停/恢复/重试、混合负载 RSS/WAL 证据、CLI/Desktop 已委托 `JobExecutionService` | 审查 P1、多连接预约竞态、10k 混合负载、公平性/延迟、跨平台恢复 |
-| Phase 4 Desktop Beta | 部分完成 | Tauri/React、双语普通/专家模式、原生选择器、Plan/Jobs/Reports/Doctor、持久队列窗口与两种 pause、引擎导入、可编辑预设 | 可恢复 immediate pause、恢复横幅/批量重试、文件夹入口、系统右键/Finder/Linux 集成、完整可访问性与可用性 |
+| Phase 3 队列/恢复/质量 | Windows 开发门槛完成；长期并发待修 | 10k 持久任务与真实转换、确定性资源调度、可恢复暂停/恢复/重试、混合负载 RSS/WAL 证据、CLI/Desktop 已委托 `JobExecutionService` | Windows 路径身份、长生命周期取消、多连接预约竞态、10k 混合负载、公平性/延迟、跨平台恢复 |
+| Phase 4 Desktop Beta | 部分完成 | Tauri/React、双语普通/专家模式、原生选择器、Plan/Jobs/Reports/Doctor、持久队列窗口、可恢复 immediate pause、单任务 Resume/Retry、引擎导入、可编辑预设 | 恢复横幅/批量重试、文件夹入口、系统右键/Finder/Linux 集成、完整可访问性与可用性 |
 | Phase 5 安全与发布 | 部分完成 | fuzz、依赖审计、cargo-deny、SPDX SBOM、零套接字观测、离线 NSIS 安装烟测 | 当前源码重打包、可信签名/吊销、引擎 SBOM、OS 强制隔离、升级回滚、macOS/Linux 包 |
 | Phase 6 API/MCP | 未开始 | 规格方向已确定 | Axum、OpenAPI、SSE、Webhook、Worker、目录授权、MCP tools |
 | Phase 7 浏览器/企业 | 未开始 | 范围原则已确定 | WASM 小任务、企业策略/SSO/审计/离线升级 |
@@ -111,7 +111,7 @@
 - [x] 递归图像批处理保留目录、拒绝目录链接、冲突预约、暂停后跨进程恢复并重检输入/引擎。
 - [x] 九任务结构化/图片/视频混合队列观测到两个真实 FFmpeg 进程并发，记录父进程/进程树 RSS 和 WAL 峰值。
 - [x] Ctrl+C 停止新任务准入并取消活跃进程树；`Validating → Cancelled` 有回归测试。
-- [x] 共享 `JobExecutionService::run_window`：CLI `jobs run` 与 Desktop `run_desktop_queue_window` 已委托；两种 pause 控制已接入，恢复/批量重试 UI 与失败路径收口未完成。
+- [x] 共享 `JobExecutionService::run_window`：CLI `jobs run` 与 Desktop `run_desktop_queue_window` 已委托；两种 pause 控制、失败收口与单任务 Resume/Retry UI 已接入；恢复横幅和批量动作待完成。
 
 ### 3.4 Desktop
 
@@ -143,7 +143,7 @@
 
 - [x] `cargo fmt --all --check`。
 - [x] `cargo clippy --workspace --all-targets --all-features -- -D warnings`。
-- [x] 101 项普通 Rust 测试通过（80 Core、7 Schema、10 Desktop、4 Engine SDK）；另有 1 项昂贵的 10k 发布测试按设计默认忽略，已有显式 release 运行证据。
+- [x] 103 项普通 Rust 测试通过（81 Core、7 Schema、11 Desktop、4 Engine SDK）；另有 1 项昂贵的 10k 发布测试按设计默认忽略，已有显式 release 运行证据。
 - [x] 6 项前端测试、TypeScript check 和生产构建通过。
 - [x] Rust 1.88 MSRV 全 workspace locked check 通过。
 - [x] 6 个 Schema、12 个黄金工作流和必需文件的仓库合同检查通过。
@@ -166,16 +166,16 @@
 
 ### 4.2 P1：Core、队列与验证
 
-- [x] 将 CLI 的队列执行循环抽成共享 `JobExecutionService`（`crates/core/src/application/job_execution.rs`）；CLI `jobs run` 与 Desktop 队列窗口已委托，两种 pause 控制和队列报告落盘已接入；恢复横幅、批量动作、可恢复 immediate 语义与失败收口仍未完成。
+- [x] 将 CLI 的队列执行循环抽成共享 `JobExecutionService`（`crates/core/src/application/job_execution.rs`）；CLI `jobs run` 与 Desktop 队列窗口已委托，两种 pause、队列报告落盘、失败收口和单任务恢复/重试已接入；恢复横幅与批量动作仍未完成。
 - [x] **R-001 worker 失败收口**：任何 prepare、milestone、report callback、terminal transition 或 join 失败都会先停止准入、取消并 drain 活跃 worker，将未完成任务转为 `Interrupted / CONTROL_PLANE_FAILED`，释放调度资源后再返回原错误；报告存储失败和 worker panic 双 worker 故障注入通过。
 - [x] **R-002 Plan 批准边界**：Desktop 分离式预览的执行与入队必须提交已预览的 `plan_hash`；Core 重新检查输入/引擎后仅在 hash 相同才执行，缺失批准或发生变化均拒绝。CLI 单命令转换把参数提交与执行视为同一次显式批准；未来 API/MCP 必须复用相同 Core 合同。
 - [x] **R-003 Report/终态一致性**：立即转换与队列统一为“输出验证并提交 → 报告原子持久化 → SQLite 终态”；报告失败时即时任务进入 `Interrupted / REPORT_PERSIST_FAILED`，已有报告可原子替换并从中断 backup 恢复。
-- [ ] **R-004 pause/retry 语义**：finish-current 完成活跃项；immediate 取消活跃步骤后进入 `interrupted` 或可自动重排的明确状态；Desktop 必须提供 retry/resume，不能让“暂停”产生只能借助 CLI 恢复的 Cancelled 作业。
+- [x] **R-004 pause/retry 语义**：finish-current 完成活跃项；immediate 停止准入并把活跃步骤记为 `Interrupted / QUEUE_PAUSED_IMMEDIATE`，未准入项保持 Queued；Desktop 对 interrupted/blocked 提供 Resume，对 failed/cancelled 提供 Retry，下一队列窗口重检后继续。
 - [ ] **R-005 Windows 输出身份**：预约与提交统一处理大小写、尾随点/空格、保留设备名、extended path、符号链接/重解析点和不存在父目录；相同 Win32 目标只能有一个预约。
 - [ ] **R-006 长生命周期与故障注入**：关闭 `run_window` cancellation linker 的悬挂 task；新增运行中两种 pause、report 目录只读、SQLite 写失败、worker panic、锁 poison、窗口关闭和进程强退测试。
 - [ ] SQLite 多连接并发预约/重试竞态测试；定义单 writer、busy timeout、事务隔离和跨进程锁策略。
 - [ ] 任务级幂等 key、批次模型、稳定 selection query 和批量动作审计。
-- [ ] 两种 pause 的运行中语义与并发取消/崩溃测试；未准入任务必须保持 queued，活跃任务必须进入可解释且可恢复的状态。
+- [x] immediate pause 的运行中恢复语义与未准入保持 queued 已有回归；finish-current 的真正运行中时序与更长生命周期/真实子进程断言归入 R-006。
 - [ ] 10,000 混合图片/媒体/数据负载；记录吞吐、公平性、P50/P95 队列延迟、RSS、临时空间、DB/WAL。
 - [ ] 真实物理 10 GiB 顺序读写门禁、低内存机器、磁盘满、权限丢失、目标卷消失和 removable drive。
 - [ ] 目的路径在验证后、提交前被外部创建的竞态测试；目录输出多文件提交恢复。
@@ -186,7 +186,7 @@
 ### 4.3 P1：Desktop Beta
 
 - [ ] 文件夹作为一等输入，展示枚举/跳过/目录映射预览。
-- [ ] 桌面真正执行持久队列，而不是仅显示历史；队列级开始、finish-current pause、immediate pause 已落地（`QueueWindowControl`）；恢复横幅和批量重试仍缺。
+- [x] 桌面真正执行持久队列：队列级开始、finish-current pause、可恢复 immediate pause，以及单任务 Resume/Retry 已落地；恢复横幅和批量重试仍缺。
 - [ ] 状态筛选、搜索、分页/虚拟化、稳定选择、批量重试失败项、跳过完成项。
 - [ ] “仅重新验证”、导出 Plan/任务配方/ValidationReport、打开输出目录、partial 清理入口。
 - [ ] 逐阶段进度、速度、ETA 置信度和调度原因；不伪造引擎无法提供的百分比。
@@ -538,7 +538,7 @@ API 不直接接受宿主任意路径。请求引用预先授权的 workspace/ro
 ### Gate 1：共享应用服务与队列可靠性（1–2 周）
 
 - [x] 抽取 `JobExecutionService`（CLI + Desktop 窗口执行 + ValidationReport 观察回调 + `QueueWindowControl` 两种 pause）；`ConversionService` 仍为 `workflow::prepare_conversion`，CLI 本地重复实现尚未删除。
-- [ ] 依次关闭 R-001 至 R-006：R-001/R-002/R-003 已关闭；R-004、R-005、R-006 待完成；每项必须有失败注入或并发回归测试，不能只覆盖成功路径。
+- [ ] 依次关闭 R-001 至 R-006：R-001/R-002/R-003/R-004 已关闭；R-005、R-006 待完成；每项必须有失败注入或并发回归测试，不能只覆盖成功路径。
 - [ ] 引入 `MaintenanceService` 最小切片：一致性检查、在线安全备份、恢复到临时副本、升级前自动快照和保留策略。
 - [ ] Desktop 恢复横幅、批量取消/重试。
 - [ ] 多连接 reservation/transition race、提交前 destination race；worker panic 恢复测试已随 R-001 完成。
@@ -630,7 +630,7 @@ API 不直接接受宿主任意路径。请求引用预先授权的 workspace/ro
 | 每条都有 Inspect/Plan/Execute/Validate | 部分完成 | 完整 required validator/语料，无 Unknown 冒充 Pass |
 | 10 GiB | 部分完成 | Windows 稀疏门禁过；补物理与跨平台 |
 | 10,000 队列 | 部分完成 | DB/真实结构化过；补完整 mixed/cross-platform |
-| pause/resume/cancel/retry | 部分完成 | CLI/批量与共享执行器、Desktop 两种控制已接；补 active pause 回归、可恢复 immediate 语义、恢复横幅和批量 retry |
+| pause/resume/cancel/retry | 部分完成 | CLI/批量与共享执行器、Desktop 可恢复 immediate pause 与单任务 Resume/Retry 已接；补 finish-current 长生命周期回归、恢复横幅和批量 retry |
 | 强退恢复 | 部分完成 | Windows 通用路径过；补各平台/批次竞态 |
 | remux 优先 | 已完成（已覆盖路径） | 发布语料复跑 |
 | 成功任务均有报告 | 部分完成 | 关闭 R-003；所有 Certified 路径 100% 报告且报告/终态顺序可恢复 |
