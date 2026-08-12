@@ -23,6 +23,12 @@ pub async fn prepare_conversion(
     input: &Path,
     request: &PlanRequest,
 ) -> Result<(Probe, Plan, EngineIdentity)> {
+    crate::capabilities::ensure_route_available(
+        input,
+        &request.target_format,
+        crate::doctor::EngineDiscoveryPolicy::for_current_build(),
+    )
+    .await?;
     if is_structured_target(&request.target_format) {
         let probe = inspect_structured(input).await?;
         let engine = inspect_builtin_engine("formatwright.structured").await?;

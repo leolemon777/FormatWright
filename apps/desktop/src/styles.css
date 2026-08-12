@@ -56,6 +56,8 @@ input:disabled { opacity: .45; }
 .preset-row, .action-row { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 16px; }
 .preset-row button { border: 1px solid #3b4439; border-radius: 999px; padding: 7px 11px; color: #aeb8aa; background: transparent; font-size: 11px; }
 .action-row { padding-top: 4px; }
+.capability-notice { margin: 12px 0 0; border: 1px solid #384037; padding: 10px 12px; color: #aeb8aa; background: #111511; }
+.capability-blocked { border-left: 3px solid #ff756b; color: #ffd1cc; background: #2a1715; }
 .action-row button, .page-heading button, .benchmark button, .job-list button { border: 0; border-radius: 3px; padding: 11px 15px; font-weight: 750; }
 .primary { color: #101410; background: #b9ff66; }
 .secondary, .page-heading button, .benchmark button, .job-list button { color: #e5eae2; background: #30372e; }

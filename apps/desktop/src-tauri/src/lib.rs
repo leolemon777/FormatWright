@@ -2,16 +2,17 @@
 
 mod queue_bridge;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Instant;
 
 use formatwright_core::{
-    ConversionPreset, DoctorReport, ExecutionMilestone, JobExecutionService, JobRecord, JobState,
-    PRESET_SCHEMA_VERSION, Plan, PlanRequest, PresetLibrary, Probe, QueueRunReport,
-    QueueWindowControl, SqliteJobStore, ValidationReport, ValidationStatus, VerifiedEnginePack,
-    activate_engine_pack, execute_plan_observed, prepare_conversion,
+    CapabilitySnapshot, ConversionPreset, DoctorReport, EngineDiscoveryPolicy, ExecutionMilestone,
+    JobExecutionService, JobRecord, JobState, PRESET_SCHEMA_VERSION, Plan, PlanRequest,
+    PresetLibrary, Probe, QueueRunReport, QueueWindowControl, SqliteJobStore, ValidationReport,
+    ValidationStatus, VerifiedEnginePack, activate_engine_pack, capability_snapshot_for_input,
+    execute_plan_observed, prepare_conversion,
 };
 use queue_bridge::{DEFAULT_BATCH_JOBS, DEFAULT_BENCHMARK_JOBS, QueueBatchIter};
 use serde::{Deserialize, Serialize};
@@ -27,6 +28,7 @@ struct DesktopState {
     presets_path: PathBuf,
     reports_directory: PathBuf,
     engine_registry_directory: PathBuf,
+    engine_store_directory: PathBuf,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -106,7 +108,16 @@ struct DesktopRunResult {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct DesktopEngineRegistryEntry {
+    #[serde(default)]
+    engine_id: Option<String>,
     manifest_path: PathBuf,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct DesktopEngineBundle {
+    schema_version: u32,
+    bundle_id: String,
+    packs: Vec<PathBuf>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -163,14 +174,22 @@ async fn desktop_doctor() -> DoctorReport {
 }
 
 #[tauri::command]
+async fn desktop_capability_snapshot(input_path: PathBuf) -> CapabilitySnapshot {
+    capability_snapshot_for_input(&input_path, EngineDiscoveryPolicy::for_current_build()).await
+}
+
+#[tauri::command]
 async fn import_desktop_engine_pack(
     state: tauri::State<'_, DesktopState>,
     manifest_path: PathBuf,
 ) -> Result<DesktopEnginePackSummary, String> {
-    let verified = tokio::task::spawn_blocking(move || activate_engine_pack(manifest_path))
-        .await
-        .map_err(|error| format!("engine-pack verification worker failed: {error}"))?
-        .map_err(serialize_error)?;
+    let engine_store_directory = state.engine_store_directory.clone();
+    let verified = tokio::task::spawn_blocking(move || {
+        formatwright_core::install_engine_pack(manifest_path, engine_store_directory)
+    })
+    .await
+    .map_err(|error| format!("engine-pack verification worker failed: {error}"))?
+    .map_err(serialize_error)?;
     persist_engine_registry_entry(&state.engine_registry_directory, &verified)?;
     Ok(valid_engine_summary(&verified))
 }
@@ -671,28 +690,65 @@ fn persist_engine_registry_entry(
     directory: &std::path::Path,
     verified: &VerifiedEnginePack,
 ) -> Result<(), String> {
-    let destination = directory.join(format!("{}.json", verified.manifest_sha256));
-    if destination.is_file() {
-        return Ok(());
-    }
+    let destination = directory.join(format!("{}.json", verified.manifest.engine_id));
     let partial = directory.join(format!(
         ".{}.{}.partial",
-        verified.manifest_sha256,
+        verified.manifest.engine_id,
         Uuid::new_v4()
     ));
     let entry = DesktopEngineRegistryEntry {
+        engine_id: Some(verified.manifest.engine_id.clone()),
         manifest_path: verified.manifest_path.clone(),
     };
     let bytes = serde_json::to_vec_pretty(&entry).map_err(|error| error.to_string())?;
     std::fs::write(&partial, bytes).map_err(|error| error.to_string())?;
+    remove_superseded_registry_entries(directory, &verified.manifest.engine_id, &destination)?;
+    let backup = directory.join(format!(".{}.backup", verified.manifest.engine_id));
+    if destination.is_file() {
+        let _ = std::fs::remove_file(&backup);
+        std::fs::rename(&destination, &backup).map_err(|error| error.to_string())?;
+    }
     match std::fs::rename(&partial, &destination) {
-        Ok(()) => Ok(()),
-        Err(_) if destination.is_file() => {
-            let _ = std::fs::remove_file(partial);
+        Ok(()) => {
+            let _ = std::fs::remove_file(backup);
             Ok(())
         }
-        Err(error) => Err(error.to_string()),
+        Err(error) => {
+            let _ = std::fs::remove_file(partial);
+            if backup.is_file() {
+                let _ = std::fs::rename(&backup, &destination);
+            }
+            Err(error.to_string())
+        }
     }
+}
+
+fn remove_superseded_registry_entries(
+    directory: &Path,
+    engine_id: &str,
+    active_entry: &Path,
+) -> Result<(), String> {
+    for entry in std::fs::read_dir(directory).map_err(|error| error.to_string())? {
+        let path = entry.map_err(|error| error.to_string())?.path();
+        if path.extension().and_then(std::ffi::OsStr::to_str) != Some("json") {
+            continue;
+        }
+        if path == active_entry {
+            continue;
+        }
+        let record = std::fs::read(&path)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<DesktopEngineRegistryEntry>(&bytes).ok());
+        let superseded = record.is_some_and(|record| {
+            record.engine_id.as_deref() == Some(engine_id)
+                || formatwright_core::verify_engine_pack(record.manifest_path)
+                    .is_ok_and(|pack| pack.manifest.engine_id == engine_id)
+        });
+        if superseded {
+            std::fs::remove_file(path).map_err(|error| error.to_string())?;
+        }
+    }
+    Ok(())
 }
 
 fn registered_manifest_paths(directory: &std::path::Path) -> Result<Vec<PathBuf>, String> {
@@ -716,6 +772,81 @@ fn registered_manifest_paths(directory: &std::path::Path) -> Result<Vec<PathBuf>
     Ok(paths)
 }
 
+fn bundled_manifest_paths(resource_directory: &Path) -> Result<Vec<PathBuf>, String> {
+    let bundle_root = resource_directory.join("engine-packs").join("starter");
+    let bundle_path = bundle_root.join("bundle.json");
+    if !bundle_path.is_file() {
+        return Ok(Vec::new());
+    }
+    let canonical_root = bundle_root
+        .canonicalize()
+        .map_err(|error| error.to_string())?;
+    let bytes = std::fs::read(&bundle_path).map_err(|error| error.to_string())?;
+    let bundle = serde_json::from_slice::<DesktopEngineBundle>(&bytes)
+        .map_err(|error| format!("invalid bundled engine definition: {error}"))?;
+    if bundle.schema_version != 1 || bundle.bundle_id != "formatwright-windows-starter" {
+        return Err("unsupported bundled engine definition".to_owned());
+    }
+    if bundle.packs.is_empty() {
+        return Err("bundled engine definition contains no packs".to_owned());
+    }
+
+    let mut seen = HashSet::new();
+    let mut manifests = Vec::with_capacity(bundle.packs.len());
+    for relative in bundle.packs {
+        if relative.is_absolute()
+            || relative
+                .components()
+                .any(|component| !matches!(component, std::path::Component::Normal(_)))
+            || relative.file_name().and_then(std::ffi::OsStr::to_str) != Some("manifest.json")
+        {
+            return Err(format!(
+                "unsafe bundled engine manifest path: {}",
+                relative.display()
+            ));
+        }
+        let manifest = canonical_root
+            .join(&relative)
+            .canonicalize()
+            .map_err(|error| {
+                format!(
+                    "bundled engine manifest is unavailable ({}): {error}",
+                    relative.display()
+                )
+            })?;
+        if !manifest.starts_with(&canonical_root) || !manifest.is_file() {
+            return Err(format!(
+                "bundled engine manifest escapes its resource directory: {}",
+                relative.display()
+            ));
+        }
+        if !seen.insert(manifest.clone()) {
+            return Err(format!(
+                "duplicate bundled engine manifest: {}",
+                relative.display()
+            ));
+        }
+        manifests.push(manifest);
+    }
+    Ok(manifests)
+}
+
+fn install_bundled_engine_packs(
+    resource_directory: &Path,
+    engine_store_directory: &Path,
+    engine_registry_directory: &Path,
+) -> Result<Vec<VerifiedEnginePack>, String> {
+    let manifests = bundled_manifest_paths(resource_directory)?;
+    let mut installed = Vec::with_capacity(manifests.len());
+    for manifest in manifests {
+        let verified = formatwright_core::install_engine_pack(manifest, engine_store_directory)
+            .map_err(serialize_error)?;
+        persist_engine_registry_entry(engine_registry_directory, &verified)?;
+        installed.push(verified);
+    }
+    Ok(installed)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 /// Starts the bundled local desktop application.
 ///
@@ -727,11 +858,20 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let data_directory = app.path().app_data_dir()?;
+            let resource_directory = app.path().resource_dir()?;
             let reports_directory = data_directory.join("reports");
             let engine_registry_directory = data_directory.join("engine-registry");
+            let engine_store_directory = data_directory.join("engines");
             let presets_path = data_directory.join("presets.json");
             std::fs::create_dir_all(&reports_directory)?;
             std::fs::create_dir_all(&engine_registry_directory)?;
+            std::fs::create_dir_all(&engine_store_directory)?;
+            install_bundled_engine_packs(
+                &resource_directory,
+                &engine_store_directory,
+                &engine_registry_directory,
+            )
+            .map_err(Box::<dyn std::error::Error>::from)?;
             for manifest_path in registered_manifest_paths(&engine_registry_directory)
                 .map_err(Box::<dyn std::error::Error>::from)?
             {
@@ -752,12 +892,14 @@ pub fn run() {
                 presets_path,
                 reports_directory,
                 engine_registry_directory,
+                engine_store_directory,
             });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             run_queue_bridge_benchmark,
             desktop_doctor,
+            desktop_capability_snapshot,
             import_desktop_engine_pack,
             list_imported_engine_packs,
             preview_conversion,
@@ -790,8 +932,8 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        DesktopEngineRegistryEntry, backup_path, load_preset_library, persist_preset_library,
-        registered_manifest_paths,
+        DesktopEngineRegistryEntry, backup_path, bundled_manifest_paths, load_preset_library,
+        persist_preset_library, registered_manifest_paths,
     };
 
     #[test]
@@ -799,6 +941,7 @@ mod tests {
         let directory = tempdir().expect("temporary registry");
         let expected = PathBuf::from("C:/engine-pack/manifest.json");
         let entry = DesktopEngineRegistryEntry {
+            engine_id: Some("fixture-engine".to_owned()),
             manifest_path: expected.clone(),
         };
         fs::write(
@@ -812,6 +955,26 @@ mod tests {
             registered_manifest_paths(directory.path()).expect("read registry"),
             vec![expected]
         );
+    }
+
+    #[test]
+    fn bundled_manifest_paths_reject_traversal() {
+        let resource_directory = tempdir().expect("temporary resources");
+        let bundle_root = resource_directory.path().join("engine-packs/starter");
+        fs::create_dir_all(&bundle_root).expect("create bundle root");
+        fs::write(
+            bundle_root.join("bundle.json"),
+            br#"{
+                "schema_version": 1,
+                "bundle_id": "formatwright-windows-starter",
+                "packs": ["../manifest.json"]
+            }"#,
+        )
+        .expect("write bundle");
+
+        let error = bundled_manifest_paths(resource_directory.path())
+            .expect_err("path traversal must be rejected");
+        assert!(error.contains("unsafe bundled engine manifest path"));
     }
 
     #[test]

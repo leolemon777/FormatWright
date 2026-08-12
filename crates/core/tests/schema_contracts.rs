@@ -194,6 +194,7 @@ fn engine_manifest() -> EngineManifest {
             relative_path: PathBuf::from("bin/fixture"),
             sha256: "ab".repeat(32),
         }],
+        runtime_files: Vec::new(),
         source: ManifestSource {
             project_url: "https://example.invalid/project".to_owned(),
             source_url: "https://example.invalid/source".to_owned(),

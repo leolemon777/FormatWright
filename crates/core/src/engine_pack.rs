@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use formatwright_engine_sdk::{
@@ -18,6 +19,7 @@ pub struct VerifiedEnginePack {
     pub manifest_path: PathBuf,
     pub manifest_sha256: String,
     pub executables: BTreeMap<String, PathBuf>,
+    pub runtime_files: Vec<PathBuf>,
     pub signature_present: bool,
 }
 
@@ -80,6 +82,21 @@ pub fn verify_engine_pack(manifest_path: impl AsRef<Path>) -> Result<VerifiedEng
         }
         executables.insert(executable.name.clone(), path);
     }
+    let mut runtime_files = Vec::with_capacity(manifest.runtime_files.len());
+    for runtime_file in &manifest.runtime_files {
+        let path = resolve_pack_file(root, &runtime_file.relative_path, "engine runtime file")?;
+        let observed = sha256_file(&path)?;
+        if !observed.eq_ignore_ascii_case(&runtime_file.sha256) {
+            return Err(engine_error(
+                format!(
+                    "Engine runtime file hash mismatch: {}",
+                    runtime_file.relative_path.display()
+                ),
+                format!("expected {}, observed {observed}", runtime_file.sha256),
+            ));
+        }
+        runtime_files.push(path);
+    }
     for license in &manifest.licenses {
         verify_license_files(root, license)?;
     }
@@ -91,6 +108,7 @@ pub fn verify_engine_pack(manifest_path: impl AsRef<Path>) -> Result<VerifiedEng
         manifest_path,
         manifest_sha256,
         executables,
+        runtime_files,
         signature_present,
     })
 }
@@ -105,8 +123,153 @@ pub fn verify_engine_pack(manifest_path: impl AsRef<Path>) -> Result<VerifiedEng
 /// internal registry error if the verified paths cannot be activated.
 pub fn activate_engine_pack(manifest_path: impl AsRef<Path>) -> Result<VerifiedEnginePack> {
     let verified = verify_engine_pack(manifest_path)?;
-    crate::doctor::register_engine_pack_paths(&verified.executables, &verified.manifest_sha256)?;
+    crate::doctor::register_engine_pack_paths(
+        &verified.executables,
+        &verified.manifest_sha256,
+        &verified.manifest.engine_id,
+    )?;
     Ok(verified)
+}
+
+/// Copies only manifest-declared, hash-verified pack files into a versioned
+/// local store and activates the installed copy.
+///
+/// Installation is staged beside the final directory and published by rename,
+/// so a partial copy never becomes the active pack. Existing identical packs
+/// are re-verified and reused.
+///
+/// # Errors
+///
+/// Returns an engine/storage error when source verification, copying, staged
+/// verification, atomic publication, or activation fails.
+pub fn install_engine_pack(
+    manifest_path: impl AsRef<Path>,
+    store_root: impl AsRef<Path>,
+) -> Result<VerifiedEnginePack> {
+    let source = verify_engine_pack(manifest_path)?;
+    let store_root = store_root.as_ref();
+    fs::create_dir_all(store_root).map_err(|error| {
+        engine_error(
+            format!("Cannot create engine store: {}", store_root.display()),
+            error.to_string(),
+        )
+    })?;
+    let version_root = store_root
+        .join(&source.manifest.engine_id)
+        .join(&source.manifest.version);
+    fs::create_dir_all(&version_root).map_err(|error| {
+        engine_error(
+            format!(
+                "Cannot create engine version directory: {}",
+                version_root.display()
+            ),
+            error.to_string(),
+        )
+    })?;
+    let destination = version_root.join(&source.manifest_sha256);
+    let destination_manifest = destination.join("manifest.json");
+    if destination_manifest.is_file() {
+        return activate_engine_pack(destination_manifest);
+    }
+
+    let staging = version_root.join(format!(
+        ".{}.{}.partial",
+        source.manifest_sha256,
+        uuid::Uuid::new_v4()
+    ));
+    fs::create_dir(&staging).map_err(|error| {
+        engine_error(
+            format!(
+                "Cannot create engine staging directory: {}",
+                staging.display()
+            ),
+            error.to_string(),
+        )
+    })?;
+    let result = stage_verified_pack(&source, &staging)
+        .and_then(|()| verify_engine_pack(staging.join("manifest.json")))
+        .and_then(|_| {
+            if let Err(error) = fs::rename(&staging, &destination) {
+                if destination_manifest.is_file() {
+                    let _ = fs::remove_dir_all(&staging);
+                    return activate_engine_pack(&destination_manifest);
+                }
+                return Err(engine_error(
+                    format!("Cannot publish engine pack: {}", destination.display()),
+                    error.to_string(),
+                ));
+            }
+            activate_engine_pack(&destination_manifest)
+        });
+    if result.is_err() && staging.is_dir() {
+        let _ = fs::remove_dir_all(&staging);
+    }
+    result
+}
+
+fn stage_verified_pack(source: &VerifiedEnginePack, staging: &Path) -> Result<()> {
+    let source_root = source.manifest_path.parent().ok_or_else(|| {
+        engine_error(
+            "Engine manifest has no pack directory".to_owned(),
+            source.manifest_path.display().to_string(),
+        )
+    })?;
+    copy_pack_file(
+        &source.manifest_path,
+        &staging.join("manifest.json"),
+        "engine manifest",
+    )?;
+    for executable in &source.manifest.executables {
+        copy_pack_relative(
+            source_root,
+            staging,
+            &executable.relative_path,
+            "engine executable",
+        )?;
+    }
+    for runtime_file in &source.manifest.runtime_files {
+        copy_pack_relative(
+            source_root,
+            staging,
+            &runtime_file.relative_path,
+            "engine runtime file",
+        )?;
+    }
+    for license in &source.manifest.licenses {
+        copy_pack_relative(source_root, staging, &license.notice_path, "license notice")?;
+        if let Some(path) = &license.source_offer_path {
+            copy_pack_relative(source_root, staging, path, "source offer")?;
+        }
+    }
+    Ok(())
+}
+
+fn copy_pack_relative(
+    source_root: &Path,
+    staging: &Path,
+    relative: &Path,
+    purpose: &str,
+) -> Result<()> {
+    let source = resolve_pack_file(source_root, relative, purpose)?;
+    copy_pack_file(&source, &staging.join(relative), purpose)
+}
+
+fn copy_pack_file(source: &Path, destination: &Path, purpose: &str) -> Result<()> {
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            engine_error(
+                format!("Cannot create {purpose} directory: {}", parent.display()),
+                error.to_string(),
+            )
+        })?;
+    }
+    fs::copy(source, destination).map_err(|error| {
+        engine_error(
+            format!("Cannot copy {purpose}: {}", source.display()),
+            error.to_string(),
+        )
+    })?;
+    Ok(())
 }
 
 fn verify_host_target(manifest: &EngineManifest) -> Result<()> {
@@ -201,12 +364,15 @@ mod tests {
 
     use formatwright_engine_sdk::{
         Capability, EngineArchitecture, EngineManifest, EnginePlatform, FormatWrightCompatibility,
-        LossClass, ManifestExecutable, ManifestLicense, ManifestSource, Operation,
+        LossClass, ManifestExecutable, ManifestLicense, ManifestRuntimeFile, ManifestSource,
+        Operation,
     };
     use sha2::{Digest, Sha256};
     use tempfile::tempdir;
 
-    use super::{ENGINE_PROTOCOL_VERSION, activate_engine_pack, verify_engine_pack};
+    use super::{
+        ENGINE_PROTOCOL_VERSION, activate_engine_pack, install_engine_pack, verify_engine_pack,
+    };
 
     fn manifest(binary_hash: String) -> EngineManifest {
         EngineManifest {
@@ -228,6 +394,10 @@ mod tests {
                     "bin/fixture.bin"
                 }),
                 sha256: binary_hash,
+            }],
+            runtime_files: vec![ManifestRuntimeFile {
+                relative_path: PathBuf::from("runtime/fixture.dat"),
+                sha256: format!("{:x}", Sha256::digest(b"fixture runtime")),
             }],
             source: ManifestSource {
                 project_url: "https://example.invalid/fixture".to_owned(),
@@ -256,6 +426,7 @@ mod tests {
         let directory = tempdir().expect("temporary pack");
         fs::create_dir_all(directory.path().join("bin")).expect("binary directory");
         fs::create_dir_all(directory.path().join("licenses")).expect("license directory");
+        fs::create_dir_all(directory.path().join("runtime")).expect("runtime directory");
         let binary = directory.path().join(if cfg!(windows) {
             "bin/fixture.exe"
         } else {
@@ -267,6 +438,11 @@ mod tests {
             b"fixture notice",
         )
         .expect("notice fixture");
+        fs::write(
+            directory.path().join("runtime/fixture.dat"),
+            b"fixture runtime",
+        )
+        .expect("runtime fixture");
         let hash = format!("{:x}", Sha256::digest(b"fixture engine"));
         let manifest_path = directory.path().join("manifest.json");
         fs::write(
@@ -315,6 +491,23 @@ mod tests {
     }
 
     #[test]
+    fn rejects_a_tampered_runtime_file() {
+        let (_directory, manifest_path) = create_pack();
+        let bytes = fs::read(&manifest_path).expect("read manifest");
+        let value = serde_json::from_slice::<EngineManifest>(&bytes).expect("parse manifest");
+        fs::write(
+            manifest_path
+                .parent()
+                .expect("pack root")
+                .join(&value.runtime_files[0].relative_path),
+            b"tampered runtime",
+        )
+        .expect("tamper runtime file");
+        let error = verify_engine_pack(&manifest_path).expect_err("runtime tamper must fail");
+        assert!(error.message.contains("runtime file hash mismatch"));
+    }
+
+    #[test]
     fn rejects_a_pack_for_another_architecture() {
         let (directory, manifest_path) = create_pack();
         let bytes = fs::read(&manifest_path).expect("read manifest");
@@ -355,5 +548,36 @@ mod tests {
 
         let error = verify_engine_pack(&manifest_path).expect_err("script wrapper must fail");
         assert!(error.message.contains("native .exe/.com"));
+    }
+
+    #[test]
+    fn installs_and_activates_a_self_contained_copy() {
+        let (source_directory, manifest_path) = create_pack();
+        let bytes = fs::read(&manifest_path).expect("read manifest");
+        let mut value = serde_json::from_slice::<EngineManifest>(&bytes).expect("parse manifest");
+        value.engine_id = "install-fixture-engine".to_owned();
+        value.executables[0].name = "install-fixture".to_owned();
+        fs::write(
+            &manifest_path,
+            serde_json::to_vec_pretty(&value).expect("serialize manifest"),
+        )
+        .expect("rewrite manifest");
+        let store = tempdir().expect("temporary engine store");
+
+        let installed = install_engine_pack(&manifest_path, store.path()).expect("install pack");
+        let canonical_store = store.path().canonicalize().expect("canonical engine store");
+        assert!(installed.manifest_path.starts_with(&canonical_store));
+        assert!(installed.manifest_path.is_file());
+        assert!(installed.executables["install-fixture"].starts_with(&canonical_store));
+        assert_eq!(installed.runtime_files.len(), 1);
+        assert!(installed.runtime_files[0].starts_with(&canonical_store));
+        drop(source_directory);
+        assert!(installed.executables["install-fixture"].is_file());
+        assert!(installed.runtime_files[0].is_file());
+        let (registered, manifest_hash) =
+            crate::doctor::registered_engine_metadata("install-fixture")
+                .expect("installed engine is active");
+        assert_eq!(registered, installed.executables["install-fixture"]);
+        assert_eq!(manifest_hash, installed.manifest_sha256);
     }
 }

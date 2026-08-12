@@ -21,6 +21,7 @@
       "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
     }
   ],
+  "runtime_files": [],
   "source": {
     "project_url": "https://ffmpeg.org/",
     "source_url": "https://ffmpeg.org/releases/ffmpeg-8.1.1.tar.xz",

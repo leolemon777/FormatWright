@@ -37,6 +37,7 @@ impl EngineDiscoveryPolicy {
 struct RegisteredEnginePath {
     path: PathBuf,
     manifest_sha256: String,
+    pack_id: String,
 }
 
 static REGISTERED_ENGINE_PATHS: OnceLock<RwLock<BTreeMap<String, RegisteredEnginePath>>> =
@@ -205,6 +206,7 @@ fn resolve_engine_path(
 pub(crate) fn register_engine_pack_paths(
     executables: &BTreeMap<String, PathBuf>,
     manifest_sha256: &str,
+    pack_id: &str,
 ) -> Result<()> {
     let mut paths = REGISTERED_ENGINE_PATHS
         .get_or_init(|| RwLock::new(BTreeMap::new()))
@@ -230,7 +232,7 @@ pub(crate) fn register_engine_pack_paths(
             ));
         }
         if let Some(existing) = paths.get(&name.to_ascii_lowercase())
-            && (existing.path != *path || existing.manifest_sha256 != manifest_sha256)
+            && existing.pack_id != pack_id
         {
             return Err(FormatWrightError::new(
                 ErrorCode::EngineIncompatible,
@@ -240,12 +242,14 @@ pub(crate) fn register_engine_pack_paths(
             ));
         }
     }
+    paths.retain(|_, existing| existing.pack_id != pack_id);
     for (name, path) in executables {
         paths.insert(
             name.to_ascii_lowercase(),
             RegisteredEnginePath {
                 path: path.clone(),
                 manifest_sha256: manifest_sha256.to_owned(),
+                pack_id: pack_id.to_owned(),
             },
         );
     }
@@ -459,11 +463,11 @@ mod tests {
         let current = std::env::current_exe().expect("current test executable");
         let mut first = BTreeMap::new();
         first.insert("collision-fixture".to_owned(), current.clone());
-        register_engine_pack_paths(&first, "manifest-a").expect("first registration");
+        register_engine_pack_paths(&first, "manifest-a", "first-pack").expect("first registration");
 
         let mut second = BTreeMap::new();
         second.insert("collision-fixture".to_owned(), current);
-        let error = register_engine_pack_paths(&second, "manifest-b")
+        let error = register_engine_pack_paths(&second, "manifest-b", "second-pack")
             .expect_err("a second manifest must not replace the first");
         assert!(error.message.contains("already claimed"));
     }
@@ -488,7 +492,7 @@ mod tests {
         let current = std::env::current_exe().expect("current test executable");
         let mut paths = BTreeMap::new();
         paths.insert(executable.to_owned(), current.clone());
-        register_engine_pack_paths(&paths, "strict-pack-manifest")
+        register_engine_pack_paths(&paths, "strict-pack-manifest", "strict-pack")
             .expect("register exact pack path");
 
         let (path, manifest_sha256) =

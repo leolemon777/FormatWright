@@ -47,6 +47,18 @@
         }
       }
     },
+    "runtime_files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["relative_path", "sha256"],
+        "properties": {
+          "relative_path": { "type": "string" },
+          "sha256": { "type": "string", "pattern": "^[A-Fa-f0-9]{64}$" }
+        }
+      }
+    },
     "source": {
       "type": "object",
       "additionalProperties": false,

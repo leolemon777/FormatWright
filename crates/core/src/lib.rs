@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 pub mod application;
+pub mod capabilities;
 pub mod doctor;
 mod document;
 pub mod domain;
@@ -20,6 +21,9 @@ pub mod validation;
 mod workflow;
 
 pub use application::{JobExecutionService, QueueRunReport, QueueWindowControl};
+pub use capabilities::{
+    CapabilitySnapshot, RouteAvailability, capability_snapshot_for_input, ensure_route_available,
+};
 pub use doctor::{
     EngineDiscoveryPolicy, doctor, doctor_with_policy, find_executable, inspect_builtin_engine,
     inspect_engine, inspect_engine_with_policy,
@@ -31,7 +35,8 @@ pub use domain::{
     ReportRedaction, StreamKind, StreamProbe, ValidationCheck, ValidationReport, ValidationStatus,
 };
 pub use engine_pack::{
-    ENGINE_PROTOCOL_VERSION, VerifiedEnginePack, activate_engine_pack, verify_engine_pack,
+    ENGINE_PROTOCOL_VERSION, VerifiedEnginePack, activate_engine_pack, install_engine_pack,
+    verify_engine_pack,
 };
 pub use error::{ErrorCode, FormatWrightError, Result, Stage};
 pub use fingerprint::{full_blake3, identify_artifact};

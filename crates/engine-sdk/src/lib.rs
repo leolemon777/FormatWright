@@ -117,6 +117,12 @@ pub struct ManifestExecutable {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ManifestRuntimeFile {
+    pub relative_path: PathBuf,
+    pub sha256: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ManifestSource {
     pub project_url: String,
     pub source_url: String,
@@ -148,6 +154,8 @@ pub struct EngineManifest {
     pub protocol_version: u32,
     pub formatwright_compatibility: FormatWrightCompatibility,
     pub executables: Vec<ManifestExecutable>,
+    #[serde(default)]
+    pub runtime_files: Vec<ManifestRuntimeFile>,
     pub source: ManifestSource,
     pub licenses: Vec<ManifestLicense>,
     pub capabilities: Vec<Capability>,
@@ -185,8 +193,11 @@ impl EngineManifest {
         if !valid_engine_id(&self.engine_id) {
             return manifest_error("engine_id must match [a-z0-9][a-z0-9._-]+".to_owned());
         }
-        if self.version.trim().is_empty() {
-            return manifest_error("version is empty".to_owned());
+        if !valid_store_segment(&self.version) {
+            return manifest_error(
+                "version must be a safe portable path segment containing only letters, digits, '.', '_', '+', or '-'"
+                    .to_owned(),
+            );
         }
         if self.formatwright_compatibility.minimum.trim().is_empty()
             || self
@@ -200,7 +211,22 @@ impl EngineManifest {
         if self.executables.is_empty() {
             return manifest_error("at least one executable is required".to_owned());
         }
+        self.validate_pack_files()?;
+        self.validate_provenance_and_licenses()?;
+        self.validate_capabilities()?;
+        if let Some(signature) = &self.signature
+            && (signature.algorithm.trim().is_empty()
+                || signature.key_id.trim().is_empty()
+                || signature.value.trim().is_empty())
+        {
+            return manifest_error("signature fields must all be populated".to_owned());
+        }
+        Ok(())
+    }
+
+    fn validate_pack_files(&self) -> Result<(), ManifestValidationError> {
         let mut executable_names = BTreeSet::new();
+        let mut pack_paths = BTreeSet::new();
         for executable in &self.executables {
             if executable.name.trim().is_empty() {
                 return manifest_error("executable name is empty".to_owned());
@@ -210,7 +236,27 @@ impl EngineManifest {
             }
             validate_relative_path(&executable.relative_path, "executable")?;
             validate_sha256(&executable.sha256, "executable")?;
+            if !pack_paths.insert(&executable.relative_path) {
+                return manifest_error(format!(
+                    "duplicate pack path {}",
+                    executable.relative_path.display()
+                ));
+            }
         }
+        for runtime_file in &self.runtime_files {
+            validate_relative_path(&runtime_file.relative_path, "runtime file")?;
+            validate_sha256(&runtime_file.sha256, "runtime file")?;
+            if !pack_paths.insert(&runtime_file.relative_path) {
+                return manifest_error(format!(
+                    "duplicate pack path {}",
+                    runtime_file.relative_path.display()
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_provenance_and_licenses(&self) -> Result<(), ManifestValidationError> {
         if !is_https_url(&self.source.project_url) || !is_https_url(&self.source.source_url) {
             return manifest_error("source URLs must use HTTPS".to_owned());
         }
@@ -233,6 +279,10 @@ impl EngineManifest {
                 validate_relative_path(path, "source offer")?;
             }
         }
+        Ok(())
+    }
+
+    fn validate_capabilities(&self) -> Result<(), ManifestValidationError> {
         let mut capability_ids = BTreeSet::new();
         for capability in &self.capabilities {
             if capability.capability_id.trim().is_empty()
@@ -256,13 +306,6 @@ impl EngineManifest {
                 return manifest_error("capability contains an empty format ID".to_owned());
             }
         }
-        if let Some(signature) = &self.signature
-            && (signature.algorithm.trim().is_empty()
-                || signature.key_id.trim().is_empty()
-                || signature.value.trim().is_empty())
-        {
-            return manifest_error("signature fields must all be populated".to_owned());
-        }
         Ok(())
     }
 }
@@ -276,6 +319,15 @@ fn valid_engine_id(value: &str) -> bool {
         && value.bytes().all(|byte| {
             byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'.' | b'_' | b'-')
         })
+}
+
+fn valid_store_segment(value: &str) -> bool {
+    !value.is_empty()
+        && value != "."
+        && value != ".."
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'+' | b'-'))
 }
 
 fn validate_relative_path(path: &Path, purpose: &str) -> Result<(), ManifestValidationError> {
@@ -348,6 +400,7 @@ mod tests {
                 relative_path: PathBuf::from("bin/fixture"),
                 sha256: "ab".repeat(32),
             }],
+            runtime_files: Vec::new(),
             source: ManifestSource {
                 project_url: "https://example.invalid/project".to_owned(),
                 source_url: "https://example.invalid/source".to_owned(),

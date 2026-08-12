@@ -82,6 +82,19 @@ type DoctorReport = {
   >;
 };
 
+type RouteAvailability = {
+  target_format: string;
+  available: boolean;
+  required_engines: string[];
+  missing_engines: string[];
+  message: string;
+};
+
+type CapabilitySnapshot = {
+  input_extension?: string;
+  routes: Record<string, RouteAvailability>;
+};
+
 type EnginePackSummary = {
   manifest_path: string;
   engine_id?: string;
@@ -154,6 +167,8 @@ export default function App() {
   const [report, setReport] = useState<ValidationReport | null>(null);
   const [jobs, setJobs] = useState<JobRecord[]>([]);
   const [doctor, setDoctor] = useState<DoctorReport | null>(null);
+  const [capabilities, setCapabilities] = useState<CapabilitySnapshot | null>(null);
+  const [capabilityBusy, setCapabilityBusy] = useState(false);
   const [enginePacks, setEnginePacks] = useState<EnginePackSummary[]>([]);
   const [engineBusy, setEngineBusy] = useState(false);
   const [busy, setBusy] = useState<"plan" | "run" | "queue" | "queue-run" | null>(null);
@@ -219,6 +234,43 @@ export default function App() {
       for (const dispose of disposers) dispose();
     };
   }, [projection]);
+
+  useEffect(() => {
+    if (!inputPath || !("__TAURI_INTERNALS__" in window)) {
+      setCapabilities(null);
+      setCapabilityBusy(false);
+      return;
+    }
+    let current = true;
+    setCapabilityBusy(true);
+    void invoke<CapabilitySnapshot>("desktop_capability_snapshot", { inputPath })
+      .then((snapshot) => {
+        if (!current) return;
+        setCapabilities(snapshot);
+        const normalizedTarget = target === "jpeg" ? "jpg" : target === "yml" ? "yaml" : target;
+        if (!snapshot.routes[normalizedTarget]?.available) {
+          const firstRecommended = recommendedTargets(inputPath).find(
+            (candidate) => snapshot.routes[candidate]?.available,
+          );
+          const firstAvailable = Object.values(snapshot.routes).find((candidate) => candidate.available)
+            ?.target_format;
+          const next = firstRecommended ?? firstAvailable;
+          if (next) {
+            setTarget(next);
+            setOutputPath(suggestedOutput(inputPath, next));
+          }
+        }
+      })
+      .catch((reason) => {
+        if (current) setError(parseDesktopError(reason));
+      })
+      .finally(() => {
+        if (current) setCapabilityBusy(false);
+      });
+    return () => {
+      current = false;
+    };
+  }, [inputPath]);
 
   function selectInput(path: string) {
     const recommended = recommendedTargets(path)[0];
@@ -554,6 +606,10 @@ export default function App() {
   }
 
   const recommendations = recommendedTargets(inputPath);
+  const normalizedTarget = target === "jpeg" ? "jpg" : target === "yml" ? "yaml" : target;
+  const route = capabilities?.routes[normalizedTarget];
+  const routeAvailable = !capabilities || route?.available === true;
+  const targetOptions = Array.from(new Set([...recommendations, "jpg", "png", "webp", "avif", "mp4", "mp3", "m4a", "wav", "gif", "pdf", "docx", "json", "csv", "yaml", "xml"]));
   const tabs: Tab[] = ["convert", "jobs", "presets", "engines", "reports", "settings"];
 
   return (
@@ -591,8 +647,8 @@ export default function App() {
             <div className="form-grid">
               <label className="wide">{copy.inputPath}<span className="path-control"><input value={inputPath} onChange={(event) => selectInput(event.target.value)} placeholder="C:\\…\\input.ext" /><button className="secondary" type="button" onClick={chooseInput}>{copy.chooseFile}</button></span></label>
               <label className="wide">{copy.outputPath}<span className="path-control"><input value={outputPath} onChange={(event) => { setOutputPath(event.target.value); setPreview(null); }} placeholder="C:\\…\\output.ext" /><button className="secondary" type="button" disabled={!inputPath} onClick={chooseOutput}>{copy.chooseOutput}</button></span></label>
-              <label>{copy.target}<select value={target} onChange={(event) => changeTarget(event.target.value)}>
-                {Array.from(new Set([...recommendations, "jpg", "png", "webp", "avif", "mp4", "mp3", "wav", "gif", "pdf", "docx", "json", "csv", "yaml", "xml"])).map((value) => <option key={value}>{value}</option>)}
+              <label>{copy.target}<select value={target} onChange={(event) => changeTarget(event.target.value)} disabled={capabilityBusy}>
+                {targetOptions.map((value) => <option key={value} disabled={capabilities ? !capabilities.routes[value]?.available : false}>{value}{capabilities && !capabilities.routes[value]?.available ? ` — ${copy.unavailable}` : ""}</option>)}
               </select></label>
               <label>{copy.quality}<input type="number" min="1" max="100" value={quality} onChange={(event) => { setQuality(event.target.value); setPreview(null); }} disabled={target === "png"} /></label>
               {expert && <label>{copy.width}<input type="number" min="1" max="16384" value={width} onChange={(event) => { setWidth(event.target.value); setPreview(null); }} /></label>}
@@ -601,18 +657,20 @@ export default function App() {
               {expert && <label className="checkbox-control"><input type="checkbox" checked={preserveAllStreams} onChange={(event) => { setPreserveAllStreams(event.target.checked); setPreview(null); }} />{copy.preserveAllStreams}</label>}
             </div>
 
+            {inputPath && (capabilityBusy ? <p className="capability-notice" role="status">{copy.capabilityLoading}</p> : route && !route.available ? <p className="capability-notice capability-blocked" role="status"><strong>{copy.routeUnavailable}</strong>{route.missing_engines.length > 0 ? ` ${copy.missingEngines}: ${route.missing_engines.join(", ")}.` : ` ${route.message}`}</p> : capabilities && !Object.values(capabilities.routes).some((candidate) => candidate.available) ? <p className="capability-notice capability-blocked" role="status">{copy.noAvailableTargets}</p> : null)}
+
             <div className="preset-row" aria-label="Presets">
-              <button type="button" onClick={() => { changeTarget("webp"); setQuality("78"); }}>{copy.presetImage}</button>
-              <button type="button" onClick={() => changeTarget("png")}>{copy.presetArchive}</button>
-              <button type="button" onClick={() => changeTarget("pdf")}>{copy.presetPdf}</button>
-              {presets.map((preset) => <button type="button" key={preset.preset_id} onClick={() => applyPreset(preset)}>{preset.name}</button>)}
+              <button type="button" disabled={capabilities ? !capabilities.routes.webp?.available : false} onClick={() => { changeTarget("webp"); setQuality("78"); }}>{copy.presetImage}</button>
+              <button type="button" disabled={capabilities ? !capabilities.routes.png?.available : false} onClick={() => changeTarget("png")}>{copy.presetArchive}</button>
+              <button type="button" disabled={capabilities ? !capabilities.routes.pdf?.available : false} onClick={() => changeTarget("pdf")}>{copy.presetPdf}</button>
+              {presets.map((preset) => <button type="button" key={preset.preset_id} disabled={capabilities ? !capabilities.routes[preset.target_format]?.available : false} onClick={() => applyPreset(preset)}>{preset.name}</button>)}
               <button type="button" onClick={() => setTab("presets")}>+ {copy.savePreset}</button>
             </div>
 
             <div className="action-row">
-              <button className="secondary" type="button" disabled={!inputPath || !outputPath || busy !== null} onClick={previewPlan}>{busy === "plan" ? copy.planning : copy.inspectPlan}</button>
-              <button className="primary" type="button" disabled={!preview || busy !== null} onClick={runConversion}>{busy === "run" ? copy.running : copy.run}</button>
-              <button className="secondary" type="button" disabled={!preview || busy !== null} onClick={queueConversion}>{busy === "queue" ? copy.queueing : copy.queueOnly}</button>
+              <button className="secondary" type="button" disabled={!inputPath || !outputPath || busy !== null || capabilityBusy || !routeAvailable} onClick={previewPlan}>{busy === "plan" ? copy.planning : copy.inspectPlan}</button>
+              <button className="primary" type="button" disabled={!preview || busy !== null || !routeAvailable} onClick={runConversion}>{busy === "run" ? copy.running : copy.run}</button>
+              <button className="secondary" type="button" disabled={!preview || busy !== null || !routeAvailable} onClick={queueConversion}>{busy === "queue" ? copy.queueing : copy.queueOnly}</button>
               {busy === "run" && <button className="danger" type="button" onClick={cancel}>{copy.cancel}</button>}
             </div>
 
@@ -625,7 +683,7 @@ export default function App() {
               <button type="button" className={expert ? "selected" : ""} onClick={() => setExpert(true)}>{copy.expert}</button>
             </div>
             <p className="section-label">{copy.recommended}</p>
-            <div className="recommendations">{recommendations.map((value, index) => <button type="button" key={value} onClick={() => changeTarget(value)}><span>{index + 1}</span>{value.toUpperCase()}</button>)}</div>
+            <div className="recommendations">{recommendations.map((value, index) => { const candidate = capabilities?.routes[value]; return <button type="button" key={value} disabled={capabilities ? !candidate?.available : false} title={candidate?.message} onClick={() => changeTarget(value)}><span>{index + 1}</span>{value.toUpperCase()}{candidate && !candidate.available ? ` · ${copy.unavailable}` : ""}</button>; })}</div>
             <div className="privacy-card"><strong>LOCAL</strong><p>{copy.privacy}</p></div>
           </aside>
         </section>
@@ -650,7 +708,7 @@ export default function App() {
           {presetNotice && <p className="success-notice" role="status" aria-live="polite">{presetNotice}</p>}
           <section className="preset-editor" aria-label={copy.presetEditor}>
             <div><p className="section-label">{editingPresetId ? copy.editPreset : copy.newPreset}</p><h2>{editingPresetId ? copy.editPreset : copy.saveCurrentSettings}</h2></div>
-            <div className="preset-fields"><label>{copy.presetName}<input maxLength={80} value={presetName} onChange={(event) => setPresetName(event.target.value)} /></label><label>{copy.target}<select value={target} onChange={(event) => changeTarget(event.target.value)}>{Array.from(new Set([...recommendations, "jpg", "png", "webp", "avif", "mp4", "mp3", "wav", "gif", "pdf", "docx", "json", "csv", "yaml", "xml"])).map((value) => <option key={value}>{value}</option>)}</select></label><label>{copy.quality}<input type="number" min="1" max="100" value={quality} onChange={(event) => setQuality(event.target.value)} /></label><label>{copy.width}<input type="number" min="1" max="16384" value={width} onChange={(event) => setWidth(event.target.value)} /></label><label>{copy.dpi}<input type="number" min="36" max="600" value={dpi} onChange={(event) => setDpi(event.target.value)} /></label><label>{copy.colorMode}<select value={colorMode} onChange={(event) => setColorMode(event.target.value)}><option value="rgb">RGB</option><option value="gray">Gray</option></select></label><label className="checkbox-control"><input type="checkbox" checked={preserveAllStreams} onChange={(event) => setPreserveAllStreams(event.target.checked)} />{copy.preserveAllStreams}</label></div>
+            <div className="preset-fields"><label>{copy.presetName}<input maxLength={80} value={presetName} onChange={(event) => setPresetName(event.target.value)} /></label><label>{copy.target}<select value={target} onChange={(event) => changeTarget(event.target.value)}>{targetOptions.map((value) => <option key={value} disabled={capabilities ? !capabilities.routes[value]?.available : false}>{value}</option>)}</select></label><label>{copy.quality}<input type="number" min="1" max="100" value={quality} onChange={(event) => setQuality(event.target.value)} /></label><label>{copy.width}<input type="number" min="1" max="16384" value={width} onChange={(event) => setWidth(event.target.value)} /></label><label>{copy.dpi}<input type="number" min="36" max="600" value={dpi} onChange={(event) => setDpi(event.target.value)} /></label><label>{copy.colorMode}<select value={colorMode} onChange={(event) => setColorMode(event.target.value)}><option value="rgb">RGB</option><option value="gray">Gray</option></select></label><label className="checkbox-control"><input type="checkbox" checked={preserveAllStreams} onChange={(event) => setPreserveAllStreams(event.target.checked)} />{copy.preserveAllStreams}</label></div>
             <div className="action-row"><button className="primary" type="button" disabled={presetBusy || presetName.trim().length === 0} onClick={savePreset}>{presetBusy ? copy.savingPreset : copy.savePreset}</button>{editingPresetId && <button className="secondary" type="button" onClick={resetPresetEditor}>{copy.cancelEdit}</button>}</div>
           </section>
           <div className="preset-list">{presets.length === 0 ? <p className="empty">{copy.noPresets}</p> : presets.map((preset) => <article key={preset.preset_id}><div><strong>{preset.name}</strong><small>{preset.target_format.toUpperCase()} · Q {preset.quality ?? "—"} · {preset.width ? `${preset.width}px` : copy.originalSize}</small></div><div className="preset-actions"><button type="button" onClick={() => applyPreset(preset)}>{copy.applyPreset}</button><button type="button" onClick={() => editPreset(preset)}>{copy.editPreset}</button><button className={pendingDeleteId === preset.preset_id ? "danger" : "secondary"} type="button" disabled={presetBusy} onClick={() => deletePreset(preset.preset_id)}>{pendingDeleteId === preset.preset_id ? copy.confirmDelete : copy.deletePreset}</button></div></article>)}</div>
