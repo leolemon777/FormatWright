@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:formatwright:schema:job-event:v1",
+  "title": "FormatWright Job Event v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "event_id",
+    "job_id",
+    "sequence",
+    "timestamp_unix_ms",
+    "code",
+    "data"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "event_id": { "type": "string", "format": "uuid" },
+    "job_id": { "type": "string", "format": "uuid" },
+    "sequence": { "type": "integer", "minimum": 0 },
+    "timestamp_unix_ms": { "type": "integer" },
+    "code": { "type": "string", "minLength": 1 },
+    "previous_state": {
+      "$ref": "#/$defs/nullableState"
+    },
+    "next_state": {
+      "$ref": "#/$defs/nullableState"
+    },
+    "progress": {
+      "type": ["object", "null"],
+      "properties": {
+        "completed": { "type": "number", "minimum": 0 },
+        "total": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+        "unit": { "type": "string" }
+      }
+    },
+    "data": { "type": "object" }
+  },
+  "$defs": {
+    "state": {
+      "enum": [
+        "queued",
+        "inspecting",
+        "planned",
+        "blocked",
+        "running",
+        "validating",
+        "completed",
+        "warning",
+        "failed",
+        "cancelled",
+        "interrupted"
+      ]
+    },
+    "nullableState": {
+      "anyOf": [
+        { "$ref": "#/$defs/state" },
+        { "type": "null" }
+      ]
+    }
+  }
+}

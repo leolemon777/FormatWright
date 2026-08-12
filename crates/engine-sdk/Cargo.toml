@@ -1,0 +1,16 @@
+[package]
+name = "formatwright-engine-sdk"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Versioned engine identities and capabilities for FormatWright"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

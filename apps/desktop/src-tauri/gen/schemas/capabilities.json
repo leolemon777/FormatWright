@@ -1,0 +1,1 @@
+{"main":{"identifier":"main","description":"Local bundled main window with queue-event and native path-selection access.","local":true,"windows":["main"],"permissions":["core:event:default","dialog:allow-open","dialog:allow-save"]}}

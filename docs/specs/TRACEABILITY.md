@@ -1,0 +1,78 @@
+# Requirement Traceability
+
+- Status: Living document
+- Updated: 2026-08-12
+
+## 1. Rule
+
+No requirement is complete until implementation and direct verification evidence are linked. A green broad test command is insufficient when it does not exercise the named invariant.
+
+Progress snapshot for completed vs planned engineering work lives in [`docs/MASTER_EXECUTION_PLAN.md`](../MASTER_EXECUTION_PLAN.md) §1.1. This matrix stays requirement-centric.
+
+## 2. Current map
+
+| Requirement | Specification | Implementation target | Required evidence | Status |
+|---|---|---|---|---|
+| FW-FR-001/002 | CORE_SCHEMAS | `crates/core/src/inspect.rs` | Header-sniff unit test; wrong-extension FFmpeg sandbox | Verified on one platform for media slice |
+| FW-FR-010–013 | CORE_SCHEMAS, GOLDEN_WORKFLOWS | `crates/core/src/planner.rs` | Determinism, hard subtitle constraint, remux/transcode unit and sandbox tests | Verified on one platform for GW-04 slice |
+| FW-FR-020–023 | JOB_RECOVERY, THREAT_MODEL | `crates/core/src/runner.rs` | Typed argv, cancel, staged commit, Windows tree sandbox, Unix descendant test | In progress; injection corpus and cross-platform CI execution pending |
+| FW-FR-030–034 | JOB_RECOVERY | `crates/core/src/job_store.rs`, `crates/core/src/application/job_execution.rs` (`JobExecutionService`), CLI `jobs` / `convert --queue-only` / `batch-images`, Desktop queue window | 10k disk-backed transaction/paging, reservation races, forced-crash, recursive batch pause/resume/reinspection, mixed bounded scheduler, shared run_window and in-flight failure tests | In progress; CLI and Desktop durable queue windows share JobExecutionService and expose two pause controls; audit R-001–R-007, recoverable immediate pause, multi-connection races and cross-platform recovery remain |
+| FW-FR-040–042 | VALIDATION_RULES | shared validation/report model plus media, image, structured, PDF, Office, and document validators | Public ValidationReport schema, unit tests, and independent Windows sandbox probes/renders | In progress; report schema and Windows experimental validators exist, while full licensed corpus, fidelity calibration, and cross-platform certification remain |
+| FW-FR-050–053 | ENGINE_SUPPLY_CHAIN | `crates/engine-sdk`, Doctor, `crates/core/src/engine_pack.rs`, planned versioned pack store and production `EngineLocator` | Live hashes/build flags, missing-engine diagnostics, pack integrity/tamper tests, polluted-PATH negative test, offline clean-VM Starter conversions | In progress; manifest hash/license/tamper enforcement exists, but R-008/R-009 remain: the Windows release bundles no engine, falls back to ambient PATH/`.cmd`, and does not capability-gate UI routes; Starter pack, exact-path resolution, trusted keyring, revocation and engine SBOMs are pending |
+| FW-NFR-001 | RESOURCE_SCHEDULER | runner and `scripts/test_large_file.ps1` | 1/10 GiB parent RSS comparison plus 10 GiB E2E report | Verified on Windows sparse fixture; physical/cross-platform runs pending |
+| FW-NFR-002 | RESOURCE_SCHEDULER | SQLite queue, deterministic resource scheduler, `JobExecutionService`, bounded desktop projection | `DURABLE_QUEUE.md`, `QUEUE_BRIDGE.md`, `BATCH_SANDBOX.md`, `MIXED_SCHEDULER.md`, `JOB_EXECUTION_SERVICE.md` | 10k persistence/real structured conversion, shared run_window extraction tests, real-window projection, bounded batch pause/resume, and nine-job mixed RSS/WAL/process overlap verified on Windows; full mixed 10k and cross-platform gates pending |
+| FW-NFR-004 | JOB_RECOVERY | process runner | Timeout cancellation and exact process-tree crash injection | Verified on Windows development engine |
+| FW-NFR-006 | THREAT_MODEL | network-denied Plan/runner policy and `scripts/test_zero_network.ps1` | Path-scoped process-tree TCP/UDP observation plus OS-enforced denial campaign | In progress; Windows observational zero-socket run passes, while OS-enforced isolation and macOS/Linux campaigns remain |
+| Desktop E10 | UX_FLOWS | Tauri commands plus React workflow shell; queue via `JobExecutionService` + `QueueWindowControl` | `docs/testing/DESKTOP_MVP.md`, `docs/testing/PRESET_SANDBOX.md`, `docs/testing/JOB_EXECUTION_SERVICE.md`, Rust/TypeScript tests, production build | In progress; conversion, enqueue, durable queue window with finish-current/immediate pause and ValidationReport persistence implemented; recovery banner, bulk retry, shell integration, full screen-reader audit, and usability study remain |
+| 10,000 real conversions | RESOURCE_SCHEDULER §9, v0.1 DoD | Atomic bulk queue transition plus bounded 128-job execution windows | `crates/core/tests/ten_thousand_conversions.rs`, `docs/testing/TEN_THOUSAND_CONVERSIONS.md`, `docs/testing/MIXED_SCHEDULER.md` | Pass on Windows for 10,000 distinct JSON→YAML conversions; mixed RSS/WAL/process evidence passes at nine jobs, while full mixed 10k and cross-platform certification remain |
+| Security/Packaging E11 | THREAT_MODEL, ENGINE_SUPPLY_CHAIN, release checklist | Network-denied runner/path policy, zero-socket observation harness, isolated fuzz workspace, scheduled sanitizer workflow, SPDX generator, locked-dependency audit, offline NSIS packaging/checksums, verified engine staging, privacy/user/recovery docs | `docs/testing/ZERO_NETWORK.md`, `docs/security/FUZZING.md`, `docs/security/DEPENDENCY_AUDIT.md`, `docs/release/SBOM.md`, `docs/release/WINDOWS_PACKAGING.md`, `PRIVACY.md` | In progress; Windows bounded fuzz/SBOM/zero-vulnerability dependency/observational zero-network and unsigned application-shell installer smoke gates pass, but the installer has no engines and is not conversion-usable on a clean machine; Starter engine artifacts, OS-enforced isolation, trusted keyring, signed installers and cross-platform campaigns remain |
+| GW-01 | GOLDEN_WORKFLOWS | libheif development adapter; libvips certification target | `scripts/test_heic_sandbox.ps1`, real HEVC HEIC fixture, independent ffprobe/Pillow checks and visual review | Experimental; Windows JPEG/PNG, content detection, typed constraints, cancellation/retry implemented; official libvips Windows HEVC preflight failed and certified libvips pack remains pending |
+| GW-08 | GOLDEN_WORKFLOWS | native OOXML inspector, LibreOffice renderer, Poppler/native PDF validator | `scripts/test_office_sandbox.ps1`, independent all-page Poppler/Pillow checks, visual render review | Experimental; Windows DOCX/PPTX/XLSX path, isolated profile, macro/external-relationship policy, cancellation and immutable-Plan retry implemented; fidelity calibration/cross-platform corpus pending |
+| GW-09 | GOLDEN_WORKFLOWS | Poppler inspector/renderer plus native pixel validator | `scripts/test_pdf_sandbox.ps1`, independent ffprobe/Pillow checks, visual render review | Experimental; Windows all-page PNG/JPEG, DPI/color/alpha policy, encrypted/malformed paths and atomic directory commit implemented; selection/transparency/cross-platform corpus pending |
+| GW-04 | GOLDEN_WORKFLOWS | FFmpeg adapter | FFmpeg sandbox, 10 GiB harness, and unit tests | In progress; Windows remux/10 GiB/negative paths verified, multitrack and other platforms missing |
+| GW-05/GW-07 | GOLDEN_WORKFLOWS | FFmpeg audio planner/runner/validator | `scripts/test_audio_sandbox.ps1`, planner tests, independent ffprobe | Experimental; Windows core paths implemented, full metadata/layout/cross-platform corpus pending |
+| GW-06 | GOLDEN_WORKFLOWS | FFmpeg GIF planner/runner/validator | `scripts/test_gif_sandbox.ps1`, constraint tests, independent ffprobe | Experimental; Windows time/scale/fps/palette path implemented, crop/target-size/cross-platform corpus pending |
+| GW-02 | GOLDEN_WORKFLOWS | FFmpeg development image adapter; planned libvips adapter | `scripts/test_image_sandbox.ps1`, planner tests, independent ffprobe | Experimental; Windows PNG/JPEG → WebP/AVIF path implemented, libvips and full color/metadata corpus pending |
+| GW-03 | GOLDEN_WORKFLOWS | recursive image enumerator, SQLite queue, bounded resource scheduler | `scripts/test_batch_sandbox.ps1`, `scripts/test_mixed_scheduler.ps1`, persistent job events, independent ffprobe/process observation | Experimental; Windows recursive pause/resume, changed-input and bounded concurrency implemented; 10k mixed/cross-platform corpus pending |
+| GW-11 | GOLDEN_WORKFLOWS | native Rust structured adapter | `scripts/test_structured_sandbox.ps1`, strict-parser unit tests, independent native re-inspection | Experimental; Windows JSON/YAML typed and CSV/XML flat-record paths implemented, mapping/encoding/cross-platform corpus pending |
+| GW-12 | GOLDEN_WORKFLOWS | FFmpeg metadata-clean media adapter | `scripts/test_metadata_sandbox.ps1`, redacted Plan, independent ffprobe | Experimental media slice; private keys removed and unknown retained on Windows, image/PDF/type-specific corpus pending |
+| GW-10 | GOLDEN_WORKFLOWS | Pandoc subprocess, native DOCX inspector, isolated LibreOffice renderer, Poppler/native PDF validator | `scripts/test_document_sandbox.ps1`, native/independent OPC checks, token digest, independent all-page PDF render and visual review | Experimental; Windows Markdown/HTML → DOCX/PDF, four-engine immutable Plan, cancellation/retry implemented; authorized resources/layout calibration/cross-platform corpus pending |
+
+## 3. Evidence storage
+
+Local generated evidence is written under .artifacts/ and excluded from Git. Release summaries and hashes are attached to release artifacts. Small deterministic snapshots may be committed under tests/snapshots/.
+
+The reproducible Windows procedure and assertion inventory are in `docs/testing/SANDBOX_TESTS.md`.
+
+The 10,000-job Rust-to-WebView projection evidence and the required Tauri build path are in `docs/testing/QUEUE_BRIDGE.md`.
+
+The disk-backed 10,000-job transaction, paging, output reservation, and CLI action evidence is in `docs/testing/DURABLE_QUEUE.md`.
+
+The strict structured-data mapping, semantic-digest validation, lossy-policy cases, and recorded Windows evidence are in `docs/testing/STRUCTURED_SANDBOX.md`.
+
+The experimental image codec, resize, alpha, constraint, and independent-probe evidence is in `docs/testing/IMAGE_SANDBOX.md`.
+
+The real HEVC HEIC fixture, libheif fallback, JPEG/PNG validation, wrong-extension/truncation paths, cancellation, durable retry, and failed Windows libvips HEVC capability preflight are in `docs/testing/HEIC_SANDBOX.md`.
+
+The metadata classification, value-redaction, stream-copy, retained-unknown, and independent-probe evidence is in `docs/testing/METADATA_SANDBOX.md`.
+
+The recursive enumeration, directory-junction refusal, pause/resume, output naming, and changed-input evidence is in `docs/testing/BATCH_SANDBOX.md`.
+
+The offline Pandoc, bounded DOCX package inspection, required OPC parts, semantic token digest, remote-resource policy, isolated PDF pipeline, all-page render, cancellation, and durable-retry evidence is in `docs/testing/DOCUMENT_SANDBOX.md`.
+
+The content-first PDF inspection, all-page Poppler rendering, deterministic directory commit, per-page dimensions, decoded color/alpha checks, and encrypted/malformed-input evidence is in `docs/testing/PDF_SANDBOX.md`.
+
+The bounded OOXML inspection, macro and external-relationship refusal, isolated LibreOffice profile, all-page PDF validation, short same-parent workspace, cancellation, durable retry, and representative visual evidence is in `docs/testing/OFFICE_SANDBOX.md`.
+
+The shared-core desktop commands, persistent job/report storage, bilingual basic/expert workflow, native startup, production build, frontend state tests, and pixel-layout review are in `docs/testing/DESKTOP_MVP.md`.
+
+The shared durable-queue executor extraction evidence is in `docs/testing/JOB_EXECUTION_SERVICE.md`.
+
+## 4. Status values
+
+- Not started
+- In progress
+- Implemented, unverified
+- Verified on one platform
+- Certified
+- Blocked

@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:formatwright:schema:preset-library:v1",
+  "title": "FormatWright Preset Library v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "presets"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "presets": {
+      "type": "array",
+      "maxItems": 4096,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "schema_version",
+          "preset_id",
+          "name",
+          "target_format",
+          "quality",
+          "width",
+          "dpi",
+          "color_mode",
+          "preserve_all_streams"
+        ],
+        "properties": {
+          "schema_version": { "const": 1 },
+          "preset_id": {
+            "type": "string",
+            "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+          },
+          "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+          "target_format": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16,
+            "pattern": "^[a-z0-9]+$"
+          },
+          "quality": {
+            "anyOf": [
+              { "type": "integer", "minimum": 1, "maximum": 100 },
+              { "type": "null" }
+            ]
+          },
+          "width": {
+            "anyOf": [
+              { "type": "integer", "minimum": 1, "maximum": 16384 },
+              { "type": "null" }
+            ]
+          },
+          "dpi": {
+            "anyOf": [
+              { "type": "integer", "minimum": 36, "maximum": 600 },
+              { "type": "null" }
+            ]
+          },
+          "color_mode": {
+            "anyOf": [
+              { "enum": ["rgb", "gray"] },
+              { "type": "null" }
+            ]
+          },
+          "preserve_all_streams": { "type": "boolean" }
+        }
+      }
+    }
+  }
+}

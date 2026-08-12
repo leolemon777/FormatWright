@@ -1,0 +1,842 @@
+#![forbid(unsafe_code)]
+
+mod queue_bridge;
+
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::time::Instant;
+
+use formatwright_core::{
+    ConversionPreset, DoctorReport, ExecutionMilestone, JobExecutionService, JobRecord, JobState,
+    PRESET_SCHEMA_VERSION, Plan, PlanRequest, PresetLibrary, Probe, QueueRunReport,
+    QueueWindowControl, SqliteJobStore, ValidationReport, ValidationStatus, VerifiedEnginePack,
+    activate_engine_pack, execute_plan_observed, prepare_conversion,
+};
+use queue_bridge::{DEFAULT_BATCH_JOBS, DEFAULT_BENCHMARK_JOBS, QueueBatchIter};
+use serde::{Deserialize, Serialize};
+use tauri::{Emitter, Manager};
+use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
+
+struct DesktopState {
+    store: Mutex<Option<SqliteJobStore>>,
+    cancellations: Mutex<HashMap<Uuid, CancellationToken>>,
+    queue_control: Mutex<Option<QueueWindowControl>>,
+    presets: Mutex<PresetLibrary>,
+    presets_path: PathBuf,
+    reports_directory: PathBuf,
+    engine_registry_directory: PathBuf,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopPresetRequest {
+    preset_id: Option<Uuid>,
+    name: String,
+    target_format: String,
+    quality: Option<u8>,
+    width: Option<u32>,
+    dpi: Option<u16>,
+    color_mode: Option<String>,
+    preserve_all_streams: Option<bool>,
+}
+
+impl DesktopPresetRequest {
+    fn into_preset(self) -> ConversionPreset {
+        ConversionPreset {
+            schema_version: PRESET_SCHEMA_VERSION,
+            preset_id: self.preset_id.unwrap_or_else(Uuid::new_v4),
+            name: self.name,
+            target_format: self.target_format,
+            quality: self.quality,
+            width: self.width,
+            dpi: self.dpi,
+            color_mode: self.color_mode,
+            preserve_all_streams: self.preserve_all_streams.unwrap_or(true),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct DesktopPresetImportResult {
+    imported: usize,
+    total: usize,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopConversionRequest {
+    input_path: PathBuf,
+    output_path: PathBuf,
+    target_format: String,
+    quality: Option<u8>,
+    width: Option<u32>,
+    dpi: Option<u16>,
+    color_mode: Option<String>,
+    preserve_all_streams: Option<bool>,
+}
+
+impl DesktopConversionRequest {
+    fn plan_request(&self) -> PlanRequest {
+        PlanRequest {
+            target_format: self.target_format.clone(),
+            output_path: Some(self.output_path.clone()),
+            preserve_all_streams: self.preserve_all_streams.unwrap_or(true),
+            quality: self.quality,
+            width: self.width,
+            dpi: self.dpi,
+            color_mode: self.color_mode.clone(),
+            ..PlanRequest::default()
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct DesktopPreview {
+    probe: Probe,
+    plan: Plan,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct DesktopRunResult {
+    job: JobRecord,
+    report: ValidationReport,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct DesktopEngineRegistryEntry {
+    manifest_path: PathBuf,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct DesktopEnginePackSummary {
+    manifest_path: PathBuf,
+    engine_id: Option<String>,
+    version: Option<String>,
+    manifest_sha256: Option<String>,
+    executable_names: Vec<String>,
+    signature_present: bool,
+    valid: bool,
+    message: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct QueueBridgeBenchmark {
+    total_jobs: u32,
+    emitted_batches: u32,
+    maximum_batch_jobs: u32,
+    elapsed_milliseconds: u128,
+}
+
+#[tauri::command]
+async fn run_queue_bridge_benchmark(
+    window: tauri::WebviewWindow,
+    job_count: Option<u32>,
+) -> Result<QueueBridgeBenchmark, String> {
+    let total_jobs = job_count.unwrap_or(DEFAULT_BENCHMARK_JOBS);
+    let batches = QueueBatchIter::new(total_jobs, DEFAULT_BATCH_JOBS).map_err(str::to_owned)?;
+    let started = Instant::now();
+    let mut emitted_batches = 0_u32;
+    let mut maximum_batch_jobs = 0_u32;
+    for batch in batches {
+        maximum_batch_jobs = maximum_batch_jobs.max(
+            u32::try_from(batch.jobs.len()).map_err(|_| "batch length exceeds u32".to_owned())?,
+        );
+        window
+            .emit("formatwright://queue-delta", &batch)
+            .map_err(|error| format!("unable to emit queue batch: {error}"))?;
+        emitted_batches = emitted_batches.saturating_add(1);
+        tokio::task::yield_now().await;
+    }
+    Ok(QueueBridgeBenchmark {
+        total_jobs,
+        emitted_batches,
+        maximum_batch_jobs,
+        elapsed_milliseconds: started.elapsed().as_millis(),
+    })
+}
+
+#[tauri::command]
+async fn desktop_doctor() -> DoctorReport {
+    formatwright_core::doctor().await
+}
+
+#[tauri::command]
+async fn import_desktop_engine_pack(
+    state: tauri::State<'_, DesktopState>,
+    manifest_path: PathBuf,
+) -> Result<DesktopEnginePackSummary, String> {
+    let verified = tokio::task::spawn_blocking(move || activate_engine_pack(manifest_path))
+        .await
+        .map_err(|error| format!("engine-pack verification worker failed: {error}"))?
+        .map_err(serialize_error)?;
+    persist_engine_registry_entry(&state.engine_registry_directory, &verified)?;
+    Ok(valid_engine_summary(&verified))
+}
+
+#[tauri::command]
+async fn list_imported_engine_packs(
+    state: tauri::State<'_, DesktopState>,
+) -> Result<Vec<DesktopEnginePackSummary>, String> {
+    let paths = registered_manifest_paths(&state.engine_registry_directory)?;
+    let mut summaries = Vec::with_capacity(paths.len());
+    for path in paths {
+        let display_path = path.clone();
+        let result = tokio::task::spawn_blocking(move || activate_engine_pack(path))
+            .await
+            .map_err(|error| format!("engine-pack verification worker failed: {error}"))?;
+        summaries.push(match result {
+            Ok(verified) => valid_engine_summary(&verified),
+            Err(error) => DesktopEnginePackSummary {
+                manifest_path: display_path,
+                engine_id: None,
+                version: None,
+                manifest_sha256: None,
+                executable_names: Vec::new(),
+                signature_present: false,
+                valid: false,
+                message: error.message,
+            },
+        });
+    }
+    Ok(summaries)
+}
+
+#[tauri::command]
+async fn preview_conversion(request: DesktopConversionRequest) -> Result<DesktopPreview, String> {
+    let (probe, plan, _) = prepare_conversion(&request.input_path, &request.plan_request())
+        .await
+        .map_err(serialize_error)?;
+    Ok(DesktopPreview { probe, plan })
+}
+
+#[tauri::command]
+async fn run_desktop_conversion(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, DesktopState>,
+    request: DesktopConversionRequest,
+) -> Result<DesktopRunResult, String> {
+    let (probe, plan, validation_engine) =
+        prepare_conversion(&request.input_path, &request.plan_request())
+            .await
+            .map_err(serialize_error)?;
+    let job = {
+        let mut guard = lock(&state.store)?;
+        let store = require_store(&mut guard)?;
+        store
+            .create_job(&request.input_path, &request.output_path, &plan)
+            .and_then(|job| store.transition(job.id, JobState::Running, "DESKTOP_ENGINE_STARTED"))
+            .map_err(serialize_error)?
+    };
+    let cancellation = CancellationToken::new();
+    lock(&state.cancellations)?.insert(job.id, cancellation.clone());
+    let _ = window.emit("formatwright://job-updated", &job);
+    let state_for_observer = &state;
+    let execution = execute_plan_observed(
+        &probe,
+        &plan,
+        &validation_engine,
+        job.id,
+        cancellation,
+        move |milestone| {
+            if milestone == ExecutionMilestone::EngineFinished {
+                let mut guard = lock_core_store(&state_for_observer.store)?;
+                let store = require_store_core(&mut guard)?;
+                store.transition(job.id, JobState::Validating, "DESKTOP_VALIDATION_STARTED")?;
+            }
+            Ok(())
+        },
+    )
+    .await;
+    lock(&state.cancellations)?.remove(&job.id);
+    match execution {
+        Ok(result) => {
+            let final_state = match result.report.status {
+                ValidationStatus::Pass => JobState::Completed,
+                ValidationStatus::Warning | ValidationStatus::Unknown => JobState::Warning,
+                ValidationStatus::Fail => JobState::Failed,
+            };
+            let job = {
+                let mut guard = lock(&state.store)?;
+                require_store(&mut guard)?
+                    .transition(job.id, final_state, "DESKTOP_CONVERSION_FINISHED")
+                    .map_err(serialize_error)?
+            };
+            save_report(&state.reports_directory, job.id, &result.report)?;
+            let _ = window.emit("formatwright://job-updated", &job);
+            Ok(DesktopRunResult {
+                job,
+                report: result.report,
+            })
+        }
+        Err(error) => {
+            let final_state = if error.code == formatwright_core::ErrorCode::Cancelled {
+                JobState::Cancelled
+            } else {
+                JobState::Failed
+            };
+            if let Ok(mut guard) = state.store.lock()
+                && let Some(store) = guard.as_mut()
+            {
+                let _ = store.transition(job.id, final_state, "DESKTOP_CONVERSION_FAILED");
+            }
+            Err(serialize_error(error))
+        }
+    }
+}
+
+#[tauri::command]
+async fn queue_desktop_conversion(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, DesktopState>,
+    request: DesktopConversionRequest,
+) -> Result<JobRecord, String> {
+    let (probe, plan, _) = prepare_conversion(&request.input_path, &request.plan_request())
+        .await
+        .map_err(serialize_error)?;
+    let job = {
+        let mut guard = lock(&state.store)?;
+        let store = require_store(&mut guard)?;
+        store
+            .create_job(&probe.artifact.canonical_path, &request.output_path, &plan)
+            .and_then(|job| store.transition(job.id, JobState::Queued, "JOB_ENQUEUED"))
+            .map_err(serialize_error)?
+    };
+    let _ = window.emit("formatwright://job-updated", &job);
+    Ok(job)
+}
+
+#[tauri::command]
+async fn run_desktop_queue_window(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, DesktopState>,
+    limit: Option<usize>,
+    parallel: Option<usize>,
+) -> Result<QueueRunReport, String> {
+    let limit = limit.unwrap_or(100).clamp(1, 256);
+    let parallel = parallel.unwrap_or(4).clamp(1, 16);
+    let control = QueueWindowControl::new();
+    {
+        let mut queue_control = lock(&state.queue_control)?;
+        if queue_control.is_some() {
+            return Err("a durable queue window is already running".to_owned());
+        }
+        *queue_control = Some(control.clone());
+    }
+    let mut store = {
+        let mut guard = lock(&state.store)?;
+        if let Some(store) = guard.take() {
+            store
+        } else {
+            *lock(&state.queue_control)? = None;
+            return Err(
+                "job store is busy; stop the durable queue or wait for it to finish".to_owned(),
+            );
+        }
+    };
+    let reports_directory = state.reports_directory.clone();
+    let report = JobExecutionService::run_window_observed(
+        &mut store,
+        limit,
+        parallel,
+        control,
+        |job_id, validation| {
+            save_report(&reports_directory, job_id, validation).map_err(|message| {
+                formatwright_core::FormatWrightError::new(
+                    formatwright_core::ErrorCode::StorageFailed,
+                    formatwright_core::Stage::Validate,
+                    "Unable to persist ValidationReport for a queued job",
+                    "Check the application reports directory and retry the queue window.",
+                )
+                .with_diagnostic(message)
+            })
+        },
+    )
+    .await;
+    {
+        let mut guard = lock(&state.store)?;
+        *guard = Some(store);
+    }
+    *lock(&state.queue_control)? = None;
+    let report = report.map_err(serialize_error)?;
+    let _ = window.emit("formatwright://queue-window-finished", &report);
+    Ok(report)
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+enum DesktopQueuePauseMode {
+    FinishCurrent,
+    Immediate,
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+fn pause_desktop_queue_window(
+    state: tauri::State<'_, DesktopState>,
+    mode: DesktopQueuePauseMode,
+) -> Result<bool, String> {
+    let queue_control = lock(&state.queue_control)?;
+    let Some(control) = queue_control.as_ref() else {
+        return Ok(false);
+    };
+    match mode {
+        DesktopQueuePauseMode::FinishCurrent => control.pause_finish_current(),
+        DesktopQueuePauseMode::Immediate => control.pause_immediate(),
+    }
+    Ok(true)
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+fn cancel_desktop_queue_window(state: tauri::State<'_, DesktopState>) -> Result<bool, String> {
+    pause_desktop_queue_window(state, DesktopQueuePauseMode::Immediate)
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+fn cancel_desktop_job(
+    state: tauri::State<'_, DesktopState>,
+    job_id: String,
+) -> Result<bool, String> {
+    let job_id = Uuid::parse_str(&job_id).map_err(|error| error.to_string())?;
+    let cancellations = lock(&state.cancellations)?;
+    if let Some(token) = cancellations.get(&job_id) {
+        token.cancel();
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+fn list_desktop_jobs(
+    state: tauri::State<'_, DesktopState>,
+    limit: Option<usize>,
+) -> Result<Vec<JobRecord>, String> {
+    let mut guard = lock(&state.store)?;
+    require_store(&mut guard)?
+        .list_jobs(limit.unwrap_or(100).clamp(1, 500))
+        .map_err(serialize_error)
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+fn get_desktop_report(
+    state: tauri::State<'_, DesktopState>,
+    job_id: String,
+) -> Result<Option<ValidationReport>, String> {
+    let job_id = Uuid::parse_str(&job_id).map_err(|error| error.to_string())?;
+    read_report(&state.reports_directory, job_id)
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+fn list_desktop_presets(
+    state: tauri::State<'_, DesktopState>,
+) -> Result<Vec<ConversionPreset>, String> {
+    Ok(lock(&state.presets)?.presets.clone())
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+fn save_desktop_preset(
+    state: tauri::State<'_, DesktopState>,
+    request: DesktopPresetRequest,
+) -> Result<ConversionPreset, String> {
+    let preset = request.into_preset();
+    let preset_id = preset.preset_id;
+    let mut current = lock(&state.presets)?;
+    let mut updated = current.clone();
+    updated.upsert(preset).map_err(serialize_error)?;
+    let saved = updated
+        .presets
+        .iter()
+        .find(|candidate| candidate.preset_id == preset_id)
+        .cloned()
+        .ok_or_else(|| "saved preset was not found in the updated library".to_owned())?;
+    persist_preset_library(&state.presets_path, &updated)?;
+    *current = updated;
+    Ok(saved)
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+fn delete_desktop_preset(
+    state: tauri::State<'_, DesktopState>,
+    preset_id: String,
+) -> Result<bool, String> {
+    let preset_id = Uuid::parse_str(&preset_id).map_err(|error| error.to_string())?;
+    let mut current = lock(&state.presets)?;
+    let mut updated = current.clone();
+    if !updated.remove(preset_id) {
+        return Ok(false);
+    }
+    persist_preset_library(&state.presets_path, &updated)?;
+    *current = updated;
+    Ok(true)
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+fn import_desktop_presets(
+    state: tauri::State<'_, DesktopState>,
+    source_path: PathBuf,
+) -> Result<DesktopPresetImportResult, String> {
+    let imported = read_preset_library(&source_path)?;
+    let imported_count = imported.presets.len();
+    let mut current = lock(&state.presets)?;
+    let mut updated = current.clone();
+    updated.merge(imported).map_err(serialize_error)?;
+    persist_preset_library(&state.presets_path, &updated)?;
+    let total = updated.presets.len();
+    *current = updated;
+    Ok(DesktopPresetImportResult {
+        imported: imported_count,
+        total,
+    })
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+fn export_desktop_presets(
+    state: tauri::State<'_, DesktopState>,
+    destination_path: PathBuf,
+) -> Result<usize, String> {
+    let library = lock(&state.presets)?.clone();
+    persist_preset_library(&destination_path, &library)?;
+    Ok(library.presets.len())
+}
+
+fn lock<T>(mutex: &Mutex<T>) -> Result<std::sync::MutexGuard<'_, T>, String> {
+    mutex
+        .lock()
+        .map_err(|_| "desktop state lock was poisoned".to_owned())
+}
+
+fn require_store<'a>(
+    guard: &'a mut std::sync::MutexGuard<'_, Option<SqliteJobStore>>,
+) -> Result<&'a mut SqliteJobStore, String> {
+    guard.as_mut().ok_or_else(|| {
+        "durable queue window is running; wait for it to finish or stop it first".to_owned()
+    })
+}
+
+fn lock_core_store(
+    mutex: &Mutex<Option<SqliteJobStore>>,
+) -> formatwright_core::Result<std::sync::MutexGuard<'_, Option<SqliteJobStore>>> {
+    mutex.lock().map_err(|_| {
+        formatwright_core::FormatWrightError::new(
+            formatwright_core::ErrorCode::Internal,
+            formatwright_core::Stage::Store,
+            "Desktop state lock was poisoned",
+            "Restart FormatWright and retry.",
+        )
+    })
+}
+
+fn require_store_core<'a>(
+    guard: &'a mut std::sync::MutexGuard<'_, Option<SqliteJobStore>>,
+) -> formatwright_core::Result<&'a mut SqliteJobStore> {
+    guard.as_mut().ok_or_else(|| {
+        formatwright_core::FormatWrightError::new(
+            formatwright_core::ErrorCode::StorageFailed,
+            formatwright_core::Stage::Store,
+            "Job store is unavailable while the durable queue window runs",
+            "Wait for the queue window to finish or stop it, then retry.",
+        )
+    })
+}
+
+#[allow(clippy::needless_pass_by_value)]
+fn serialize_error(error: formatwright_core::FormatWrightError) -> String {
+    serde_json::to_string(&error).unwrap_or_else(|_| error.to_string())
+}
+
+fn report_path(directory: &std::path::Path, job_id: Uuid) -> PathBuf {
+    directory.join(format!("{job_id}.json"))
+}
+
+fn save_report(
+    directory: &std::path::Path,
+    job_id: Uuid,
+    report: &ValidationReport,
+) -> Result<(), String> {
+    let destination = report_path(directory, job_id);
+    let partial = directory.join(format!(".{job_id}.partial"));
+    let bytes = serde_json::to_vec_pretty(report).map_err(|error| error.to_string())?;
+    std::fs::write(&partial, bytes).map_err(|error| error.to_string())?;
+    std::fs::rename(&partial, destination).map_err(|error| error.to_string())
+}
+
+fn read_report(
+    directory: &std::path::Path,
+    job_id: Uuid,
+) -> Result<Option<ValidationReport>, String> {
+    let path = report_path(directory, job_id);
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
+    serde_json::from_slice(&bytes)
+        .map(Some)
+        .map_err(|error| error.to_string())
+}
+
+fn read_preset_library(path: &Path) -> Result<PresetLibrary, String> {
+    let metadata = std::fs::metadata(path).map_err(|error| error.to_string())?;
+    if metadata.len() > 1024 * 1024 {
+        return Err("preset library exceeds the 1 MiB import limit".to_owned());
+    }
+    let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
+    let library = serde_json::from_slice::<PresetLibrary>(&bytes)
+        .map_err(|error| format!("invalid preset library: {error}"))?;
+    library.validate().map_err(serialize_error)?;
+    Ok(library)
+}
+
+fn load_preset_library(path: &Path) -> Result<PresetLibrary, String> {
+    let backup = backup_path(path);
+    if !path.exists() && backup.is_file() {
+        std::fs::rename(&backup, path).map_err(|error| error.to_string())?;
+    }
+    if !path.exists() {
+        return Ok(PresetLibrary::empty());
+    }
+    let library = read_preset_library(path)?;
+    if backup.is_file() {
+        std::fs::remove_file(backup).map_err(|error| error.to_string())?;
+    }
+    Ok(library)
+}
+
+fn persist_preset_library(path: &Path, library: &PresetLibrary) -> Result<(), String> {
+    library.validate().map_err(serialize_error)?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| "preset destination has no parent directory".to_owned())?;
+    std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    let partial = parent.join(format!(".formatwright-presets-{}.partial", Uuid::new_v4()));
+    let backup = backup_path(path);
+    let bytes = serde_json::to_vec_pretty(library).map_err(|error| error.to_string())?;
+    std::fs::write(&partial, bytes).map_err(|error| error.to_string())?;
+    if path.exists() {
+        if backup.exists() {
+            std::fs::remove_file(&backup).map_err(|error| error.to_string())?;
+        }
+        std::fs::rename(path, &backup).map_err(|error| error.to_string())?;
+    }
+    if let Err(error) = std::fs::rename(&partial, path) {
+        if backup.is_file() && !path.exists() {
+            let _ = std::fs::rename(&backup, path);
+        }
+        let _ = std::fs::remove_file(&partial);
+        return Err(error.to_string());
+    }
+    if backup.is_file() {
+        std::fs::remove_file(backup).map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+fn backup_path(path: &Path) -> PathBuf {
+    let filename = path
+        .file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .unwrap_or("presets.json");
+    path.with_file_name(format!(".{filename}.backup"))
+}
+
+fn valid_engine_summary(verified: &VerifiedEnginePack) -> DesktopEnginePackSummary {
+    DesktopEnginePackSummary {
+        manifest_path: verified.manifest_path.clone(),
+        engine_id: Some(verified.manifest.engine_id.clone()),
+        version: Some(verified.manifest.version.clone()),
+        manifest_sha256: Some(verified.manifest_sha256.clone()),
+        executable_names: verified.executables.keys().cloned().collect(),
+        signature_present: verified.signature_present,
+        valid: true,
+        message: if verified.signature_present {
+            "Integrity verified; signature present but not yet trusted by a release keyring."
+                .to_owned()
+        } else {
+            "Integrity verified; unsigned pack remains unverified.".to_owned()
+        },
+    }
+}
+
+fn persist_engine_registry_entry(
+    directory: &std::path::Path,
+    verified: &VerifiedEnginePack,
+) -> Result<(), String> {
+    let destination = directory.join(format!("{}.json", verified.manifest_sha256));
+    if destination.is_file() {
+        return Ok(());
+    }
+    let partial = directory.join(format!(
+        ".{}.{}.partial",
+        verified.manifest_sha256,
+        Uuid::new_v4()
+    ));
+    let entry = DesktopEngineRegistryEntry {
+        manifest_path: verified.manifest_path.clone(),
+    };
+    let bytes = serde_json::to_vec_pretty(&entry).map_err(|error| error.to_string())?;
+    std::fs::write(&partial, bytes).map_err(|error| error.to_string())?;
+    match std::fs::rename(&partial, &destination) {
+        Ok(()) => Ok(()),
+        Err(_) if destination.is_file() => {
+            let _ = std::fs::remove_file(partial);
+            Ok(())
+        }
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+fn registered_manifest_paths(directory: &std::path::Path) -> Result<Vec<PathBuf>, String> {
+    let mut paths = Vec::new();
+    let entries = std::fs::read_dir(directory).map_err(|error| error.to_string())?;
+    for entry in entries {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let path = entry.path();
+        if path.extension().and_then(std::ffi::OsStr::to_str) != Some("json") {
+            continue;
+        }
+        let bytes = std::fs::read(&path).map_err(|error| error.to_string())?;
+        let record =
+            serde_json::from_slice::<DesktopEngineRegistryEntry>(&bytes).map_err(|error| {
+                format!("invalid engine registry entry {}: {error}", path.display())
+            })?;
+        paths.push(record.manifest_path);
+    }
+    paths.sort();
+    paths.dedup();
+    Ok(paths)
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+/// Starts the bundled local desktop application.
+///
+/// # Panics
+///
+/// Panics when Tauri cannot initialize the configured window or event loop.
+pub fn run() {
+    tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            let data_directory = app.path().app_data_dir()?;
+            let reports_directory = data_directory.join("reports");
+            let engine_registry_directory = data_directory.join("engine-registry");
+            let presets_path = data_directory.join("presets.json");
+            std::fs::create_dir_all(&reports_directory)?;
+            std::fs::create_dir_all(&engine_registry_directory)?;
+            for manifest_path in registered_manifest_paths(&engine_registry_directory)
+                .map_err(Box::<dyn std::error::Error>::from)?
+            {
+                let _ = activate_engine_pack(manifest_path);
+            }
+            let mut store = SqliteJobStore::open(data_directory.join("jobs.sqlite3"))
+                .map_err(|error| Box::<dyn std::error::Error>::from(error.to_string()))?;
+            store
+                .interrupt_active_jobs()
+                .map_err(|error| Box::<dyn std::error::Error>::from(error.to_string()))?;
+            let presets =
+                load_preset_library(&presets_path).map_err(Box::<dyn std::error::Error>::from)?;
+            app.manage(DesktopState {
+                store: Mutex::new(Some(store)),
+                cancellations: Mutex::new(HashMap::new()),
+                queue_control: Mutex::new(None),
+                presets: Mutex::new(presets),
+                presets_path,
+                reports_directory,
+                engine_registry_directory,
+            });
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            run_queue_bridge_benchmark,
+            desktop_doctor,
+            import_desktop_engine_pack,
+            list_imported_engine_packs,
+            preview_conversion,
+            run_desktop_conversion,
+            queue_desktop_conversion,
+            run_desktop_queue_window,
+            pause_desktop_queue_window,
+            cancel_desktop_queue_window,
+            cancel_desktop_job,
+            list_desktop_jobs,
+            get_desktop_report,
+            list_desktop_presets,
+            save_desktop_preset,
+            delete_desktop_preset,
+            import_desktop_presets,
+            export_desktop_presets,
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running FormatWright desktop");
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::PathBuf;
+
+    use tempfile::tempdir;
+
+    use formatwright_core::{ConversionPreset, PRESET_SCHEMA_VERSION, PresetLibrary};
+    use uuid::Uuid;
+
+    use super::{
+        DesktopEngineRegistryEntry, backup_path, load_preset_library, persist_preset_library,
+        registered_manifest_paths,
+    };
+
+    #[test]
+    fn engine_registry_reads_entries_and_ignores_partials() {
+        let directory = tempdir().expect("temporary registry");
+        let expected = PathBuf::from("C:/engine-pack/manifest.json");
+        let entry = DesktopEngineRegistryEntry {
+            manifest_path: expected.clone(),
+        };
+        fs::write(
+            directory.path().join("abc.json"),
+            serde_json::to_vec(&entry).expect("serialize entry"),
+        )
+        .expect("write registry entry");
+        fs::write(directory.path().join(".abc.partial"), b"incomplete").expect("write partial");
+
+        assert_eq!(
+            registered_manifest_paths(directory.path()).expect("read registry"),
+            vec![expected]
+        );
+    }
+
+    #[test]
+    fn preset_library_write_is_recoverable_from_backup() {
+        let directory = tempdir().expect("temporary presets");
+        let path = directory.path().join("presets.json");
+        let mut library = PresetLibrary::empty();
+        library
+            .upsert(ConversionPreset {
+                schema_version: PRESET_SCHEMA_VERSION,
+                preset_id: Uuid::new_v4(),
+                name: "Smaller image".to_owned(),
+                target_format: "webp".to_owned(),
+                quality: Some(78),
+                width: None,
+                dpi: None,
+                color_mode: Some("rgb".to_owned()),
+                preserve_all_streams: true,
+            })
+            .expect("valid preset");
+        persist_preset_library(&path, &library).expect("persist presets");
+        let backup = backup_path(&path);
+        fs::rename(&path, &backup).expect("simulate interrupted replacement");
+        assert_eq!(load_preset_library(&path).expect("recover backup"), library);
+        assert!(path.is_file());
+        assert!(!backup.exists());
+    }
+}

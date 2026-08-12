@@ -1,0 +1,53 @@
+export type DesktopError = {
+  code?: string;
+  stage?: string;
+  message: string;
+  recovery?: string;
+};
+
+export function recommendedTargets(path: string): string[] {
+  const extension = path.split(/[\\/]/).pop()?.split(".").pop()?.toLowerCase() ?? "";
+  if (["heic", "heif"].includes(extension)) return ["jpg", "png"];
+  if (["png", "jpg", "jpeg"].includes(extension)) return ["webp", "avif"];
+  if (["mov", "mkv", "avi", "webm"].includes(extension)) return ["mp4", "gif", "mp3"];
+  if (["wav", "flac", "aac", "m4a", "ogg", "opus", "mp3"].includes(extension)) {
+    return ["m4a", "mp3", "wav"];
+  }
+  if (["docx", "pptx", "xlsx"].includes(extension)) return ["pdf"];
+  if (["md", "markdown", "html", "htm"].includes(extension)) return ["pdf", "docx"];
+  if (extension === "pdf") return ["png", "jpg"];
+  if (["csv", "json", "yaml", "yml", "xml"].includes(extension)) {
+    return ["json", "csv", "yaml", "xml"];
+  }
+  return ["mp4", "webp", "pdf"];
+}
+
+export function suggestedOutput(input: string, target: string): string {
+  if (!input || !target) return "";
+  const normalized = target === "jpeg" ? "jpg" : target;
+  const separator = Math.max(input.lastIndexOf("/"), input.lastIndexOf("\\"));
+  const directory = separator >= 0 ? input.slice(0, separator + 1) : "";
+  const filename = separator >= 0 ? input.slice(separator + 1) : input;
+  const dot = filename.lastIndexOf(".");
+  const stem = dot > 0 ? filename.slice(0, dot) : filename;
+  if (isDirectoryOutput(input, target)) {
+    return `${directory}${stem}.converted-${normalized}-pages`;
+  }
+  return `${directory}${stem}.converted.${normalized}`;
+}
+
+export function isDirectoryOutput(input: string, target: string): boolean {
+  const extension = input.split(/[\\/]/).pop()?.split(".").pop()?.toLowerCase() ?? "";
+  return extension === "pdf" && ["png", "jpg", "jpeg"].includes(target.toLowerCase());
+}
+
+export function parseDesktopError(reason: unknown): DesktopError {
+  const raw = reason instanceof Error ? reason.message : String(reason);
+  try {
+    const parsed = JSON.parse(raw) as Partial<DesktopError>;
+    if (typeof parsed.message === "string") return { ...parsed, message: parsed.message };
+  } catch {
+    // The IPC layer may return a plain string for transport/setup failures.
+  }
+  return { message: raw };
+}

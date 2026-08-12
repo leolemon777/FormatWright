@@ -1,0 +1,34 @@
+# ADR-0003: SQLite is the local job source of truth
+
+- Status: Accepted
+- Date: 2026-08-10
+- Owners: FormatWright maintainers
+- Related requirements: FW-FR-030 through FW-FR-034
+
+## Context
+
+FormatWright must recover large batch queues after crashes and must not treat UI memory as durable state. A separate database service would make a local desktop application harder to install and operate.
+
+## Decision
+
+SQLite in WAL mode stores job identity, plan snapshots, step state, engine identity, output reservation, and validation summaries. Large logs, source files, outputs, and report bodies stay in the filesystem.
+
+All state transitions are transactional and validated by a state machine. One storage actor serializes writes; read models may use separate connections.
+
+## Consequences
+
+- Desktop operation requires no database server.
+- Schema migrations and downgrade behavior are release-critical.
+- Very large queues must be paginated and streamed from the database.
+- The future distributed server may implement a separate Postgres adapter without changing domain semantics.
+
+## Verification
+
+- Crash tests terminate the process at every state transition.
+- Migration tests cover the previous supported schema.
+- A 10,000-job test proves bounded in-memory hydration.
+
+## Revisit when
+
+The single-machine product has measured write contention that cannot be solved with batching or the self-hosted distributed worker becomes a committed release.
+

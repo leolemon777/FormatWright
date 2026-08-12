@@ -1,0 +1,74 @@
+schema_version = 1
+
+[[workflows]]
+id = "GW-01"
+name = "HEIC/HEIF to JPG or PNG"
+spec = "docs/specs/GOLDEN_WORKFLOWS.md#gw-01--heicheif-to-jpg-or-png"
+status = "planned"
+
+[[workflows]]
+id = "GW-02"
+name = "PNG/JPG to WebP or AVIF"
+spec = "docs/specs/GOLDEN_WORKFLOWS.md#gw-02--pngjpg-to-webp-or-avif"
+status = "planned"
+
+[[workflows]]
+id = "GW-03"
+name = "Recursive image batch resize/compress"
+spec = "docs/specs/GOLDEN_WORKFLOWS.md#gw-03--recursive-image-batch-resizecompress"
+status = "planned"
+
+[[workflows]]
+id = "GW-04"
+name = "MOV/MKV/AVI/WebM to MP4"
+spec = "docs/specs/GOLDEN_WORKFLOWS.md#gw-04--movmkvaviwebm-to-mp4"
+status = "architecture-spike"
+
+[[workflows]]
+id = "GW-05"
+name = "Video to MP3/M4A/WAV"
+spec = "docs/specs/GOLDEN_WORKFLOWS.md#gw-05--video-to-mp3m4awav"
+status = "planned"
+
+[[workflows]]
+id = "GW-06"
+name = "Video to GIF"
+spec = "docs/specs/GOLDEN_WORKFLOWS.md#gw-06--video-to-gif"
+status = "planned"
+
+[[workflows]]
+id = "GW-07"
+name = "Audio format conversion"
+spec = "docs/specs/GOLDEN_WORKFLOWS.md#gw-07--audio-format-conversion"
+status = "planned"
+
+[[workflows]]
+id = "GW-08"
+name = "DOCX/PPTX/XLSX to PDF"
+spec = "docs/specs/GOLDEN_WORKFLOWS.md#gw-08--docxpptxxlsx-to-pdf"
+status = "planned"
+
+[[workflows]]
+id = "GW-09"
+name = "PDF to PNG or JPG"
+spec = "docs/specs/GOLDEN_WORKFLOWS.md#gw-09--pdf-to-png-or-jpg"
+status = "planned"
+
+[[workflows]]
+id = "GW-10"
+name = "Markdown/HTML to PDF or DOCX"
+spec = "docs/specs/GOLDEN_WORKFLOWS.md#gw-10--markdownhtml-to-pdf-or-docx"
+status = "planned"
+
+[[workflows]]
+id = "GW-11"
+name = "CSV/JSON/YAML/XML conversion"
+spec = "docs/specs/GOLDEN_WORKFLOWS.md#gw-11--csvjsonyamlxml-conversion"
+status = "planned"
+
+[[workflows]]
+id = "GW-12"
+name = "Inspect and metadata clean"
+spec = "docs/specs/GOLDEN_WORKFLOWS.md#gw-12--inspect-and-metadata-clean"
+status = "planned"
+

@@ -1,0 +1,140 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  PNPM_VERSION: 11.16.0
+  NODE_VERSION: 24
+
+jobs:
+  linux:
+    name: Linux
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Linux desktop prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            curl \
+            file \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            wget
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - name: Frontend dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Frontend checks
+        run: |
+          pnpm check
+          pnpm test
+          pnpm build
+      - name: Toolchain
+        run: rustup component add rustfmt clippy
+      - name: Repository contracts
+        run: python3 scripts/check_repository.py
+      - name: Application SBOM
+        run: python3 scripts/generate_sbom.py
+      - name: Dependency audit tool
+        run: cargo install cargo-audit --version 0.22.2 --locked
+      - name: Dependency audit
+        run: python3 scripts/audit_dependencies.py
+      - name: Dependency policy tool
+        run: cargo install cargo-deny --version 0.20.2 --locked
+      - name: Dependency policy
+        run: cargo deny check
+      - name: Minimum supported Rust
+        run: |
+          rustup toolchain install 1.88.0 --profile minimal
+          cargo +1.88.0 check --workspace --all-features --locked
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - name: Test
+        run: cargo test --workspace --all-features
+
+  windows:
+    name: Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - name: Frontend dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Frontend checks
+        run: |
+          pnpm check
+          pnpm test
+          pnpm build
+      - name: Toolchain
+        run: rustup component add rustfmt clippy
+      - name: Repository contracts
+        run: python scripts/check_repository.py
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - name: Test
+        run: cargo test --workspace --all-features
+
+  macos:
+    name: macOS
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - name: Frontend dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Frontend checks
+        run: |
+          pnpm check
+          pnpm test
+          pnpm build
+      - name: Toolchain
+        run: rustup component add rustfmt clippy
+      - name: Repository contracts
+        run: python3 scripts/check_repository.py
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - name: Test
+        run: cargo test --workspace --all-features

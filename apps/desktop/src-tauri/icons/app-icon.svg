@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="FormatWright logo">
+  <rect width="1024" height="1024" rx="190" fill="#111311"/>
+  <path d="M222 232h384v116H350v108h218v116H350v220H222V232Z" fill="#f4f0e8"/>
+  <path d="M610 232h132l-57 384h-98l23-384Zm-32 468h126v124H578V700Z" fill="#baff60"/>
+</svg>

@@ -1,0 +1,811 @@
+//! Shared durable-queue execution window used by every surface.
+
+use std::collections::VecDeque;
+
+use formatwright_engine_sdk::EngineIdentity;
+use serde::Serialize;
+use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
+
+use crate::doctor::{inspect_builtin_engine, inspect_engine};
+use crate::document::inspect_document;
+use crate::domain::{JobState, Plan, Probe, ValidationReport, ValidationStatus};
+use crate::error::{ErrorCode, FormatWrightError, Result, Stage};
+use crate::inspect::inspect_media;
+use crate::job_store::{JobDetails, SqliteJobStore};
+use crate::office::inspect_office;
+use crate::pdf::inspect_pdf;
+use crate::runner::{ExecutionMilestone, ExecutionResult, execute_plan_observed};
+use crate::scheduler::{ResourceRequest, ResourceScheduler, SchedulerPolicy, request_for_plan};
+use crate::structured::inspect_structured;
+
+/// Machine-readable summary of one bounded `jobs run` scheduling window.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct QueueRunReport {
+    pub schema_version: u32,
+    pub selected: usize,
+    pub completed: usize,
+    pub warning: usize,
+    pub blocked: usize,
+    pub failed: usize,
+    pub cancelled: usize,
+    pub stopped: bool,
+    pub parallelism: usize,
+    pub peak_active: usize,
+}
+
+/// Controls admission and worker cancellation for one durable queue window.
+///
+/// - [`Self::pause_finish_current`] stops admitting new jobs but lets active
+///   workers finish.
+/// - [`Self::pause_immediate`] also cancels active workers (CLI Ctrl+C semantics).
+#[derive(Clone, Debug)]
+pub struct QueueWindowControl {
+    admission: CancellationToken,
+    workers: CancellationToken,
+}
+
+impl QueueWindowControl {
+    /// Creates an idle control plane for a new scheduling window.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            admission: CancellationToken::new(),
+            workers: CancellationToken::new(),
+        }
+    }
+
+    /// Stops new admissions; in-flight workers keep running.
+    pub fn pause_finish_current(&self) {
+        self.admission.cancel();
+    }
+
+    /// Stops new admissions and cancels active workers.
+    pub fn pause_immediate(&self) {
+        self.admission.cancel();
+        self.workers.cancel();
+    }
+
+    #[must_use]
+    pub fn admission_cancelled(&self) -> bool {
+        self.admission.is_cancelled()
+    }
+
+    #[must_use]
+    pub fn workers_cancelled(&self) -> bool {
+        self.workers.is_cancelled()
+    }
+
+    fn worker_token(&self) -> CancellationToken {
+        self.workers.clone()
+    }
+}
+
+impl Default for QueueWindowControl {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Shared control-plane executor for durable queued jobs.
+#[derive(Debug, Default)]
+pub struct JobExecutionService;
+
+impl JobExecutionService {
+    /// Hydrates at most `limit` queued jobs, admits them through the deterministic
+    /// resource scheduler, rechecks engine identity and input fingerprint, then
+    /// executes through the shared runner while persisting milestones centrally.
+    ///
+    /// `cancellation` stops new admissions **and** cancels active workers
+    /// (immediate pause). Surfaces that need finish-current pause should call
+    /// [`Self::run_window_observed`] with a [`QueueWindowControl`].
+    ///
+    /// # Errors
+    ///
+    /// Returns typed errors for invalid bounds, storage failures, scheduler
+    /// exhaustion when no pending job fits, or unexpected worker panics.
+    pub async fn run_window(
+        store: &mut SqliteJobStore,
+        limit: usize,
+        parallel: usize,
+        cancellation: CancellationToken,
+    ) -> Result<QueueRunReport> {
+        let control = QueueWindowControl::new();
+        if cancellation.is_cancelled() {
+            control.pause_immediate();
+        } else {
+            let linked = control.clone();
+            tokio::spawn(async move {
+                cancellation.cancelled().await;
+                linked.pause_immediate();
+            });
+        }
+        Self::run_window_observed(store, limit, parallel, control, |_, _| Ok(())).await
+    }
+
+    /// Same as [`Self::run_window`], with explicit pause control and a report
+    /// callback invoked for every job that produced a `ValidationReport` before
+    /// the terminal state is committed.
+    ///
+    /// Surfaces use this to persist report files or stream them to clients.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same failures as [`Self::run_window`], plus any error from
+    /// `on_report` (which leaves the job non-terminal so recovery can retry).
+    #[allow(clippy::too_many_lines)]
+    pub async fn run_window_observed<F>(
+        store: &mut SqliteJobStore,
+        limit: usize,
+        parallel: usize,
+        control: QueueWindowControl,
+        mut on_report: F,
+    ) -> Result<QueueRunReport>
+    where
+        F: FnMut(Uuid, &ValidationReport) -> Result<()>,
+    {
+        if !(1..=16).contains(&parallel) {
+            return Err(FormatWrightError::new(
+                ErrorCode::InputInvalid,
+                Stage::Store,
+                "Parallelism must be between 1 and 16",
+                "Choose --parallel 1 through 16.",
+            ));
+        }
+        if limit > 256 {
+            return Err(FormatWrightError::new(
+                ErrorCode::InputInvalid,
+                Stage::Store,
+                "A scheduling window cannot hydrate more than 256 jobs",
+                "Use --limit 256 or less and run another bounded window afterward.",
+            ));
+        }
+        let jobs = store.list_jobs_by_state(JobState::Queued, limit)?;
+        let mut pending = VecDeque::with_capacity(jobs.len());
+        for job in &jobs {
+            let details = store.get_job_details(job.id)?.ok_or_else(|| {
+                FormatWrightError::new(
+                    ErrorCode::StorageFailed,
+                    Stage::Store,
+                    format!("Queued job disappeared: {}", job.id),
+                    "Run jobs recover and inspect the database.",
+                )
+            })?;
+            pending.push_back(PendingQueueJob {
+                resources: request_for_plan(job.id, &details.plan),
+                details,
+            });
+        }
+        let mut completed = 0_usize;
+        let mut warning = 0_usize;
+        let mut blocked = 0_usize;
+        let mut failed = 0_usize;
+        let mut cancelled = 0_usize;
+        let policy = SchedulerPolicy::bounded(parallel);
+        let mut scheduler = ResourceScheduler::new(policy);
+        let mut workers = tokio::task::JoinSet::new();
+        let (milestone_sender, mut milestone_receiver) = tokio::sync::mpsc::unbounded_channel();
+        let mut peak_active = 0_usize;
+
+        while !pending.is_empty() || !workers.is_empty() {
+            while !control.admission_cancelled()
+                && scheduler.active_count() < policy.max_processes
+                && !pending.is_empty()
+            {
+                let scan_length = pending.len();
+                let mut admitted = None;
+                for _ in 0..scan_length {
+                    let Some(candidate) = pending.pop_front() else {
+                        break;
+                    };
+                    if scheduler.try_admit(candidate.resources.clone()) {
+                        admitted = Some(candidate);
+                        break;
+                    }
+                    pending.push_back(candidate);
+                }
+                let Some(candidate) = admitted else {
+                    break;
+                };
+                let job_id = candidate.details.job.id;
+                match prepare_queued_job(store, candidate.details).await? {
+                    QueuePreparation::Ready(prepared) => {
+                        let prepared = *prepared;
+                        let worker_cancellation = control.worker_token();
+                        let worker_milestones = milestone_sender.clone();
+                        workers.spawn(async move {
+                            let result = execute_plan_observed(
+                                &prepared.probe,
+                                &prepared.plan,
+                                &prepared.validation_engine,
+                                prepared.job_id,
+                                worker_cancellation,
+                                |milestone| {
+                                    if milestone == ExecutionMilestone::EngineFinished {
+                                        let _ = worker_milestones.send(prepared.job_id);
+                                    }
+                                    Ok(())
+                                },
+                            )
+                            .await;
+                            QueueWorkerOutcome {
+                                job_id: prepared.job_id,
+                                result,
+                            }
+                        });
+                        peak_active = peak_active.max(scheduler.active_count());
+                    }
+                    QueuePreparation::Blocked => {
+                        blocked = blocked.saturating_add(1);
+                        scheduler.release(job_id);
+                    }
+                    QueuePreparation::Failed => {
+                        failed = failed.saturating_add(1);
+                        scheduler.release(job_id);
+                    }
+                }
+            }
+
+            if workers.is_empty() {
+                if control.admission_cancelled() || pending.is_empty() {
+                    break;
+                }
+                return Err(FormatWrightError::new(
+                    ErrorCode::ResourceExhausted,
+                    Stage::Execute,
+                    "No queued job fits within the configured scheduler resource budget",
+                    "Reduce --parallel or split the queue into a smaller scheduling window.",
+                ));
+            }
+
+            let joined = tokio::select! {
+                Some(job_id) = milestone_receiver.recv() => {
+                    mark_job_validating(store, job_id)?;
+                    continue;
+                }
+                joined = workers.join_next() => joined,
+            };
+            let outcome = joined
+                .ok_or_else(|| {
+                    FormatWrightError::new(
+                        ErrorCode::Internal,
+                        Stage::Execute,
+                        "Scheduler lost its active worker set",
+                        "Run jobs recover and retry interrupted work.",
+                    )
+                })?
+                .map_err(|error| {
+                    FormatWrightError::new(
+                        ErrorCode::Internal,
+                        Stage::Execute,
+                        format!("Queue worker stopped unexpectedly: {error}"),
+                        "Run jobs recover and retry interrupted work.",
+                    )
+                })?;
+            scheduler.release(outcome.job_id);
+            match outcome.result {
+                Ok(result) => {
+                    on_report(outcome.job_id, &result.report)?;
+                    match result.report.status {
+                        ValidationStatus::Pass => {
+                            mark_job_validating(store, outcome.job_id)?;
+                            store.transition(
+                                outcome.job_id,
+                                JobState::Completed,
+                                "VALIDATION_FINISHED",
+                            )?;
+                            completed = completed.saturating_add(1);
+                        }
+                        ValidationStatus::Warning | ValidationStatus::Unknown => {
+                            mark_job_validating(store, outcome.job_id)?;
+                            store.transition(
+                                outcome.job_id,
+                                JobState::Warning,
+                                "VALIDATION_FINISHED",
+                            )?;
+                            warning = warning.saturating_add(1);
+                        }
+                        ValidationStatus::Fail => {
+                            mark_job_validating(store, outcome.job_id)?;
+                            store.transition(
+                                outcome.job_id,
+                                JobState::Failed,
+                                "VALIDATION_FINISHED",
+                            )?;
+                            failed = failed.saturating_add(1);
+                        }
+                    }
+                }
+                Err(error) if error.code == ErrorCode::Cancelled => {
+                    store.transition(outcome.job_id, JobState::Cancelled, "QUEUE_CANCELLED")?;
+                    cancelled = cancelled.saturating_add(1);
+                }
+                Err(_) => {
+                    store.transition(outcome.job_id, JobState::Failed, "EXECUTION_STOPPED")?;
+                    failed = failed.saturating_add(1);
+                }
+            }
+        }
+        let terminal = completed
+            .saturating_add(warning)
+            .saturating_add(blocked)
+            .saturating_add(failed)
+            .saturating_add(cancelled);
+        Ok(QueueRunReport {
+            schema_version: 1,
+            selected: jobs.len(),
+            completed,
+            warning,
+            blocked,
+            failed,
+            cancelled,
+            stopped: terminal < jobs.len(),
+            parallelism: policy.max_processes,
+            peak_active,
+        })
+    }
+}
+
+struct PendingQueueJob {
+    details: JobDetails,
+    resources: ResourceRequest,
+}
+
+struct PreparedQueueJob {
+    job_id: Uuid,
+    probe: Probe,
+    plan: Plan,
+    validation_engine: EngineIdentity,
+}
+
+enum QueuePreparation {
+    Ready(Box<PreparedQueueJob>),
+    Blocked,
+    Failed,
+}
+
+struct QueueWorkerOutcome {
+    job_id: Uuid,
+    result: Result<ExecutionResult>,
+}
+
+async fn prepare_queued_job(
+    store: &mut SqliteJobStore,
+    details: JobDetails,
+) -> Result<QueuePreparation> {
+    let job_id = details.job.id;
+    store.transition(job_id, JobState::Inspecting, "QUEUE_REINSPECTING")?;
+    let Some(stored_engine) = details.plan.steps.first().map(|step| step.engine.clone()) else {
+        store.transition(job_id, JobState::Failed, "PLAN_INVALID")?;
+        return Ok(QueuePreparation::Failed);
+    };
+    for stored_step in &details.plan.steps {
+        let stored_identity = &stored_step.engine;
+        let current = if stored_identity.engine_id == "formatwright.structured" {
+            inspect_builtin_engine("formatwright.structured").await
+        } else {
+            inspect_engine(&stored_identity.engine_id).await
+        };
+        if !current.is_ok_and(|engine| {
+            engine.binary_sha256 == stored_identity.binary_sha256
+                && engine.version == stored_identity.version
+        }) {
+            store.transition(job_id, JobState::Blocked, "ENGINE_IDENTITY_CHANGED")?;
+            return Ok(QueuePreparation::Blocked);
+        }
+    }
+
+    let inspected = inspect_queued_input(&details, &stored_engine).await;
+    let (probe, validation_engine) = match inspected {
+        Ok((probe, validation_engine))
+            if probe.artifact.fast_fingerprint == details.plan.input_fingerprint =>
+        {
+            (probe, validation_engine)
+        }
+        Ok(_) => {
+            store.transition(job_id, JobState::Blocked, "INPUT_CHANGED")?;
+            return Ok(QueuePreparation::Blocked);
+        }
+        Err(_) => {
+            store.transition(job_id, JobState::Blocked, "REINSPECTION_FAILED")?;
+            return Ok(QueuePreparation::Blocked);
+        }
+    };
+    store.transition(job_id, JobState::Planned, "PLAN_REVALIDATED")?;
+    store.transition(job_id, JobState::Running, "ENGINE_STARTED")?;
+    Ok(QueuePreparation::Ready(Box::new(PreparedQueueJob {
+        job_id,
+        probe,
+        plan: details.plan,
+        validation_engine,
+    })))
+}
+
+async fn inspect_queued_input(
+    details: &JobDetails,
+    stored_engine: &EngineIdentity,
+) -> Result<(Probe, EngineIdentity)> {
+    if stored_engine.engine_id == "formatwright.structured" {
+        return Ok((
+            inspect_structured(&details.job.input_path).await?,
+            inspect_builtin_engine("formatwright.structured").await?,
+        ));
+    }
+    if stored_engine.engine_id == "pandoc" {
+        let validation_engine = if details.plan.target_format == "pdf" {
+            inspect_engine("pdfinfo").await?
+        } else {
+            stored_engine.clone()
+        };
+        return Ok((
+            inspect_document(&details.job.input_path).await?,
+            validation_engine,
+        ));
+    }
+    if stored_engine.engine_id == "pdftoppm" {
+        let pdfinfo = inspect_engine("pdfinfo").await?;
+        return Ok((
+            inspect_pdf(&details.job.input_path, &pdfinfo).await?,
+            inspect_engine("ffprobe").await?,
+        ));
+    }
+    if stored_engine.engine_id == "soffice" {
+        return Ok((
+            inspect_office(&details.job.input_path).await?,
+            inspect_engine("pdfinfo").await?,
+        ));
+    }
+    let validation_engine = inspect_engine("ffprobe").await?;
+    Ok((
+        inspect_media(&details.job.input_path, &validation_engine).await?,
+        validation_engine,
+    ))
+}
+
+fn mark_job_validating(store: &mut SqliteJobStore, job_id: Uuid) -> Result<()> {
+    let job = store.get_job(job_id)?.ok_or_else(|| {
+        FormatWrightError::new(
+            ErrorCode::StorageFailed,
+            Stage::Store,
+            format!("Active job disappeared: {job_id}"),
+            "Run jobs recover and inspect the database.",
+        )
+    })?;
+    if job.state == JobState::Running {
+        store.transition(job_id, JobState::Validating, "ENGINE_FINISHED")?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::PathBuf;
+
+    use tempfile::tempdir;
+    use tokio_util::sync::CancellationToken;
+
+    use super::{JobExecutionService, QueueRunReport, QueueWindowControl};
+    use crate::ErrorCode;
+    use crate::domain::{
+        ChangeSet, JobState, NetworkPolicy, Plan, PlanRequest, SCHEMA_VERSION, ValidationStatus,
+    };
+    use crate::job_store::SqliteJobStore;
+    use crate::structured::{inspect_structured, plan_structured_conversion};
+    use crate::{inspect_builtin_engine, prepare_conversion};
+
+    async fn queue_structured_job(
+        store: &mut SqliteJobStore,
+        input: &PathBuf,
+        output: &PathBuf,
+    ) -> uuid::Uuid {
+        fs::write(input, r#"[{"id":1,"ok":true}]"#).expect("write JSON");
+        let engine = inspect_builtin_engine("formatwright.structured")
+            .await
+            .expect("structured engine");
+        let probe = inspect_structured(input).await.expect("inspect");
+        let plan = plan_structured_conversion(
+            &probe,
+            &PlanRequest {
+                target_format: "yaml".to_owned(),
+                output_path: Some(output.clone()),
+                ..PlanRequest::default()
+            },
+            &engine,
+        )
+        .expect("plan");
+        let job = store.create_job(input, output, &plan).expect("create job");
+        store
+            .transition(job.id, JobState::Queued, "JOB_ENQUEUED")
+            .expect("enqueue");
+        job.id
+    }
+
+    #[tokio::test]
+    async fn rejects_parallelism_outside_one_to_sixteen() {
+        let mut store = SqliteJobStore::open_in_memory().expect("store");
+        let error = JobExecutionService::run_window(&mut store, 1, 0, CancellationToken::new())
+            .await
+            .expect_err("parallel 0");
+        assert_eq!(error.code, ErrorCode::InputInvalid);
+        let error = JobExecutionService::run_window(&mut store, 1, 17, CancellationToken::new())
+            .await
+            .expect_err("parallel 17");
+        assert_eq!(error.code, ErrorCode::InputInvalid);
+    }
+
+    #[tokio::test]
+    async fn rejects_scheduling_windows_above_256() {
+        let mut store = SqliteJobStore::open_in_memory().expect("store");
+        let error = JobExecutionService::run_window(&mut store, 257, 1, CancellationToken::new())
+            .await
+            .expect_err("limit 257");
+        assert_eq!(error.code, ErrorCode::InputInvalid);
+    }
+
+    #[tokio::test]
+    async fn completes_structured_queued_job_and_releases_resources() {
+        let suite = tempdir().expect("suite");
+        let database = suite.path().join("jobs.sqlite3");
+        let mut store = SqliteJobStore::open(&database).expect("store");
+        let input = suite.path().join("item.json");
+        let output = suite.path().join("item.yaml");
+        let job_id = queue_structured_job(&mut store, &input, &output).await;
+
+        let report = JobExecutionService::run_window(&mut store, 16, 2, CancellationToken::new())
+            .await
+            .expect("run window");
+        assert_eq!(
+            report,
+            QueueRunReport {
+                schema_version: 1,
+                selected: 1,
+                completed: 1,
+                warning: 0,
+                blocked: 0,
+                failed: 0,
+                cancelled: 0,
+                stopped: false,
+                parallelism: 2,
+                peak_active: 1,
+            }
+        );
+        let job = store.get_job(job_id).expect("read").expect("exists");
+        assert_eq!(job.state, JobState::Completed);
+        assert!(output.is_file());
+
+        let second_input = suite.path().join("item-2.json");
+        let second_output = suite.path().join("item-2.yaml");
+        let second_id = queue_structured_job(&mut store, &second_input, &second_output).await;
+        let second = JobExecutionService::run_window(&mut store, 16, 1, CancellationToken::new())
+            .await
+            .expect("second window after release");
+        assert_eq!(second.completed, 1);
+        assert_eq!(second.peak_active, 1);
+        assert_eq!(
+            store
+                .get_job(second_id)
+                .expect("read")
+                .expect("exists")
+                .state,
+            JobState::Completed
+        );
+    }
+
+    #[tokio::test]
+    async fn observed_report_callback_runs_before_terminal_state() {
+        let suite = tempdir().expect("suite");
+        let mut store = SqliteJobStore::open(suite.path().join("jobs.sqlite3")).expect("store");
+        let job_id = queue_structured_job(
+            &mut store,
+            &suite.path().join("item.json"),
+            &suite.path().join("item.yaml"),
+        )
+        .await;
+        let reports = suite.path().join("reports");
+        fs::create_dir_all(&reports).expect("reports dir");
+        let captured = std::sync::Mutex::new(None);
+        let report = JobExecutionService::run_window_observed(
+            &mut store,
+            8,
+            1,
+            QueueWindowControl::new(),
+            |id, validation| {
+                assert_eq!(id, job_id);
+                assert_eq!(validation.status, ValidationStatus::Pass);
+                let path = reports.join(format!("{id}.json"));
+                let bytes = serde_json::to_vec_pretty(validation).expect("serialize");
+                fs::write(&path, bytes).expect("write report");
+                *captured.lock().expect("lock") = Some(path);
+                Ok(())
+            },
+        )
+        .await
+        .expect("run observed");
+        assert_eq!(report.completed, 1);
+        let path = captured.lock().expect("lock").clone().expect("path");
+        assert!(path.is_file());
+        assert_eq!(
+            store.get_job(job_id).expect("read").expect("exists").state,
+            JobState::Completed
+        );
+    }
+
+    #[tokio::test]
+    async fn finish_current_pause_leaves_hydrated_jobs_queued() {
+        let suite = tempdir().expect("suite");
+        let mut store = SqliteJobStore::open(suite.path().join("jobs.sqlite3")).expect("store");
+        let first = queue_structured_job(
+            &mut store,
+            &suite.path().join("a.json"),
+            &suite.path().join("a.yaml"),
+        )
+        .await;
+        let second = queue_structured_job(
+            &mut store,
+            &suite.path().join("b.json"),
+            &suite.path().join("b.yaml"),
+        )
+        .await;
+        let control = QueueWindowControl::new();
+        control.pause_finish_current();
+        let report =
+            JobExecutionService::run_window_observed(&mut store, 16, 2, control, |_, _| Ok(()))
+                .await
+                .expect("finish-current window");
+        assert_eq!(report.selected, 2);
+        assert_eq!(report.completed, 0);
+        assert_eq!(report.cancelled, 0);
+        assert!(report.stopped);
+        assert_eq!(
+            store.get_job(first).expect("read").expect("exists").state,
+            JobState::Queued
+        );
+        assert_eq!(
+            store.get_job(second).expect("read").expect("exists").state,
+            JobState::Queued
+        );
+    }
+
+    #[tokio::test]
+    async fn immediate_pause_also_leaves_unstarted_jobs_queued() {
+        let suite = tempdir().expect("suite");
+        let mut store = SqliteJobStore::open(suite.path().join("jobs.sqlite3")).expect("store");
+        let job_id = queue_structured_job(
+            &mut store,
+            &suite.path().join("item.json"),
+            &suite.path().join("item.yaml"),
+        )
+        .await;
+        let control = QueueWindowControl::new();
+        control.pause_immediate();
+        assert!(control.admission_cancelled());
+        assert!(control.workers_cancelled());
+        let report =
+            JobExecutionService::run_window_observed(&mut store, 8, 1, control, |_, _| Ok(()))
+                .await
+                .expect("immediate pause");
+        assert!(report.stopped);
+        assert_eq!(report.completed, 0);
+        assert_eq!(
+            store.get_job(job_id).expect("read").expect("exists").state,
+            JobState::Queued
+        );
+    }
+
+    #[tokio::test]
+    async fn pre_cancelled_token_stops_admission_without_mutating_queued_jobs() {
+        let suite = tempdir().expect("suite");
+        let mut store = SqliteJobStore::open(suite.path().join("jobs.sqlite3")).expect("store");
+        let job_id = queue_structured_job(
+            &mut store,
+            &suite.path().join("item.json"),
+            &suite.path().join("item.yaml"),
+        )
+        .await;
+        let cancellation = CancellationToken::new();
+        cancellation.cancel();
+        let report = JobExecutionService::run_window(&mut store, 16, 1, cancellation)
+            .await
+            .expect("cancelled window");
+        assert_eq!(report.selected, 1);
+        assert_eq!(report.completed, 0);
+        assert!(report.stopped);
+        assert_eq!(report.peak_active, 0);
+        assert_eq!(
+            store.get_job(job_id).expect("read").expect("exists").state,
+            JobState::Queued
+        );
+    }
+
+    #[tokio::test]
+    async fn blocked_preparation_releases_slot_so_later_job_can_complete() {
+        let suite = tempdir().expect("suite");
+        let mut store = SqliteJobStore::open(suite.path().join("jobs.sqlite3")).expect("store");
+
+        // Oldest queued job is blocked so the scheduler must release its slot
+        // before the newer valid job can complete in the same window.
+        let bad_input = suite.path().join("bad.json");
+        let bad_output = suite.path().join("bad.yaml");
+        fs::write(&bad_input, r#"[{"id":2,"ok":true}]"#).expect("write");
+        let (_, mut plan, _) = prepare_conversion(
+            &bad_input,
+            &PlanRequest {
+                target_format: "yaml".to_owned(),
+                output_path: Some(bad_output.clone()),
+                ..PlanRequest::default()
+            },
+        )
+        .await
+        .expect("plan bad");
+        plan.input_fingerprint = "fwfp-v1:stale".to_owned();
+        let bad_job = store
+            .create_job(&bad_input, &bad_output, &plan)
+            .expect("create bad");
+        store
+            .transition(bad_job.id, JobState::Queued, "JOB_ENQUEUED")
+            .expect("enqueue bad");
+
+        let good_input = suite.path().join("good.json");
+        let good_output = suite.path().join("good.yaml");
+        let good_id = queue_structured_job(&mut store, &good_input, &good_output).await;
+
+        let report = JobExecutionService::run_window(&mut store, 16, 1, CancellationToken::new())
+            .await
+            .expect("mixed window");
+        assert_eq!(report.selected, 2);
+        assert_eq!(report.blocked, 1);
+        assert_eq!(report.completed, 1);
+        assert_eq!(report.failed, 0);
+        assert_eq!(
+            store
+                .get_job(bad_job.id)
+                .expect("read")
+                .expect("exists")
+                .state,
+            JobState::Blocked
+        );
+        assert_eq!(
+            store.get_job(good_id).expect("read").expect("exists").state,
+            JobState::Completed
+        );
+        assert!(good_output.is_file());
+        assert!(!bad_output.exists());
+    }
+
+    #[tokio::test]
+    async fn invalid_plan_without_steps_marks_job_failed() {
+        let suite = tempdir().expect("suite");
+        let mut store = SqliteJobStore::open(suite.path().join("jobs.sqlite3")).expect("store");
+        let input = suite.path().join("empty-plan.json");
+        let output = suite.path().join("empty-plan.yaml");
+        fs::write(&input, r#"[{"id":3}]"#).expect("write");
+        let plan = Plan {
+            schema_version: SCHEMA_VERSION,
+            plan_id: uuid::Uuid::new_v4(),
+            plan_hash: "blake3:empty".to_owned(),
+            input_fingerprint: "fwfp-v1:unused".to_owned(),
+            target_format: "yaml".to_owned(),
+            constraints: std::collections::BTreeMap::new(),
+            steps: Vec::new(),
+            changes: ChangeSet::default(),
+            validators: Vec::new(),
+            network_policy: NetworkPolicy::Deny,
+            output_path: Some(output.clone()),
+            estimated_output_bytes: None,
+        };
+        let job = store.create_job(&input, &output, &plan).expect("create");
+        store
+            .transition(job.id, JobState::Queued, "JOB_ENQUEUED")
+            .expect("enqueue");
+        let report = JobExecutionService::run_window(&mut store, 8, 1, CancellationToken::new())
+            .await
+            .expect("run");
+        assert_eq!(report.failed, 1);
+        assert_eq!(report.completed, 0);
+        assert_eq!(
+            store.get_job(job.id).expect("read").expect("exists").state,
+            JobState::Failed
+        );
+    }
+}

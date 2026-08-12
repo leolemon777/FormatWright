@@ -1,0 +1,25 @@
+name: Fuzz
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 4 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  bounded-fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Nightly toolchain
+        run: rustup toolchain install nightly --profile minimal
+      - name: cargo-fuzz
+        run: cargo install cargo-fuzz --version 0.13.2 --locked
+      - name: Engine manifest campaign
+        run: cargo +nightly fuzz run engine_manifest -- -runs=100000 -max_len=65536
+      - name: Structured parser campaign
+        run: cargo +nightly fuzz run structured_file -- -runs=20000 -max_len=65536

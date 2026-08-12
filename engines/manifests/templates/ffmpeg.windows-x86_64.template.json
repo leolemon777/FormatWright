@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "engine_id": "ffmpeg",
+  "version": "8.1.1",
+  "platform": "windows",
+  "architecture": "x86_64",
+  "protocol_version": 1,
+  "formatwright_compatibility": {
+    "minimum": "0.1.0",
+    "maximum_exclusive": "0.2.0"
+  },
+  "executables": [
+    {
+      "name": "ffmpeg",
+      "relative_path": "bin/ffmpeg.exe",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "name": "ffprobe",
+      "relative_path": "bin/ffprobe.exe",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  ],
+  "source": {
+    "project_url": "https://ffmpeg.org/",
+    "source_url": "https://ffmpeg.org/releases/ffmpeg-8.1.1.tar.xz",
+    "source_revision": "n8.1.1",
+    "build_configuration": "template: --disable-gpl --disable-nonfree; replace with the exact complete configure line"
+  },
+  "licenses": [
+    {
+      "spdx": "LGPL-2.1-or-later",
+      "notice_path": "licenses/FFMPEG-NOTICE.txt",
+      "source_offer_path": "sources/ffmpeg-8.1.1.tar.xz"
+    }
+  ],
+  "capabilities": [
+    {
+      "capability_id": "ffprobe.media.inspect",
+      "inputs": ["mov", "mkv", "avi", "webm", "mp4"],
+      "outputs": ["probe/v1"],
+      "operation": "inspect",
+      "loss_class": "none",
+      "constraints": {
+        "network_policy": "deny"
+      }
+    },
+    {
+      "capability_id": "ffmpeg.media-to-mp4.remux",
+      "inputs": ["mov", "mkv", "avi", "webm"],
+      "outputs": ["mp4"],
+      "operation": "remux",
+      "loss_class": "container-only",
+      "constraints": {
+        "compatible_video_codecs": ["h264", "hevc"],
+        "compatible_audio_codecs": ["aac"]
+      }
+    },
+    {
+      "capability_id": "ffmpeg.media-to-mp4.transcode",
+      "inputs": ["mov", "mkv", "avi", "webm"],
+      "outputs": ["mp4"],
+      "operation": "transcode",
+      "loss_class": "lossy",
+      "constraints": {
+        "encoder_selection": "pack-specific"
+      }
+    }
+  ],
+  "signature": null
+}

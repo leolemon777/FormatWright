@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:formatwright:schema:validation-report:v1",
+  "title": "FormatWright Validation Report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "report_id",
+    "job_id",
+    "plan_hash",
+    "status",
+    "input",
+    "output",
+    "engines",
+    "checks",
+    "intentional_changes",
+    "redaction"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "report_id": { "type": "string", "format": "uuid" },
+    "job_id": { "type": "string", "format": "uuid" },
+    "plan_hash": { "type": "string" },
+    "status": { "$ref": "#/$defs/status" },
+    "input": { "$ref": "#/$defs/artifactSummary" },
+    "output": { "$ref": "#/$defs/artifactSummary" },
+    "engines": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "engine_id",
+          "version",
+          "binary_path",
+          "binary_sha256",
+          "manifest_sha256",
+          "build_configuration",
+          "certification"
+        ],
+        "properties": {
+          "engine_id": { "type": "string" },
+          "version": { "type": "string" },
+          "binary_path": { "type": "string" },
+          "binary_sha256": { "type": "string" },
+          "manifest_sha256": { "type": ["string", "null"] },
+          "build_configuration": { "type": ["string", "null"] },
+          "certification": {
+            "enum": ["certified", "experimental", "unverified"]
+          }
+        }
+      }
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "code",
+          "status",
+          "required",
+          "expected",
+          "observed",
+          "evidence",
+          "message"
+        ],
+        "properties": {
+          "code": { "type": "string" },
+          "status": { "$ref": "#/$defs/status" },
+          "required": { "type": "boolean" },
+          "expected": {},
+          "observed": {},
+          "evidence": { "type": "string" },
+          "message": { "type": "string" }
+        }
+      }
+    },
+    "intentional_changes": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "redaction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["paths_redacted", "metadata_values_redacted"],
+      "properties": {
+        "paths_redacted": { "type": "boolean" },
+        "metadata_values_redacted": { "type": "boolean" }
+      }
+    }
+  },
+  "$defs": {
+    "status": {
+      "enum": ["pass", "warning", "fail", "unknown"]
+    },
+    "artifactSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "display_path",
+        "format_id",
+        "size_bytes",
+        "fast_fingerprint",
+        "full_blake3"
+      ],
+      "properties": {
+        "display_path": { "type": ["string", "null"] },
+        "format_id": { "type": "string" },
+        "size_bytes": { "type": "integer", "minimum": 0 },
+        "fast_fingerprint": { "type": "string" },
+        "full_blake3": { "type": ["string", "null"] }
+      }
+    }
+  }
+}

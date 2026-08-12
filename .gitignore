@@ -1,0 +1,46 @@
+# Rust
+/target/
+/fuzz/target/
+/fuzz/artifacts/
+/fuzz/coverage/
+**/*.rs.bk
+
+# JavaScript
+node_modules/
+.pnpm-store/
+dist/
+.vite/
+
+# Local toolchains and caches
+/.devtools/
+/.cache/
+/.tmp/
+
+# IDE and OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Local application state
+*.db
+*.db-shm
+*.db-wal
+*.log
+
+# Conversion outputs and test artifacts
+/.artifacts/
+/test-corpus/files/
+/test-corpus/generated/
+*.formatwright-partial
+*.formatwright-partial.*
+
+# Secrets and signing material
+.env
+.env.*
+!.env.example
+*.pfx
+*.p12
+*.key
+*.pem

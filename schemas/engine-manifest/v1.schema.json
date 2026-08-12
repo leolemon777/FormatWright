@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:formatwright:schema:engine-manifest:v1",
+  "title": "FormatWright Engine Manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "engine_id",
+    "version",
+    "platform",
+    "architecture",
+    "protocol_version",
+    "formatwright_compatibility",
+    "executables",
+    "source",
+    "licenses",
+    "capabilities"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "engine_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]+$" },
+    "version": { "type": "string", "minLength": 1 },
+    "platform": { "enum": ["windows", "macos", "linux"] },
+    "architecture": { "enum": ["x86_64", "aarch64"] },
+    "protocol_version": { "type": "integer", "minimum": 1 },
+    "formatwright_compatibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["minimum", "maximum_exclusive"],
+      "properties": {
+        "minimum": { "type": "string" },
+        "maximum_exclusive": { "type": "string" }
+      }
+    },
+    "executables": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "relative_path", "sha256"],
+        "properties": {
+          "name": { "type": "string" },
+          "relative_path": { "type": "string" },
+          "sha256": { "type": "string", "pattern": "^[A-Fa-f0-9]{64}$" }
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_url", "source_url", "source_revision", "build_configuration"],
+      "properties": {
+        "project_url": { "type": "string", "format": "uri" },
+        "source_url": { "type": "string", "format": "uri" },
+        "source_revision": { "type": "string" },
+        "build_configuration": { "type": "string" }
+      }
+    },
+    "licenses": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["spdx", "notice_path"],
+        "properties": {
+          "spdx": { "type": "string" },
+          "notice_path": { "type": "string" },
+          "source_offer_path": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["capability_id", "inputs", "outputs", "operation", "loss_class", "constraints"],
+        "properties": {
+          "capability_id": { "type": "string" },
+          "inputs": { "type": "array", "items": { "type": "string" } },
+          "outputs": { "type": "array", "items": { "type": "string" } },
+          "operation": {
+            "enum": ["inspect", "remux", "transcode", "transform", "render", "serialize", "metadata-clean"]
+          },
+          "loss_class": {
+            "enum": ["none", "container-only", "lossless", "lossy", "unknown"]
+          },
+          "constraints": { "type": "object" }
+        }
+      }
+    },
+    "signature": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "algorithm": { "type": "string" },
+        "key_id": { "type": "string" },
+        "value": { "type": "string" }
+      }
+    }
+  }
+}

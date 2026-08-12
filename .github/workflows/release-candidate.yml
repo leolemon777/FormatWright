@@ -1,0 +1,57 @@
+name: Unsigned release candidate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  PNPM_VERSION: 11.16.0
+  NODE_VERSION: 24
+
+jobs:
+  windows-alpha:
+    name: Windows unsigned Alpha
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build offline NSIS candidate
+        run: pnpm --filter @formatwright/desktop tauri build --bundles nsis
+      - name: Generate checksums
+        run: python scripts/generate_checksums.py target/release/formatwright-desktop.exe target/release/bundle/nsis/FormatWright_0.1.0_x64-setup.exe
+      - name: Reject accidental signed-release claim
+        shell: pwsh
+        run: |
+          $files = @(
+            'target/release/formatwright-desktop.exe',
+            'target/release/bundle/nsis/FormatWright_0.1.0_x64-setup.exe'
+          )
+          foreach ($file in $files) {
+            $status = (Get-AuthenticodeSignature -LiteralPath $file).Status.ToString()
+            if ($status -ne 'NotSigned') {
+              throw "Unsigned Alpha workflow received unexpected signature state $status for $file"
+            }
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: formatwright-windows-unsigned-alpha
+          if-no-files-found: error
+          path: |
+            target/release/formatwright-desktop.exe
+            target/release/bundle/nsis/FormatWright_0.1.0_x64-setup.exe
+            dist/SHA256SUMS
+          retention-days: 14
