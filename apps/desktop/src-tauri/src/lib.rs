@@ -271,18 +271,15 @@ async fn run_desktop_conversion(
     lock(&state.cancellations)?.remove(&job.id);
     match execution {
         Ok(result) => {
-            let final_state = match result.report.status {
-                ValidationStatus::Pass => JobState::Completed,
-                ValidationStatus::Warning | ValidationStatus::Unknown => JobState::Warning,
-                ValidationStatus::Fail => JobState::Failed,
-            };
             let job = {
                 let mut guard = lock(&state.store)?;
-                require_store(&mut guard)?
-                    .transition(job.id, final_state, "DESKTOP_CONVERSION_FINISHED")
-                    .map_err(serialize_error)?
+                persist_report_before_terminal(
+                    require_store(&mut guard)?,
+                    &state.reports_directory,
+                    job.id,
+                    &result.report,
+                )?
             };
-            save_report(&state.reports_directory, job.id, &result.report)?;
             let _ = window.emit("formatwright://job-updated", &job);
             Ok(DesktopRunResult {
                 job,
@@ -583,11 +580,84 @@ fn save_report(
     job_id: Uuid,
     report: &ValidationReport,
 ) -> Result<(), String> {
+    if report.job_id != job_id {
+        return Err("ValidationReport job ID does not match its destination".to_owned());
+    }
+    std::fs::create_dir_all(directory).map_err(|error| error.to_string())?;
     let destination = report_path(directory, job_id);
-    let partial = directory.join(format!(".{job_id}.partial"));
+    let nonce = Uuid::new_v4();
+    let partial = directory.join(format!(".{job_id}.{nonce}.partial"));
+    let backup = directory.join(format!(".{job_id}.backup"));
+    if !destination.exists() && backup.is_file() {
+        std::fs::rename(&backup, &destination).map_err(|error| error.to_string())?;
+    } else if destination.is_file() && backup.is_file() {
+        std::fs::remove_file(&backup).map_err(|error| error.to_string())?;
+    }
     let bytes = serde_json::to_vec_pretty(report).map_err(|error| error.to_string())?;
-    std::fs::write(&partial, bytes).map_err(|error| error.to_string())?;
-    std::fs::rename(&partial, destination).map_err(|error| error.to_string())
+    if let Err(error) = std::fs::write(&partial, bytes) {
+        let _ = std::fs::remove_file(&partial);
+        return Err(error.to_string());
+    }
+    if destination.is_file()
+        && let Err(error) = std::fs::rename(&destination, &backup)
+    {
+        let _ = std::fs::remove_file(&partial);
+        return Err(error.to_string());
+    }
+    if let Err(error) = std::fs::rename(&partial, &destination) {
+        let _ = std::fs::remove_file(&partial);
+        if backup.is_file() && !destination.exists() {
+            let _ = std::fs::rename(&backup, &destination);
+        }
+        return Err(error.to_string());
+    }
+    if backup.is_file() {
+        let _ = std::fs::remove_file(backup);
+    }
+    Ok(())
+}
+
+fn persist_report_before_terminal(
+    store: &mut SqliteJobStore,
+    reports_directory: &Path,
+    job_id: Uuid,
+    report: &ValidationReport,
+) -> Result<JobRecord, String> {
+    if let Err(report_error) = save_report(reports_directory, job_id, report) {
+        let recovery_error = store
+            .get_job(job_id)
+            .and_then(|job| {
+                if job.is_some_and(|job| {
+                    matches!(job.state, JobState::Running | JobState::Validating)
+                }) {
+                    store
+                        .transition(job_id, JobState::Interrupted, "REPORT_PERSIST_FAILED")
+                        .map(drop)
+                } else {
+                    Ok(())
+                }
+            })
+            .err()
+            .map(|error| format!("; recovery transition also failed: {error}"))
+            .unwrap_or_default();
+        return Err(serialize_error(
+            formatwright_core::FormatWrightError::new(
+                formatwright_core::ErrorCode::StorageFailed,
+                formatwright_core::Stage::Validate,
+                "Unable to persist ValidationReport before terminal job state",
+                "Check the reports directory, then retry or resume the interrupted job.",
+            )
+            .with_diagnostic(format!("{report_error}{recovery_error}")),
+        ));
+    }
+    let final_state = match report.status {
+        ValidationStatus::Pass => JobState::Completed,
+        ValidationStatus::Warning | ValidationStatus::Unknown => JobState::Warning,
+        ValidationStatus::Fail => JobState::Failed,
+    };
+    store
+        .transition(job_id, final_state, "DESKTOP_CONVERSION_FINISHED")
+        .map_err(serialize_error)
 }
 
 fn read_report(
@@ -928,13 +998,75 @@ mod tests {
 
     use tempfile::tempdir;
 
-    use formatwright_core::{ConversionPreset, PRESET_SCHEMA_VERSION, PresetLibrary};
+    use formatwright_core::{
+        ArtifactSummary, ChangeSet, ConversionPreset, JobState, NetworkPolicy,
+        PRESET_SCHEMA_VERSION, Plan, PresetLibrary, ReportRedaction, SqliteJobStore,
+        ValidationReport, ValidationStatus,
+    };
     use uuid::Uuid;
 
     use super::{
         DesktopEngineRegistryEntry, backup_path, bundled_manifest_paths, load_preset_library,
-        persist_preset_library, registered_manifest_paths,
+        persist_preset_library, persist_report_before_terminal, read_report,
+        registered_manifest_paths, save_report,
     };
+
+    fn plan(output_path: PathBuf) -> Plan {
+        Plan {
+            schema_version: 1,
+            plan_id: Uuid::new_v4(),
+            plan_hash: "blake3:desktop-report-fixture".to_owned(),
+            input_fingerprint: "fwfp-v1:desktop-report-fixture".to_owned(),
+            target_format: "yaml".to_owned(),
+            constraints: std::collections::BTreeMap::new(),
+            steps: Vec::new(),
+            changes: ChangeSet::default(),
+            validators: Vec::new(),
+            network_policy: NetworkPolicy::Deny,
+            output_path: Some(output_path),
+            estimated_output_bytes: None,
+        }
+    }
+
+    fn report(job_id: Uuid, status: ValidationStatus) -> ValidationReport {
+        let artifact = ArtifactSummary {
+            display_path: None,
+            format_id: "yaml".to_owned(),
+            size_bytes: 10,
+            fast_fingerprint: "fwfp-v1:desktop-report-fixture".to_owned(),
+            full_blake3: None,
+        };
+        ValidationReport {
+            schema_version: 1,
+            report_id: Uuid::new_v4(),
+            job_id,
+            plan_hash: "blake3:desktop-report-fixture".to_owned(),
+            status,
+            input: artifact.clone(),
+            output: artifact,
+            engines: Vec::new(),
+            checks: Vec::new(),
+            intentional_changes: Vec::new(),
+            redaction: ReportRedaction {
+                paths_redacted: true,
+                metadata_values_redacted: true,
+            },
+        }
+    }
+
+    fn validating_job(store: &mut SqliteJobStore, root: &std::path::Path) -> Uuid {
+        let output = root.join(format!("{}.yaml", Uuid::new_v4()));
+        let job = store
+            .create_job(root.join("input.json"), &output, &plan(output.clone()))
+            .expect("create job");
+        store
+            .transition(job.id, JobState::Running, "TEST_ENGINE_STARTED")
+            .expect("start job");
+        store
+            .transition(job.id, JobState::Validating, "TEST_ENGINE_FINISHED")
+            .expect("validate job");
+        job.id
+    }
 
     #[test]
     fn engine_registry_reads_entries_and_ignores_partials() {
@@ -975,6 +1107,94 @@ mod tests {
         let error = bundled_manifest_paths(resource_directory.path())
             .expect_err("path traversal must be rejected");
         assert!(error.contains("unsafe bundled engine manifest path"));
+    }
+
+    #[test]
+    fn report_replacement_is_atomic_and_leaves_only_the_active_report() {
+        let directory = tempdir().expect("temporary reports");
+        let job_id = Uuid::new_v4();
+        let first = report(job_id, ValidationStatus::Pass);
+        save_report(directory.path(), job_id, &first).expect("write first report");
+        let second = report(job_id, ValidationStatus::Warning);
+        save_report(directory.path(), job_id, &second).expect("replace report");
+
+        assert_eq!(
+            read_report(directory.path(), job_id).expect("read report"),
+            Some(second)
+        );
+        assert_eq!(
+            fs::read_dir(directory.path())
+                .expect("read report directory")
+                .filter_map(std::result::Result::ok)
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn report_write_recovers_an_interrupted_replacement_backup() {
+        let directory = tempdir().expect("temporary reports");
+        let job_id = Uuid::new_v4();
+        let first = report(job_id, ValidationStatus::Pass);
+        save_report(directory.path(), job_id, &first).expect("write first report");
+        let destination = super::report_path(directory.path(), job_id);
+        let backup = directory.path().join(format!(".{job_id}.backup"));
+        fs::rename(&destination, &backup).expect("simulate interrupted replacement");
+
+        let second = report(job_id, ValidationStatus::Warning);
+        save_report(directory.path(), job_id, &second).expect("recover and replace report");
+
+        assert_eq!(
+            read_report(directory.path(), job_id).expect("read report"),
+            Some(second)
+        );
+        assert!(!backup.exists());
+    }
+
+    #[test]
+    fn report_failure_interrupts_job_before_terminal_state() {
+        let suite = tempdir().expect("suite");
+        let mut store = SqliteJobStore::open(suite.path().join("jobs.sqlite3")).expect("store");
+        let job_id = validating_job(&mut store, suite.path());
+        let blocked_reports = suite.path().join("reports-is-a-file");
+        fs::write(&blocked_reports, b"not a directory").expect("write blocking file");
+
+        let error = persist_report_before_terminal(
+            &mut store,
+            &blocked_reports,
+            job_id,
+            &report(job_id, ValidationStatus::Pass),
+        )
+        .expect_err("report persistence must fail");
+
+        assert!(error.contains("Unable to persist ValidationReport"));
+        let details = store
+            .get_job_details(job_id)
+            .expect("read details")
+            .expect("details");
+        assert_eq!(details.job.state, JobState::Interrupted);
+        assert_eq!(
+            details.events.last().expect("last event").code,
+            "REPORT_PERSIST_FAILED"
+        );
+    }
+
+    #[test]
+    fn report_is_readable_before_successful_terminal_transition_returns() {
+        let suite = tempdir().expect("suite");
+        let reports = suite.path().join("reports");
+        let mut store = SqliteJobStore::open(suite.path().join("jobs.sqlite3")).expect("store");
+        let job_id = validating_job(&mut store, suite.path());
+        let validation = report(job_id, ValidationStatus::Pass);
+
+        let job = persist_report_before_terminal(&mut store, &reports, job_id, &validation)
+            .expect("persist and finish");
+
+        assert_eq!(job.state, JobState::Completed);
+        assert_eq!(
+            read_report(&reports, job_id).expect("read report"),
+            Some(validation)
+        );
     }
 
     #[test]
