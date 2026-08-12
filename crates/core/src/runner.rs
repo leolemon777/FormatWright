@@ -23,6 +23,7 @@ use crate::domain::{Plan, Probe, ValidationReport, ValidationStatus};
 use crate::error::{ErrorCode, FormatWrightError, Result, Stage};
 use crate::fingerprint::{ensure_local_filesystem_path, identify_artifact};
 use crate::inspect::inspect_media;
+use crate::job_store::resolve_output_identity;
 use crate::office::validate_office_pdf_output;
 use crate::pdf::inspect_pdf;
 use crate::pdf::validate_pdf_render;
@@ -2194,16 +2195,16 @@ pub fn resolve_output_path(plan: &Plan) -> Result<PathBuf> {
         )
     })?;
     ensure_local_filesystem_path(requested, Stage::Plan)?;
-    let file_name = requested.file_name().ok_or_else(|| {
+    let resolved = resolve_output_identity(requested, Stage::Plan)?;
+    let parent = resolved.parent().ok_or_else(|| {
         FormatWrightError::new(
             ErrorCode::InputInvalid,
             Stage::Plan,
-            "Output path has no filename",
-            "Choose a complete output filename.",
+            "Resolved output path has no parent directory",
+            "Choose a complete output path.",
         )
     })?;
-    let parent = requested.parent().unwrap_or_else(|| Path::new("."));
-    let canonical_parent = parent.canonicalize().map_err(|error| {
+    let metadata = parent.metadata().map_err(|error| {
         FormatWrightError::new(
             ErrorCode::InputInvalid,
             Stage::Plan,
@@ -2212,7 +2213,15 @@ pub fn resolve_output_path(plan: &Plan) -> Result<PathBuf> {
         )
         .with_diagnostic(error.to_string())
     })?;
-    Ok(canonical_parent.join(file_name))
+    if !metadata.is_dir() {
+        return Err(FormatWrightError::new(
+            ErrorCode::InputInvalid,
+            Stage::Plan,
+            format!("Output parent is not a directory: {}", parent.display()),
+            "Choose an existing output directory.",
+        ));
+    }
+    Ok(resolved)
 }
 
 /// Returns the deterministic same-directory staging path for one durable job.
@@ -2429,6 +2438,8 @@ fn cleanup_partial(path: &Path) {
 mod tests {
     use std::collections::BTreeMap;
     use std::fs;
+    #[cfg(windows)]
+    use std::path::PathBuf;
 
     #[cfg(unix)]
     use std::process::Stdio;
@@ -2445,7 +2456,8 @@ mod tests {
     #[cfg(unix)]
     use super::terminate_process_tree;
     use super::{
-        cleanup_staged_output, enforce_network_policy, staged_output_candidates, staged_output_path,
+        cleanup_staged_output, enforce_network_policy, resolve_output_path,
+        staged_output_candidates, staged_output_path,
     };
     use crate::ErrorCode;
     use crate::domain::{ChangeSet, NetworkPolicy, Plan, SCHEMA_VERSION};
@@ -2468,6 +2480,47 @@ mod tests {
         };
         let error = enforce_network_policy(&plan).expect_err("network plan must be blocked");
         assert_eq!(error.code, ErrorCode::PolicyBlocked);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn output_resolution_uses_the_same_windows_identity_policy_as_reservations() {
+        let directory = tempdir().expect("temporary directory");
+        let ordinary = directory.path().join("result.mp4");
+        let mut plan = Plan {
+            schema_version: SCHEMA_VERSION,
+            plan_id: Uuid::new_v4(),
+            plan_hash: "blake3:test".to_owned(),
+            input_fingerprint: "fwfp-v1:test".to_owned(),
+            target_format: "bin".to_owned(),
+            constraints: BTreeMap::new(),
+            steps: Vec::new(),
+            changes: ChangeSet::default(),
+            validators: Vec::new(),
+            network_policy: NetworkPolicy::Deny,
+            output_path: Some(PathBuf::from(format!(r"\\?\{}", ordinary.display()))),
+            estimated_output_bytes: None,
+        };
+        let canonical_directory = directory
+            .path()
+            .canonicalize()
+            .expect("canonical temporary directory");
+        let canonical_rendered = canonical_directory.to_string_lossy();
+        let expected = PathBuf::from(
+            canonical_rendered
+                .strip_prefix(r"\\?\")
+                .unwrap_or(&canonical_rendered),
+        )
+        .join("result.mp4");
+        assert_eq!(
+            resolve_output_path(&plan).expect("resolve verbatim disk path"),
+            expected
+        );
+
+        plan.output_path = Some(directory.path().join("result.mp4."));
+        let error = resolve_output_path(&plan).expect_err("trimmed alias must be rejected");
+        assert_eq!(error.code, ErrorCode::InputInvalid);
+        assert_eq!(error.stage, crate::Stage::Plan);
     }
 
     #[test]

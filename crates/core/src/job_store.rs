@@ -135,7 +135,69 @@ impl SqliteJobStore {
                     WHERE state NOT IN ('completed', 'warning', 'failed', 'cancelled');
                 ",
             )
-            .map_err(storage_error)
+            .map_err(storage_error)?;
+        self.migrate_output_reservation_identity()
+    }
+
+    fn migrate_output_reservation_identity(&mut self) -> Result<()> {
+        let already_applied = self
+            .connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = 3)",
+                [],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(storage_error)?;
+        if already_applied {
+            return Ok(());
+        }
+
+        let transaction = self.connection.transaction().map_err(storage_error)?;
+        let active_reservations = {
+            let mut statement = transaction
+                .prepare(
+                    "SELECT jobs.id,
+                            COALESCE(output_reservations.canonical_output_path, jobs.output_path),
+                            jobs.updated_unix_ms
+                     FROM jobs
+                     LEFT JOIN output_reservations ON output_reservations.job_id = jobs.id
+                     WHERE jobs.state NOT IN ('completed', 'warning', 'failed', 'cancelled')
+                     ORDER BY jobs.created_unix_ms ASC, jobs.id ASC",
+                )
+                .map_err(storage_error)?;
+            statement
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)?,
+                    ))
+                })
+                .map_err(storage_error)?
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .map_err(storage_error)?
+        };
+        transaction
+            .execute("DELETE FROM output_reservations", [])
+            .map_err(storage_error)?;
+        for (job_id, prior_key, updated_unix_ms) in active_reservations {
+            let key = reservation_key(Path::new(&prior_key))?;
+            transaction
+                .execute(
+                    "INSERT INTO output_reservations(
+                        canonical_output_path, job_id, created_unix_ms
+                     ) VALUES (?1, ?2, ?3)",
+                    params![key, job_id, updated_unix_ms],
+                )
+                .map_err(output_reservation_error)?;
+        }
+        transaction
+            .execute(
+                "INSERT INTO schema_migrations(version, applied_unix_ms) VALUES (3, ?1)",
+                [now_unix_ms()],
+            )
+            .map_err(storage_error)?;
+        transaction.commit().map_err(storage_error)
     }
 
     /// Creates a durable planned job and its initial event atomically.
@@ -619,6 +681,52 @@ impl SqliteJobStore {
             .map_err(storage_error)
     }
 
+    /// Re-resolves the output path and proves that it still maps to the
+    /// durable reservation owned by this job.
+    ///
+    /// # Errors
+    ///
+    /// Returns an output conflict when a path alias or reparse target changed,
+    /// and a storage error when the job or reservation cannot be read.
+    pub fn validate_output_reservation(&self, job_id: Uuid) -> Result<()> {
+        let job = self.get_job(job_id)?.ok_or_else(|| {
+            FormatWrightError::new(
+                ErrorCode::StorageFailed,
+                Stage::Store,
+                format!("Job does not exist: {job_id}"),
+                "Refresh the job list.",
+            )
+        })?;
+        let stored_key = self
+            .connection
+            .query_row(
+                "SELECT canonical_output_path FROM output_reservations WHERE job_id = ?1",
+                [job_id.to_string()],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(storage_error)?
+            .ok_or_else(|| {
+                FormatWrightError::new(
+                    ErrorCode::StorageFailed,
+                    Stage::Store,
+                    "Active job has no durable output reservation",
+                    "Run an integrity check before retrying this job.",
+                )
+            })?;
+        let current_key = reservation_key(&job.output_path)?;
+        if current_key != stored_key {
+            return Err(FormatWrightError::new(
+                ErrorCode::OutputConflict,
+                Stage::Store,
+                "Output path identity changed after the job was queued",
+                "Restore the original link target or cancel and recreate the job for the new location.",
+            )
+            .with_diagnostic(format!("reserved={stored_key}; current={current_key}")));
+        }
+        Ok(())
+    }
+
     /// Loads a job together with its immutable Plan and ordered event history.
     ///
     /// # Errors
@@ -779,6 +887,33 @@ fn reserve_output(
 }
 
 fn reservation_key(path: &Path) -> Result<String> {
+    let identity = resolve_output_identity(path, Stage::Store)?;
+    #[cfg(windows)]
+    {
+        let rendered = identity.to_str().ok_or_else(|| {
+            invalid_windows_output_path("Output path is not valid Unicode", &identity)
+        })?;
+        Ok(rendered.to_lowercase())
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(identity.to_string_lossy().into_owned())
+    }
+}
+
+pub(crate) fn resolve_output_identity(path: &Path, stage: Stage) -> Result<std::path::PathBuf> {
+    #[cfg(windows)]
+    let result = windows_output_identity(path);
+    #[cfg(not(windows))]
+    let result = posix_output_identity(path);
+    result.map_err(|mut error| {
+        error.stage = stage;
+        error
+    })
+}
+
+#[cfg(not(windows))]
+fn posix_output_identity(path: &Path) -> Result<std::path::PathBuf> {
     let absolute = if path.is_absolute() {
         path.to_path_buf()
     } else {
@@ -806,18 +941,237 @@ fn reservation_key(path: &Path) -> Result<String> {
     let canonical_parent = parent
         .canonicalize()
         .unwrap_or_else(|_| parent.to_path_buf());
-    let rendered = canonical_parent
-        .join(file_name)
-        .to_string_lossy()
-        .into_owned();
-    #[cfg(windows)]
-    {
-        Ok(rendered.to_lowercase())
+    Ok(canonical_parent.join(file_name))
+}
+
+#[cfg(windows)]
+fn windows_output_identity(path: &Path) -> Result<std::path::PathBuf> {
+    validate_windows_source_components(path)?;
+    let absolute = std::path::absolute(path).map_err(|error| {
+        FormatWrightError::new(
+            ErrorCode::StorageFailed,
+            Stage::Store,
+            "Unable to resolve the absolute Windows output path",
+            "Choose an absolute local output path.",
+        )
+        .with_diagnostic(error.to_string())
+    })?;
+    let lexical = windows_lexical_disk_path(&absolute, true)?;
+    let mut existing_ancestor = lexical.clone();
+    let mut missing_suffix = Vec::new();
+    loop {
+        match std::fs::symlink_metadata(&existing_ancestor) {
+            Ok(_) => break,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let component = existing_ancestor.file_name().ok_or_else(|| {
+                    invalid_windows_output_path(
+                        "Output path has no existing local volume ancestor",
+                        &lexical,
+                    )
+                })?;
+                missing_suffix.push(component.to_os_string());
+                if !existing_ancestor.pop() {
+                    return Err(invalid_windows_output_path(
+                        "Output path has no existing local volume ancestor",
+                        &lexical,
+                    ));
+                }
+            }
+            Err(error) => {
+                return Err(FormatWrightError::new(
+                    ErrorCode::StorageFailed,
+                    Stage::Store,
+                    "Unable to inspect the Windows output path",
+                    "Choose a local output path whose parent directory is accessible.",
+                )
+                .with_diagnostic(format!("{}: {error}", existing_ancestor.display())));
+            }
+        }
     }
-    #[cfg(not(windows))]
-    {
-        Ok(rendered)
+
+    let canonical_ancestor = existing_ancestor.canonicalize().map_err(|error| {
+        FormatWrightError::new(
+            ErrorCode::StorageFailed,
+            Stage::Store,
+            "Unable to resolve the final Windows output location",
+            "Remove dangling links or choose an accessible local output directory.",
+        )
+        .with_diagnostic(format!("{}: {error}", existing_ancestor.display()))
+    })?;
+    let mut resolved = windows_lexical_disk_path(&canonical_ancestor, false)?;
+    for component in missing_suffix.into_iter().rev() {
+        resolved.push(component);
     }
+    if resolved.file_name().is_none() {
+        return Err(invalid_windows_output_path(
+            "Output reservation path has no filename",
+            &resolved,
+        ));
+    }
+    Ok(resolved)
+}
+
+#[cfg(windows)]
+fn validate_windows_source_components(path: &Path) -> Result<()> {
+    use std::path::Component;
+
+    for component in path.components() {
+        if let Component::Normal(name) = component {
+            let value = name.to_str().ok_or_else(|| {
+                invalid_windows_output_path("Output path is not valid Unicode", path)
+            })?;
+            validate_windows_component(value, path)?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn windows_lexical_disk_path(path: &Path, require_leaf: bool) -> Result<std::path::PathBuf> {
+    use std::path::{Component, Prefix};
+
+    let mut components = path.components();
+    let (drive, verbatim) = match components.next() {
+        Some(Component::Prefix(prefix)) => match prefix.kind() {
+            Prefix::Disk(drive) => (drive, false),
+            Prefix::VerbatimDisk(drive) => (drive, true),
+            Prefix::UNC(..) | Prefix::VerbatimUNC(..) => {
+                return Err(invalid_windows_output_path(
+                    "Network output paths are not allowed",
+                    path,
+                ));
+            }
+            Prefix::DeviceNS(_) | Prefix::Verbatim(_) => {
+                return Err(invalid_windows_output_path(
+                    "Windows device namespace output paths are not allowed",
+                    path,
+                ));
+            }
+        },
+        _ => {
+            return Err(invalid_windows_output_path(
+                "Output path is not rooted on a local Windows drive",
+                path,
+            ));
+        }
+    };
+    if !matches!(components.next(), Some(Component::RootDir)) {
+        return Err(invalid_windows_output_path(
+            "Output path is not rooted on a local Windows drive",
+            path,
+        ));
+    }
+
+    let mut names = Vec::new();
+    for component in components {
+        match component {
+            Component::CurDir if !verbatim => {}
+            Component::ParentDir if !verbatim => {
+                if names.pop().is_none() {
+                    return Err(invalid_windows_output_path(
+                        "Output path escapes its Windows volume root",
+                        path,
+                    ));
+                }
+            }
+            Component::Normal(name) => {
+                let value = name.to_str().ok_or_else(|| {
+                    invalid_windows_output_path("Output path is not valid Unicode", path)
+                })?;
+                if verbatim && matches!(value, "." | "..") {
+                    return Err(invalid_windows_output_path(
+                        "Verbatim Windows output paths cannot contain dot components",
+                        path,
+                    ));
+                }
+                validate_windows_component(value, path)?;
+                names.push(name.to_os_string());
+            }
+            Component::CurDir | Component::ParentDir => {
+                return Err(invalid_windows_output_path(
+                    "Verbatim Windows output paths cannot contain dot components",
+                    path,
+                ));
+            }
+            Component::Prefix(_) | Component::RootDir => {
+                return Err(invalid_windows_output_path(
+                    "Output path contains an unexpected Windows root component",
+                    path,
+                ));
+            }
+        }
+    }
+    if require_leaf && names.is_empty() {
+        return Err(invalid_windows_output_path(
+            "Output reservation path has no filename",
+            path,
+        ));
+    }
+
+    let mut normalized =
+        std::path::PathBuf::from(format!("{}:\\", char::from(drive).to_ascii_uppercase()));
+    normalized.extend(names);
+    Ok(normalized)
+}
+
+#[cfg(windows)]
+fn validate_windows_component(component: &str, path: &Path) -> Result<()> {
+    if component.starts_with(' ') || component.ends_with(' ') || component.ends_with('.') {
+        return Err(invalid_windows_output_path(
+            "Windows output components cannot start with a space or end with a space or period",
+            path,
+        ));
+    }
+    if component.chars().any(|character| {
+        character == '\0'
+            || character <= '\u{1f}'
+            || matches!(
+                character,
+                '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'
+            )
+    }) {
+        return Err(invalid_windows_output_path(
+            "Windows output path contains a reserved character or alternate data stream",
+            path,
+        ));
+    }
+    let stem = component.split('.').next().unwrap_or_default();
+    if is_reserved_windows_device_name(stem) {
+        return Err(invalid_windows_output_path(
+            "Windows output path contains a reserved device name",
+            path,
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn is_reserved_windows_device_name(stem: &str) -> bool {
+    let upper = stem.to_uppercase();
+    if matches!(upper.as_str(), "CON" | "PRN" | "AUX" | "NUL") {
+        return true;
+    }
+    let Some(suffix) = upper
+        .strip_prefix("COM")
+        .or_else(|| upper.strip_prefix("LPT"))
+    else {
+        return false;
+    };
+    matches!(
+        suffix,
+        "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+    )
+}
+
+#[cfg(windows)]
+fn invalid_windows_output_path(message: &str, path: &Path) -> FormatWrightError {
+    FormatWrightError::new(
+        ErrorCode::InputInvalid,
+        Stage::Store,
+        message,
+        "Choose a normal local Windows path without device names, aliases, or trailing dots/spaces.",
+    )
+    .with_diagnostic(path.display().to_string())
 }
 
 const fn is_terminal(state: JobState) -> bool {
@@ -927,6 +1281,8 @@ mod tests {
     use tempfile::tempdir;
     use uuid::Uuid;
 
+    #[cfg(windows)]
+    use super::reservation_key;
     use super::{JobCreateRequest, SqliteJobStore};
     use crate::ErrorCode;
     use crate::domain::{ChangeSet, JobState, NetworkPolicy, Plan, SCHEMA_VERSION};
@@ -1136,6 +1492,218 @@ mod tests {
             .transition(first.id, JobState::Queued, "JOB_RETRIED")
             .expect("retry after reservation release");
         assert_eq!(retried.state, JobState::Queued);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_reservation_identity_collapses_case_verbatim_and_lexical_aliases() {
+        let directory = tempdir().expect("temporary directory");
+        let ordinary = directory.path().join("Future").join("Output.MP4");
+        let case_alias = directory.path().join("future").join("output.mp4");
+        let verbatim_alias = PathBuf::from(format!(r"\\?\{}", ordinary.display()));
+        let dot_alias = directory
+            .path()
+            .join("Future")
+            .join("child")
+            .join("..")
+            .join("Output.MP4");
+
+        let expected = reservation_key(&ordinary).expect("ordinary key");
+        assert_eq!(reservation_key(&case_alias).expect("case key"), expected);
+        assert_eq!(
+            reservation_key(&verbatim_alias).expect("verbatim key"),
+            expected
+        );
+        assert_eq!(reservation_key(&dot_alias).expect("dot key"), expected);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_nonexistent_parent_aliases_cannot_hold_two_reservations() {
+        let directory = tempdir().expect("temporary directory");
+        let first_output = directory
+            .path()
+            .join("future")
+            .join("child")
+            .join("..")
+            .join("result.mp4");
+        let second_output = directory.path().join("FUTURE").join("RESULT.MP4");
+        let mut store = SqliteJobStore::open_in_memory().expect("in-memory store");
+        store
+            .create_job("input-a.mkv", &first_output, &plan())
+            .expect("first reservation");
+        let error = store
+            .create_job("input-b.mkv", &second_output, &plan())
+            .expect_err("Win32 aliases must share one reservation");
+        assert_eq!(error.code, ErrorCode::OutputConflict);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_v3_migration_rebuilds_reservations_atomically() {
+        let directory = tempdir().expect("temporary directory");
+        let database_path = directory.path().join("legacy.sqlite3");
+        drop(SqliteJobStore::open(&database_path).expect("initialize schema"));
+        let first_id = Uuid::new_v4();
+        let second_id = Uuid::new_v4();
+        let first_output = directory
+            .path()
+            .join("future")
+            .join("child")
+            .join("..")
+            .join("result.mp4");
+        let second_output = directory.path().join("FUTURE").join("RESULT.MP4");
+        let legacy = rusqlite::Connection::open(&database_path).expect("open legacy database");
+        legacy
+            .execute("DELETE FROM schema_migrations WHERE version = 3", [])
+            .expect("remove migration marker");
+        for (job_id, output) in [(first_id, &first_output), (second_id, &second_output)] {
+            legacy
+                .execute(
+                    "INSERT INTO jobs(
+                        id, state, input_path, output_path, plan_hash, plan_json,
+                        sequence, created_unix_ms, updated_unix_ms
+                     ) VALUES (?1, 'planned', 'input.mkv', ?2, 'blake3:test', '{}', 0, 1, 1)",
+                    rusqlite::params![job_id.to_string(), output.to_string_lossy()],
+                )
+                .expect("insert legacy job");
+            legacy
+                .execute(
+                    "INSERT INTO output_reservations(
+                        canonical_output_path, job_id, created_unix_ms
+                     ) VALUES (?1, ?2, 1)",
+                    rusqlite::params![output.to_string_lossy(), job_id.to_string()],
+                )
+                .expect("insert legacy reservation");
+        }
+        drop(legacy);
+
+        let error = SqliteJobStore::open(&database_path)
+            .expect_err("alias collision must stop the migration");
+        assert_eq!(error.code, ErrorCode::OutputConflict);
+        let inspected = rusqlite::Connection::open(&database_path).expect("inspect rollback");
+        let migration_applied = inspected
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = 3)",
+                [],
+                |row| row.get::<_, bool>(0),
+            )
+            .expect("read migration marker");
+        let reservation_count = inspected
+            .query_row("SELECT COUNT(*) FROM output_reservations", [], |row| {
+                row.get::<_, u64>(0)
+            })
+            .expect("count reservations");
+        assert!(!migration_applied);
+        assert_eq!(reservation_count, 2);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_reservation_rejects_trimmed_and_device_components() {
+        let directory = tempdir().expect("temporary directory");
+        let invalid_components = [
+            "output.mp4.",
+            "output.mp4 ",
+            " output.mp4",
+            "CON",
+            "nul.txt",
+            "COM1.log",
+            "LPT¹.report",
+            "safe:stream.mp4",
+        ];
+        for component in invalid_components {
+            let error = reservation_key(&directory.path().join(component))
+                .expect_err("unsafe Windows component must be rejected");
+            assert_eq!(error.code, ErrorCode::InputInvalid, "{component}");
+        }
+
+        let nested_device = directory.path().join("AUX").join("output.mp4");
+        let error = reservation_key(&nested_device).expect_err("nested device must be rejected");
+        assert_eq!(error.code, ErrorCode::InputInvalid);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_reservation_rejects_network_and_device_namespaces() {
+        let invalid_paths = [
+            PathBuf::from(r"\\server\share\output.mp4"),
+            PathBuf::from(r"\\?\UNC\server\share\output.mp4"),
+            PathBuf::from(r"\\.\PhysicalDrive0"),
+            PathBuf::from(r"\\?\GLOBALROOT\Device\HarddiskVolume1\output.mp4"),
+        ];
+        for path in invalid_paths {
+            let error = reservation_key(&path).expect_err("namespace must be rejected");
+            assert_eq!(error.code, ErrorCode::InputInvalid, "{}", path.display());
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_reservation_resolves_existing_directory_reparse_points() {
+        use std::os::windows::fs::symlink_dir;
+
+        let directory = tempdir().expect("temporary directory");
+        let actual = directory.path().join("actual-output");
+        let alias = directory.path().join("linked-output");
+        std::fs::create_dir(&actual).expect("create actual directory");
+        if let Err(error) = symlink_dir(&actual, &alias) {
+            if error.kind() == std::io::ErrorKind::PermissionDenied {
+                eprintln!("skipped reparse-point assertion: {error}");
+                return;
+            }
+            panic!("create directory symlink: {error}");
+        }
+
+        let actual_output = actual.join("result.mp4");
+        let alias_output = alias.join("result.mp4");
+        assert_eq!(
+            reservation_key(&actual_output).expect("actual key"),
+            reservation_key(&alias_output).expect("alias key")
+        );
+        let mut store = SqliteJobStore::open_in_memory().expect("in-memory store");
+        store
+            .create_job("input-a.mkv", &actual_output, &plan())
+            .expect("first reservation");
+        let error = store
+            .create_job("input-b.mkv", &alias_output, &plan())
+            .expect_err("reparse aliases must share one reservation");
+        assert_eq!(error.code, ErrorCode::OutputConflict);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_reparse_retarget_is_detected_before_execution() {
+        use std::os::windows::fs::symlink_dir;
+
+        let directory = tempdir().expect("temporary directory");
+        let first_target = directory.path().join("first-target");
+        let second_target = directory.path().join("second-target");
+        let alias = directory.path().join("mutable-link");
+        std::fs::create_dir(&first_target).expect("create first target");
+        std::fs::create_dir(&second_target).expect("create second target");
+        if let Err(error) = symlink_dir(&first_target, &alias) {
+            if error.kind() == std::io::ErrorKind::PermissionDenied {
+                eprintln!("skipped reparse-retarget assertion: {error}");
+                return;
+            }
+            panic!("create directory symlink: {error}");
+        }
+
+        let mut store = SqliteJobStore::open_in_memory().expect("in-memory store");
+        let job = store
+            .create_job("input-a.mkv", alias.join("result.mp4"), &plan())
+            .expect("reserve first reparse target");
+        std::fs::remove_dir(&alias).expect("remove directory symlink");
+        symlink_dir(&second_target, &alias).expect("retarget directory symlink");
+
+        let error = store
+            .validate_output_reservation(job.id)
+            .expect_err("retargeted output must be blocked");
+        assert_eq!(error.code, ErrorCode::OutputConflict);
+        store
+            .create_job("input-b.mkv", second_target.join("result.mp4"), &plan())
+            .expect("new target keeps its independent reservation");
     }
 
     #[test]

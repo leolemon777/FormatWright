@@ -457,6 +457,16 @@ async fn prepare_queued_job(
     details: JobDetails,
 ) -> Result<QueuePreparation> {
     let job_id = details.job.id;
+    if let Err(error) = store.validate_output_reservation(job_id) {
+        if matches!(
+            error.code,
+            ErrorCode::InputInvalid | ErrorCode::OutputConflict
+        ) {
+            store.transition(job_id, JobState::Blocked, "OUTPUT_IDENTITY_CHANGED")?;
+            return Ok(QueuePreparation::Blocked);
+        }
+        return Err(error);
+    }
     store.transition(job_id, JobState::Inspecting, "QUEUE_REINSPECTING")?;
     let Some(stored_engine) = details.plan.steps.first().map(|step| step.engine.clone()) else {
         store.transition(job_id, JobState::Failed, "PLAN_INVALID")?;
@@ -1027,6 +1037,49 @@ mod tests {
         );
         assert!(good_output.is_file());
         assert!(!bad_output.exists());
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn retargeted_output_link_is_blocked_before_worker_execution() {
+        use std::os::windows::fs::symlink_dir;
+
+        let suite = tempdir().expect("suite");
+        let first_target = suite.path().join("first-target");
+        let second_target = suite.path().join("second-target");
+        let alias = suite.path().join("output-link");
+        fs::create_dir(&first_target).expect("create first target");
+        fs::create_dir(&second_target).expect("create second target");
+        if let Err(error) = symlink_dir(&first_target, &alias) {
+            if error.kind() == std::io::ErrorKind::PermissionDenied {
+                eprintln!("skipped queue reparse-retarget assertion: {error}");
+                return;
+            }
+            panic!("create directory symlink: {error}");
+        }
+
+        let mut store = SqliteJobStore::open(suite.path().join("jobs.sqlite3")).expect("store");
+        let input = suite.path().join("input.json");
+        let output = alias.join("output.yaml");
+        let job_id = queue_structured_job(&mut store, &input, &output).await;
+        fs::remove_dir(&alias).expect("remove output symlink");
+        symlink_dir(&second_target, &alias).expect("retarget output symlink");
+
+        let report = JobExecutionService::run_window(&mut store, 8, 1, CancellationToken::new())
+            .await
+            .expect("run guarded window");
+        assert_eq!(report.blocked, 1);
+        assert_eq!(report.completed, 0);
+        let details = store
+            .get_job_details(job_id)
+            .expect("read details")
+            .expect("details");
+        assert_eq!(details.job.state, JobState::Blocked);
+        assert_eq!(
+            details.events.last().expect("last event").code,
+            "OUTPUT_IDENTITY_CHANGED"
+        );
+        assert!(!second_target.join("output.yaml").exists());
     }
 
     #[tokio::test]
