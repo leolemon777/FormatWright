@@ -20,7 +20,10 @@ pub mod validation;
 mod workflow;
 
 pub use application::{JobExecutionService, QueueRunReport, QueueWindowControl};
-pub use doctor::{doctor, find_executable, inspect_builtin_engine, inspect_engine};
+pub use doctor::{
+    EngineDiscoveryPolicy, doctor, doctor_with_policy, find_executable, inspect_builtin_engine,
+    inspect_engine, inspect_engine_with_policy,
+};
 pub use document::{inspect_document, plan_markup_to_docx, plan_markup_to_pdf};
 pub use domain::{
     ArtifactIdentity, ArtifactSummary, ChangeSet, FormatDescriptor, FormatKind, JobState,

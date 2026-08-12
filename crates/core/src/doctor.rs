@@ -11,6 +11,28 @@ use tokio::process::Command;
 
 use crate::error::{ErrorCode, FormatWrightError, Result, Stage};
 
+/// Controls which engine locations may participate in runtime discovery.
+///
+/// Production releases must be deterministic: only exact paths activated from
+/// a hash-verified engine pack are eligible. Development builds may also use an
+/// explicit environment override or PATH to make adapter development practical.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EngineDiscoveryPolicy {
+    VerifiedPacksOnly,
+    Development,
+}
+
+impl EngineDiscoveryPolicy {
+    #[must_use]
+    pub const fn for_current_build() -> Self {
+        if cfg!(debug_assertions) {
+            Self::Development
+        } else {
+            Self::VerifiedPacksOnly
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 struct RegisteredEnginePath {
     path: PathBuf,
@@ -21,6 +43,12 @@ static REGISTERED_ENGINE_PATHS: OnceLock<RwLock<BTreeMap<String, RegisteredEngin
     OnceLock::new();
 
 pub async fn doctor() -> DoctorReport {
+    doctor_with_policy(EngineDiscoveryPolicy::for_current_build()).await
+}
+
+/// Runs Doctor using an explicit engine-discovery policy.
+#[must_use]
+pub async fn doctor_with_policy(policy: EngineDiscoveryPolicy) -> DoctorReport {
     let mut engines = BTreeMap::new();
     for executable in [
         "ffmpeg",
@@ -33,7 +61,7 @@ pub async fn doctor() -> DoctorReport {
         "pdfinfo",
         "qpdf",
     ] {
-        let health = match inspect_engine(executable).await {
+        let health = match inspect_engine_with_policy(executable, policy).await {
             Ok(identity) => EngineHealth {
                 executable: executable.to_owned(),
                 available: true,
@@ -54,27 +82,40 @@ pub async fn doctor() -> DoctorReport {
     DoctorReport { engines }
 }
 
-/// Inspects an executable on PATH and returns its immutable identity.
+/// Inspects an engine selected by the current build policy and returns its
+/// immutable identity.
 ///
 /// # Errors
 ///
 /// Returns an engine error when the executable is missing, cannot start, does
 /// not expose a version, or cannot be hashed.
 pub async fn inspect_engine(executable: &str) -> Result<EngineIdentity> {
-    let registered = registered_engine_path(executable);
-    let path = registered
-        .as_ref()
-        .map(|engine| engine.path.clone())
-        .or_else(|| configured_engine_path(executable))
-        .or_else(|| find_executable(executable))
-        .ok_or_else(|| {
-            FormatWrightError::new(
-                ErrorCode::EngineMissing,
-                Stage::Doctor,
-                format!("Engine executable was not found: {executable}"),
-                "Install or import a certified engine pack, then run doctor again.",
-            )
-        })?;
+    inspect_engine_with_policy(executable, EngineDiscoveryPolicy::for_current_build()).await
+}
+
+/// Inspects an engine using an explicit discovery policy.
+///
+/// # Errors
+///
+/// Returns an engine error when the selected policy cannot resolve a verified
+/// executable or when version/hash inspection fails.
+pub async fn inspect_engine_with_policy(
+    executable: &str,
+    policy: EngineDiscoveryPolicy,
+) -> Result<EngineIdentity> {
+    let (path, manifest_sha256) = resolve_engine_path(executable, policy).ok_or_else(|| {
+        let message = if policy == EngineDiscoveryPolicy::VerifiedPacksOnly {
+            format!("No activated verified engine pack provides: {executable}")
+        } else {
+            format!("Engine executable was not found: {executable}")
+        };
+        FormatWrightError::new(
+            ErrorCode::EngineMissing,
+            Stage::Doctor,
+            message,
+            "Install or import a certified engine pack, then run doctor again.",
+        )
+    })?;
 
     let version_argument = match executable {
         "ffmpeg" | "ffprobe" => "-version",
@@ -140,10 +181,25 @@ pub async fn inspect_engine(executable: &str) -> Result<EngineIdentity> {
         version,
         binary_path: path,
         binary_sha256,
-        manifest_sha256: registered.map(|engine| engine.manifest_sha256),
+        manifest_sha256,
         build_configuration,
         certification: Certification::Unverified,
     })
+}
+
+fn resolve_engine_path(
+    executable: &str,
+    policy: EngineDiscoveryPolicy,
+) -> Option<(PathBuf, Option<String>)> {
+    if let Some(engine) = registered_engine_path(executable) {
+        return Some((engine.path, Some(engine.manifest_sha256)));
+    }
+    if policy == EngineDiscoveryPolicy::VerifiedPacksOnly {
+        return None;
+    }
+    configured_engine_path(executable)
+        .or_else(|| find_executable(executable))
+        .map(|path| (path, None))
 }
 
 pub(crate) fn register_engine_pack_paths(
@@ -386,7 +442,10 @@ fn bounded_text(bytes: &[u8]) -> String {
 mod tests {
     use std::collections::BTreeMap;
 
-    use super::{find_executable, register_engine_pack_paths};
+    use super::{
+        EngineDiscoveryPolicy, find_executable, inspect_engine_with_policy,
+        register_engine_pack_paths, resolve_engine_path,
+    };
 
     #[test]
     fn finds_current_test_executable_by_explicit_path() {
@@ -407,5 +466,35 @@ mod tests {
         let error = register_engine_pack_paths(&second, "manifest-b")
             .expect_err("a second manifest must not replace the first");
         assert!(error.message.contains("already claimed"));
+    }
+
+    #[tokio::test]
+    async fn production_policy_ignores_explicit_non_pack_paths() {
+        let current = std::env::current_exe().expect("current test executable");
+        let executable = current.to_string_lossy();
+        assert!(find_executable(&executable).is_some());
+
+        let error =
+            inspect_engine_with_policy(&executable, EngineDiscoveryPolicy::VerifiedPacksOnly)
+                .await
+                .expect_err("production policy must ignore non-pack paths");
+        assert_eq!(error.code, crate::ErrorCode::EngineMissing);
+        assert!(error.message.contains("activated verified engine pack"));
+    }
+
+    #[test]
+    fn production_policy_selects_an_exact_registered_pack_path() {
+        let executable = "strict-pack-fixture";
+        let current = std::env::current_exe().expect("current test executable");
+        let mut paths = BTreeMap::new();
+        paths.insert(executable.to_owned(), current.clone());
+        register_engine_pack_paths(&paths, "strict-pack-manifest")
+            .expect("register exact pack path");
+
+        let (path, manifest_sha256) =
+            resolve_engine_path(executable, EngineDiscoveryPolicy::VerifiedPacksOnly)
+                .expect("production policy should select the registered exact path");
+        assert_eq!(path, current);
+        assert_eq!(manifest_sha256.as_deref(), Some("strict-pack-manifest"));
     }
 }

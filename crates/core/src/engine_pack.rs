@@ -70,6 +70,7 @@ pub fn verify_engine_pack(manifest_path: impl AsRef<Path>) -> Result<VerifiedEng
     let mut executables = BTreeMap::new();
     for executable in &manifest.executables {
         let path = resolve_pack_file(root, &executable.relative_path, "engine executable")?;
+        verify_native_executable(&path)?;
         let observed = sha256_file(&path)?;
         if !observed.eq_ignore_ascii_case(&executable.sha256) {
             return Err(engine_error(
@@ -141,6 +142,24 @@ fn verify_license_files(root: &Path, license: &ManifestLicense) -> Result<()> {
     Ok(())
 }
 
+fn verify_native_executable(path: &Path) -> Result<()> {
+    #[cfg(windows)]
+    {
+        let extension = path
+            .extension()
+            .and_then(std::ffi::OsStr::to_str)
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        if !matches!(extension.as_str(), "exe" | "com") {
+            return Err(engine_error(
+                "Windows engine packs may contain only native .exe/.com executables".to_owned(),
+                path.display().to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn resolve_pack_file(root: &Path, relative: &Path, purpose: &str) -> Result<PathBuf> {
     let candidate = root.join(relative);
     let canonical = candidate.canonicalize().map_err(|error| {
@@ -203,7 +222,11 @@ mod tests {
             },
             executables: vec![ManifestExecutable {
                 name: "fixture".to_owned(),
-                relative_path: PathBuf::from("bin/fixture.bin"),
+                relative_path: PathBuf::from(if cfg!(windows) {
+                    "bin/fixture.exe"
+                } else {
+                    "bin/fixture.bin"
+                }),
                 sha256: binary_hash,
             }],
             source: ManifestSource {
@@ -233,7 +256,11 @@ mod tests {
         let directory = tempdir().expect("temporary pack");
         fs::create_dir_all(directory.path().join("bin")).expect("binary directory");
         fs::create_dir_all(directory.path().join("licenses")).expect("license directory");
-        let binary = directory.path().join("bin/fixture.bin");
+        let binary = directory.path().join(if cfg!(windows) {
+            "bin/fixture.exe"
+        } else {
+            "bin/fixture.bin"
+        });
         fs::write(&binary, b"fixture engine").expect("binary fixture");
         fs::write(
             directory.path().join("licenses/NOTICE.txt"),
@@ -273,11 +300,13 @@ mod tests {
     #[test]
     fn rejects_a_tampered_binary() {
         let (_directory, manifest_path) = create_pack();
+        let bytes = fs::read(&manifest_path).expect("read manifest");
+        let value = serde_json::from_slice::<EngineManifest>(&bytes).expect("parse manifest");
         fs::write(
             manifest_path
                 .parent()
                 .expect("pack root")
-                .join("bin/fixture.bin"),
+                .join(&value.executables[0].relative_path),
             b"tampered",
         )
         .expect("tamper binary");
@@ -302,5 +331,29 @@ mod tests {
         let error = verify_engine_pack(directory.path().join("manifest.json"))
             .expect_err("wrong architecture must fail");
         assert!(error.message.contains("does not match this host"));
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn rejects_windows_script_wrappers_as_pack_executables() {
+        let (directory, manifest_path) = create_pack();
+        let bytes = fs::read(&manifest_path).expect("read manifest");
+        let mut value = serde_json::from_slice::<EngineManifest>(&bytes).expect("parse manifest");
+        let old_path = value.executables[0].relative_path.clone();
+        let script_path = PathBuf::from("bin/fixture.cmd");
+        fs::rename(
+            directory.path().join(&old_path),
+            directory.path().join(&script_path),
+        )
+        .expect("rename executable fixture");
+        value.executables[0].relative_path = script_path;
+        fs::write(
+            &manifest_path,
+            serde_json::to_vec_pretty(&value).expect("serialize manifest"),
+        )
+        .expect("rewrite manifest");
+
+        let error = verify_engine_pack(&manifest_path).expect_err("script wrapper must fail");
+        assert!(error.message.contains("native .exe/.com"));
     }
 }
