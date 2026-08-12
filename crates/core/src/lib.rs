@@ -60,4 +60,4 @@ pub use scheduler::{
 };
 pub use structured::{inspect_structured, plan_structured_conversion, structured_format_hint};
 pub use validation::validate_media_output;
-pub use workflow::prepare_conversion;
+pub use workflow::{ensure_plan_approved, prepare_conversion};

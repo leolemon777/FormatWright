@@ -9,6 +9,7 @@ The Tauri 2 desktop application now invokes the same `formatwright-core::prepare
 
 - Convert accepts a Tauri file drop, a native file chooser, or an absolute local path. A native save chooser selects single-file destinations, while PDF page rendering selects an output directory. The surface recommends targets, builds a real Probe/Plan preview, exposes basic and expert controls, and runs the selected Plan.
 - Convert can **Add to queue** (`queue_desktop_conversion`) which persists an immutable Plan as `Queued` without immediate execution.
+- Start and Add-to-queue carry the exact visible preview `plan_hash`; the backend reprepares from the current input, options, and engine identities and rejects missing or stale approval before creating a job.
 - Jobs can **Run queue window**, **Pause after current** (finish-current), and **Stop now** (immediate) via shared `JobExecutionService` / `QueueWindowControl`.
 - Typed Plan steps show engine, operation, loss class, capability, preserved/changed/dropped/unknown fields, and expert arguments without accepting shell text.
 - A cancellation command reaches the active Rust `CancellationToken` and process-tree runner for single-shot converts; queue pause modes use `QueueWindowControl`.
@@ -24,7 +25,7 @@ The Tauri 2 desktop application now invokes the same `formatwright-core::prepare
 
 - `pnpm --dir apps/desktop test -- --run`: two files and six tests pass, covering the 10,000-job coalesced projection, duplicate-batch refusal, target recommendations, non-overwriting output suggestions, PDF page-directory suggestions, and typed error parsing.
 - `pnpm --dir apps/desktop build`: TypeScript project build and Vite production bundle pass.
-- Current ordinary Rust baseline: 98 tests pass (78 core, 7 schema-contract, 9 desktop and 4 engine-SDK tests), including queue failure drain, report-before-terminal persistence/recovery, engine-pack activation, atomic batch queueing, cancellation at the validation boundary, deterministic resource admission, network-path policy, shared queue execution, and the bounded queue bridge. The separate 10,000-conversion release gate is opt-in.
+- Current ordinary Rust baseline: 101 tests pass (80 core, 7 schema-contract, 10 desktop and 4 engine-SDK tests), including exact preview approval, queue failure drain, report-before-terminal persistence/recovery, engine-pack activation, atomic batch queueing, cancellation at the validation boundary, deterministic resource admission, and the bounded queue bridge. The separate 10,000-conversion release gate is opt-in.
 - Workspace Clippy with warnings denied passes for the desktop IPC and persistence implementation.
 - `formatwright-desktop.exe` starts a native window titled `FormatWright`, remains responsive, and is then terminated by the harness.
 - Edge headless rendered the local production UI at 1440×1000. The captured Convert page, including native-picker affordances, was visually checked for navigation, hierarchy, clipping, contrast, disabled controls, bilingual typography, and responsive column boundaries.

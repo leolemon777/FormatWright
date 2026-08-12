@@ -311,7 +311,7 @@ export default function App() {
     }
   }
 
-  function request() {
+  function request(approvedPlanHash: string | null = null) {
     return {
       inputPath,
       outputPath,
@@ -321,6 +321,7 @@ export default function App() {
       dpi: target === "png" || target === "jpg" || target === "jpeg" ? Number(dpi) : null,
       colorMode: target === "png" || target === "jpg" || target === "jpeg" ? colorMode : null,
       preserveAllStreams,
+      approvedPlanHash,
     };
   }
 
@@ -339,18 +340,20 @@ export default function App() {
   }
 
   async function runConversion() {
+    if (!preview) return;
     setBusy("run");
     setError(null);
     try {
       const result = await invoke<{ job: JobRecord; report: ValidationReport }>(
         "run_desktop_conversion",
-        { request: request() },
+        { request: request(preview.plan.plan_hash) },
       );
       setReport(result.report);
       setActiveJobId(null);
       setTab("reports");
       await refreshJobs();
     } catch (reason) {
+      setPreview(null);
       setError(parseDesktopError(reason));
       setActiveJobId(null);
     } finally {
@@ -363,13 +366,17 @@ export default function App() {
   }
 
   async function queueConversion() {
+    if (!preview) return;
     setBusy("queue");
     setError(null);
     try {
-      await invoke<JobRecord>("queue_desktop_conversion", { request: request() });
+      await invoke<JobRecord>("queue_desktop_conversion", {
+        request: request(preview.plan.plan_hash),
+      });
       setTab("jobs");
       await refreshJobs();
     } catch (reason) {
+      setPreview(null);
       setError(parseDesktopError(reason));
     } finally {
       setBusy(null);

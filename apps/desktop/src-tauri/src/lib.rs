@@ -77,6 +77,7 @@ struct DesktopConversionRequest {
     dpi: Option<u16>,
     color_mode: Option<String>,
     preserve_all_streams: Option<bool>,
+    approved_plan_hash: Option<String>,
 }
 
 impl DesktopConversionRequest {
@@ -230,16 +231,24 @@ async fn preview_conversion(request: DesktopConversionRequest) -> Result<Desktop
     Ok(DesktopPreview { probe, plan })
 }
 
+async fn prepare_approved_desktop_conversion(
+    request: &DesktopConversionRequest,
+) -> Result<(Probe, Plan, formatwright_core::EngineIdentity), String> {
+    let prepared = prepare_conversion(&request.input_path, &request.plan_request())
+        .await
+        .map_err(serialize_error)?;
+    formatwright_core::ensure_plan_approved(&prepared.1, request.approved_plan_hash.as_deref())
+        .map_err(serialize_error)?;
+    Ok(prepared)
+}
+
 #[tauri::command]
 async fn run_desktop_conversion(
     window: tauri::WebviewWindow,
     state: tauri::State<'_, DesktopState>,
     request: DesktopConversionRequest,
 ) -> Result<DesktopRunResult, String> {
-    let (probe, plan, validation_engine) =
-        prepare_conversion(&request.input_path, &request.plan_request())
-            .await
-            .map_err(serialize_error)?;
+    let (probe, plan, validation_engine) = prepare_approved_desktop_conversion(&request).await?;
     let job = {
         let mut guard = lock(&state.store)?;
         let store = require_store(&mut guard)?;
@@ -308,9 +317,7 @@ async fn queue_desktop_conversion(
     state: tauri::State<'_, DesktopState>,
     request: DesktopConversionRequest,
 ) -> Result<JobRecord, String> {
-    let (probe, plan, _) = prepare_conversion(&request.input_path, &request.plan_request())
-        .await
-        .map_err(serialize_error)?;
+    let (probe, plan, _) = prepare_approved_desktop_conversion(&request).await?;
     let job = {
         let mut guard = lock(&state.store)?;
         let store = require_store(&mut guard)?;
@@ -1006,9 +1013,9 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        DesktopEngineRegistryEntry, backup_path, bundled_manifest_paths, load_preset_library,
-        persist_preset_library, persist_report_before_terminal, read_report,
-        registered_manifest_paths, save_report,
+        DesktopConversionRequest, DesktopEngineRegistryEntry, backup_path, bundled_manifest_paths,
+        load_preset_library, persist_preset_library, persist_report_before_terminal,
+        prepare_approved_desktop_conversion, read_report, registered_manifest_paths, save_report,
     };
 
     fn plan(output_path: PathBuf) -> Plan {
@@ -1066,6 +1073,24 @@ mod tests {
             .transition(job.id, JobState::Validating, "TEST_ENGINE_FINISHED")
             .expect("validate job");
         job.id
+    }
+
+    fn conversion_request(
+        input_path: PathBuf,
+        output_path: PathBuf,
+        approved_plan_hash: Option<String>,
+    ) -> DesktopConversionRequest {
+        DesktopConversionRequest {
+            input_path,
+            output_path,
+            target_format: "yaml".to_owned(),
+            quality: None,
+            width: None,
+            dpi: None,
+            color_mode: None,
+            preserve_all_streams: Some(true),
+            approved_plan_hash,
+        }
     }
 
     #[test]
@@ -1195,6 +1220,38 @@ mod tests {
             read_report(&reports, job_id).expect("read report"),
             Some(validation)
         );
+    }
+
+    #[tokio::test]
+    async fn desktop_execution_requires_the_exact_preview_plan_hash() {
+        let suite = tempdir().expect("suite");
+        let input = suite.path().join("input.json");
+        let output = suite.path().join("output.yaml");
+        fs::write(&input, r#"[{"id":1}]"#).expect("write input");
+        let request = conversion_request(input.clone(), output.clone(), None);
+        let preview = formatwright_core::prepare_conversion(&input, &request.plan_request())
+            .await
+            .expect("preview");
+
+        let missing = prepare_approved_desktop_conversion(&request)
+            .await
+            .expect_err("missing approval must fail");
+        assert!(missing.contains("POLICY_BLOCKED"));
+
+        let approved = conversion_request(
+            input.clone(),
+            output.clone(),
+            Some(preview.1.plan_hash.clone()),
+        );
+        prepare_approved_desktop_conversion(&approved)
+            .await
+            .expect("unchanged preview is approved");
+
+        fs::write(&input, r#"[{"id":2}]"#).expect("change input");
+        let changed = prepare_approved_desktop_conversion(&approved)
+            .await
+            .expect_err("changed input must invalidate approval");
+        assert!(changed.contains("INPUT_CHANGED"));
     }
 
     #[test]

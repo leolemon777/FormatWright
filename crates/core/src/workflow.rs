@@ -84,6 +84,38 @@ pub async fn prepare_conversion(
     Ok((probe, plan, ffprobe))
 }
 
+/// Verifies that a freshly prepared Plan is the exact Plan approved by a
+/// surface that separates preview from execution.
+///
+/// # Errors
+///
+/// Returns a policy error when no approval was supplied and an input-changed
+/// error when the input, engines, options, or another hashed Plan invariant
+/// changed after preview.
+pub fn ensure_plan_approved(plan: &Plan, approved_plan_hash: Option<&str>) -> Result<()> {
+    let Some(approved) = approved_plan_hash.filter(|value| !value.trim().is_empty()) else {
+        return Err(FormatWrightError::new(
+            ErrorCode::PolicyBlocked,
+            Stage::Plan,
+            "Conversion requires an approved preview Plan",
+            "Inspect and preview the Plan, then approve that exact Plan for execution.",
+        ));
+    };
+    if approved != plan.plan_hash {
+        return Err(FormatWrightError::new(
+            ErrorCode::InputChanged,
+            Stage::Plan,
+            "The conversion Plan changed after preview",
+            "Review the updated Plan and approve it again before execution.",
+        )
+        .with_diagnostic(format!(
+            "approved_plan_hash={approved}; current_plan_hash={}",
+            plan.plan_hash
+        )));
+    }
+    Ok(())
+}
+
 fn required_output(request: &PlanRequest, operation: &str) -> Result<std::path::PathBuf> {
     request.output_path.clone().ok_or_else(|| {
         FormatWrightError::new(
@@ -108,12 +140,13 @@ fn is_structured_target(target: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::io::Write;
 
-    use tempfile::Builder;
+    use tempfile::{Builder, tempdir};
 
-    use super::prepare_conversion;
-    use crate::PlanRequest;
+    use super::{ensure_plan_approved, prepare_conversion};
+    use crate::{ErrorCode, PlanRequest};
 
     #[tokio::test]
     async fn shared_surface_preparation_builds_a_runnable_structured_plan() {
@@ -137,5 +170,39 @@ mod tests {
         assert_eq!(plan.target_format, "yaml");
         assert_eq!(plan.steps[0].engine.engine_id, "formatwright.structured");
         assert_eq!(validation_engine.engine_id, "formatwright.structured");
+    }
+
+    #[tokio::test]
+    async fn approved_plan_hash_rejects_missing_and_changed_previews() {
+        let directory = tempdir().expect("temporary workflow");
+        let input = directory.path().join("records.json");
+        let output = directory.path().join("records.yaml");
+        fs::write(&input, r#"[{"id":1}]"#).expect("input fixture");
+        let request = PlanRequest {
+            target_format: "yaml".to_owned(),
+            output_path: Some(output),
+            ..PlanRequest::default()
+        };
+        let (_, approved_plan, _) = prepare_conversion(&input, &request).await.expect("preview");
+        ensure_plan_approved(&approved_plan, Some(&approved_plan.plan_hash))
+            .expect("unchanged Plan is approved");
+        assert_eq!(
+            ensure_plan_approved(&approved_plan, None)
+                .expect_err("missing approval")
+                .code,
+            ErrorCode::PolicyBlocked
+        );
+
+        fs::write(&input, r#"[{"id":2}]"#).expect("change input after preview");
+        let (_, current_plan, _) = prepare_conversion(&input, &request)
+            .await
+            .expect("reprepare");
+        assert_ne!(approved_plan.plan_hash, current_plan.plan_hash);
+        assert_eq!(
+            ensure_plan_approved(&current_plan, Some(&approved_plan.plan_hash))
+                .expect_err("stale approval")
+                .code,
+            ErrorCode::InputChanged
+        );
     }
 }

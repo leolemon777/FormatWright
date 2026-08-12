@@ -1301,6 +1301,17 @@ mod tests {
     }
 
     #[test]
+    fn deterministic_hash_changes_with_engine_identity() {
+        let source = probe("h264", Some("aac"));
+        let first = plan_conversion(&source, &request(), &engine()).expect("first plan");
+        let mut changed_engine = engine();
+        changed_engine.version = "ffmpeg changed".to_owned();
+        changed_engine.binary_sha256 = "11".repeat(32);
+        let second = plan_conversion(&source, &request(), &changed_engine).expect("second plan");
+        assert_ne!(first.plan_hash, second.plan_hash);
+    }
+
+    #[test]
     fn preservation_policy_blocks_incompatible_subtitles() {
         let mut source = probe("h264", Some("aac"));
         source.streams.push(StreamProbe {
