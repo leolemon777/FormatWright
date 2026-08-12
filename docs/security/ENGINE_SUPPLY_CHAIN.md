@@ -70,7 +70,7 @@ States:
 
 A job pins a certified pack identity. New jobs may migrate after Doctor and fixture checks. Interrupted jobs never silently switch packs.
 
-The Windows v0.1 Starter distribution is planned as Core (built-in structured conversions), PDF (Poppler tools and runtime libraries), and Media (reviewed FFmpeg/ffprobe build). Document and Image remain optional packs until their redistribution and capability matrices pass. The installer may carry Starter resources directly or ship beside the same installer as an Offline Bundle, but first activation always follows the same verified, atomic registry path.
+The Windows v0.1 Starter implementation now contains Core (built-in structured conversions), PDF (pinned Poppler tools and declared runtime files), and Media (pinned FFmpeg/ffprobe). Document and Image remain optional packs until their redistribution and capability matrices pass. The installer carries Starter resources directly; first startup verifies, copies, and activates them through the versioned atomic registry path. These packs remain development/unverified until the license, source-offer, engine SBOM, signature/keyring, clean-VM, upgrade, rollback, and revocation gates pass.
 
 ## 5. Updates and rollback
 

@@ -18,7 +18,7 @@
 - **未开始**：只有规格或方向，没有可运行实现。
 - **发布阻断**：不完成就不能发布 Public Beta；不是一般优化项。
 
-当前产品结论：**FormatWright 的源码与开发环境已达到 Windows 开发 Alpha，但当前安装包不是可交付、开箱可转换的产品。** 现有 Release 未携带认证引擎，生产运行时会回退到系统 `PATH`，且 UI 会推荐实际不可执行的路线；用户截图中的 PDF→PNG/JPG 失败正是该发布架构缺陷，而不是目标格式选择错误。在 R-008/R-009 与状态一致性缺陷关闭前，不应用于唯一副本或不可替代数据，也不得宣称“安装即可用”。
+当前产品结论：**FormatWright 已具备 Windows 自包含开发候选：Release 内嵌并首次启动安装 PDF/Media Starter，生产只解析激活 pack 的精确路径，UI 与后端共同按 capability snapshot 门控；真实 PDF→PNG/JPG、GIF 与结构化链路已在本机通过。** 但这仍不是 Public Beta：R-008/R-009 尚缺离线干净虚拟机、完整引擎 SBOM/许可证与源码义务、可信签名/吊销、升级回滚和正式代码签名证据；R-001 至 R-007 的状态一致性缺陷仍按顺序阻断发布。不得用于唯一副本或不可替代数据，也不得宣称“已认证”或“正式发布”。
 
 ### 1.1 近期进度快照（2026-08-12）
 
@@ -32,15 +32,20 @@
 - [x] Desktop 接入同一执行器：`queue_desktop_conversion`、`run_desktop_queue_window`、`pause_desktop_queue_window`（finish-current / immediate）、`cancel_desktop_queue_window`；Convert「加入队列」、Jobs「运行 / 完成当前后暂停 / 立即停止」。
 - [x] 队列窗口通过 `run_window_observed` 在终态前提交 ValidationReport 文件（Desktop `reports/`）。
 - [x] Core `QueueWindowControl`：finish-current 只停准入；immediate 同时取消活跃 worker。
-- [x] 2026-08-12 只读审查验证：79 项普通 Rust 测试、6 项前端测试、TypeScript、生产构建、Rustfmt、Clippy、仓库合同与 pnpm production audit 通过；10k release test 按设计默认忽略。
-- [x] 审查确认当前 `main` 尚无首个提交且全部项目文件未跟踪；因此当前只能审查完整快照，不能证明修改前后差异或提供可靠回滚。
+- [x] 2026-08-12 最新验证：92 项普通 Rust 测试、6 项前端测试、TypeScript、生产构建、Rustfmt、Clippy、仓库合同与 pnpm production audit 通过；10k release test 按设计默认忽略。
+- [x] 初次审查确认仓库没有提交；已用验证后的完整快照建立首个可回滚 Git 基线。
+- [x] 建立首个 Git 基线 `412c475`；Release/Development 引擎隔离提交 `7782e47`。
+- [x] 实现并验证 Release 精确 pack 路径、Windows 脚本包装拒绝、Desktop/Core capability snapshot 双重门控。
+- [x] 实现可重复 Windows Starter 构建、运行库哈希、版本化 install、原子 active registry 与首次启动激活；PDF/Media 清单验证通过。
+- [x] 真实 15 页 PDF→PNG/JPG、GIF 与结构化 E2E 通过；证据见 `docs/testing/WINDOWS_STARTER.md`。
+- [x] 修复 R-010 Poppler 分数像素向上取整不一致；原失败 PDF 的 PNG/JPG 验证均为 Pass。
 
 **计划完成（按 Gate 顺序，尚未勾选为完成）：**
 
 | 顺序 | 计划项 | 所属 Gate | 状态 |
 |---|---|---|---|
-| 1 | 建立首个可回滚 Git 基线、保护分支和缺陷台账 | Gate 0 | 未开始 |
-| 2 | 关闭 R-008/R-009：Starter 引擎包、Release 精确解析、能力门控、干净机离线真实转换 | Gate U | 未开始 |
+| 1 | 建立首个可回滚 Git 基线、保护分支和缺陷台账 | Gate 0 | 本地基线完成；远端保护待仓库托管 |
+| 2 | 关闭 R-008/R-009：Starter 引擎包、Release 精确解析、能力门控、干净机离线真实转换 | Gate U | 实现与本机 E2E 完成；认证/干净机待完成 |
 | 3 | 关闭审查 P1：worker 失败收口、Plan hash 批准、报告/终态顺序、immediate pause 可恢复 | Gate 1 | 未开始 |
 | 4 | 补 Windows 路径预约规范化、运行中 pause/failure-injection 测试、取消桥接任务生命周期 | Gate 1 | 未开始 |
 | 5 | 抽取完整 `ConversionService` 和 `ReportService`；删除入口层重复编排 | Gate 1 | 部分 |
@@ -60,7 +65,7 @@
 |---|---|---|---|
 | Phase 0 基础 | 已完成 | Monorepo、Apache-2.0、6 个公共 Schema、6 个 ADR、三平台 CI 配置、贡献/安全/隐私文档 | 名称/商标、最低 OS、签名账户等产品决策仍需冻结 |
 | Phase 1 架构 Spike | Windows 已完成；跨平台部分完成 | 安全子进程、10 GiB 稀疏文件、partial/原子提交、SQLite 恢复、10k WebView 投影、引擎 Manifest | 物理 10 GiB、macOS/Linux 真实进程树与引擎分发认证 |
-| Phase 2 Core + CLI Alpha | Windows 开发路径完成；安装包不可独立运行 | Inspect/Plan/Convert/Batch/Doctor/Jobs/Engines，12 条工作流均有开发环境实验路径 | R-008/R-009、Starter 引擎包、能力门控、完整语料与跨平台工作流认证 |
+| Phase 2 Core + CLI Alpha | Windows 自包含候选完成；认证未完成 | Inspect/Plan/Convert/Batch/Doctor/Jobs/Engines；Starter PDF/Media；能力门控；12 条工作流均有开发环境实验路径 | R-008/R-009 干净机/供应链关闭证据、完整语料与跨平台工作流认证 |
 | Phase 3 队列/恢复/质量 | Windows 开发门槛完成；失败收口待修 | 10k 持久任务与真实转换、确定性资源调度、暂停/恢复/重试、混合负载 RSS/WAL 证据、CLI/Desktop 已委托 `JobExecutionService` | 审查 P1、多连接预约竞态、10k 混合负载、公平性/延迟、跨平台恢复 |
 | Phase 4 Desktop Beta | 部分完成 | Tauri/React、双语普通/专家模式、原生选择器、Plan/Jobs/Reports/Doctor、持久队列窗口与两种 pause、引擎导入、可编辑预设 | 可恢复 immediate pause、恢复横幅/批量重试、文件夹入口、系统右键/Finder/Linux 集成、完整可访问性与可用性 |
 | Phase 5 安全与发布 | 部分完成 | fuzz、依赖审计、cargo-deny、SPDX SBOM、零套接字观测、离线 NSIS 安装烟测 | 当前源码重打包、可信签名/吊销、引擎 SBOM、OS 强制隔离、升级回滚、macOS/Linux 包 |
@@ -114,7 +119,8 @@
 - [x] Convert、Jobs、Presets、Engines、Reports、Settings 六个主入口。
 - [x] 文件拖放、原生输入选择、文件/目录输出选择、推荐格式、非覆盖输出建议。
 - [x] 普通/专家模式；显示真实格式、步骤、损失、保留/改变/丢弃/未知和类型化参数。
-- [x] 真实转换、取消、持久历史、持久 ValidationReport、Doctor 和引擎包引用式导入。
+- [x] 真实转换、取消、持久历史、持久 ValidationReport、Doctor、引擎包版本化复制导入和首次启动 Starter 激活。
+- [x] capability snapshot 同时门控推荐、目标选择、预设、预览、执行与队列；后端拒绝绕过 UI 的不可用路线。
 - [x] 简体中文/英文、可见焦点、高对比度、减少动画、文字化状态。
 - [x] 10,000 任务以批次投影到 WebView，不一次传输全部对象。
 - [x] PresetLibrary v1：命名、编辑、应用、两步删除、完整导入校验、JSON 导入/导出、失败原子化合并和可恢复写入。
@@ -130,12 +136,14 @@
 - [x] Plan 网络策略硬拒绝；Windows 路径限定进程树 TCP/UDP 观测为零。
 - [x] 离线 WebView2 NSIS 已实际构建，完成 SHA-256、沙箱静默安装、原生启动、卸载和零残留检查。
 - [x] 新增 scheduler/preset 后的 embedded release executable 已重新构建并通过原生像素/UIA 检查。
+- [x] Windows Starter 构建脚本固定 Poppler/FFmpeg 版本与 archive hash；manifest 覆盖 executable/runtime/license 文件，重复构建顶层清单哈希一致。
+- [x] Tauri Windows bundle 内嵌 Starter；Release 首次启动验证后复制到版本化 store 并原子激活，ambient `PATH` 不参与生产解析。
 
 ### 3.6 当前自动化验证基线
 
 - [x] `cargo fmt --all --check`。
 - [x] `cargo clippy --workspace --all-targets --all-features -- -D warnings`。
-- [x] 79 项普通 Rust 测试通过（含 `JobExecutionService` 9 项）；另有 1 项昂贵的 10k 发布测试按设计默认忽略，已有显式 release 运行证据。
+- [x] 92 项普通 Rust 测试通过（76 Core、7 Schema、5 Desktop、4 Engine SDK）；另有 1 项昂贵的 10k 发布测试按设计默认忽略，已有显式 release 运行证据。
 - [x] 6 项前端测试、TypeScript check 和生产构建通过。
 - [x] Rust 1.88 MSRV 全 workspace locked check 通过。
 - [x] 6 个 Schema、12 个黄金工作流和必需文件的仓库合同检查通过。
@@ -145,8 +153,8 @@
 
 ### 4.1 P0：Public Beta 发布阻断
 
-- [ ] **Windows 开箱可用纵向闭环**：安装包或随附离线 Starter pack 提供经过 hash/manifest/许可证校验的确定版本；在没有 FFmpeg、Poppler、LibreOffice、Pandoc、libvips 的干净虚拟机上至少完成内置结构化、PDF→PNG/JPG 和一条媒体转换。
-- [ ] **生产引擎解析与能力门控**：Release 只运行已激活 pack 中的精确二进制路径，禁止 ambient `PATH`、`.cmd`、`.bat`；UI/Planner/Backend 只展示和接受当前 capability snapshot 确实可执行的路线。
+- [ ] **Windows 开箱可用纵向闭环**：确定版本、内嵌资源、本机首次启动安装和 Core/PDF/Media E2E 已完成；仍须在没有 FFmpeg、Poppler、LibreOffice、Pandoc、libvips 和开发缓存的离线干净虚拟机中通过安装后 UI 转换，并完成 Starter 供应链认证。
+- [x] **生产引擎解析与能力门控（实现）**：Release 只运行已激活 pack 中的精确二进制路径，禁止 ambient `PATH`、`.cmd`、`.bat`；UI/Planner/Backend 只展示和接受当前 capability snapshot 确实可执行的路线。R-009 关闭仍等待 Gate U 干净机证据。
 - [ ] **冻结产品决策**：名称/商标与域名、最低 OS、签名账户与预算、官方引擎包选择策略、PDF 默认引擎、测试语料许可证、AGPL 服务仓库边界。
 - [ ] **可信引擎供应链**：正式 release keyring、签名验证、密钥轮换/吊销、每个引擎的 SBOM/源码/构建 flags/许可证和认证记录。
 - [ ] **完整验证闭环**：每个对外支持的工作流都有类型专用必检项；Unknown 不计为 Pass；完成 Office/PDF 视觉差异阈值校准。
@@ -457,7 +465,7 @@ flowchart LR
 | Job/Plan/Event/Reservation | `jobs.sqlite3` | 事务、WAL、事件 sequence | 默认记录路径但不记录内容；未来可配置路径脱敏 |
 | ValidationReport | `reports/{job_id}.json` | same-dir partial + rename | metadata values 默认脱敏；导出前预览 |
 | Presets | `presets.json` | partial + recoverable backup | 无输入/输出路径、无秘密、无 shell |
-| Engine registry | `engine-registry/{manifest_sha}.json` | 引用式登记；启动重验 | 只保存 manifest 路径与身份 |
+| Engine registry | `engine-registry/{engine_id}.json` | 每个 engine ID 一个 active 指针；原子替换；启动重验 | 保存已安装 manifest 的精确路径与 engine ID |
 | Engine pack | 独立目录/离线包 | manifest/hash/signature/SBOM | 不与应用 SBOM 混淆 |
 | Output | 用户目标同卷 partial | 验证后冲突复检与 rename | 失败不伪装成最终输出 |
 | Local evidence | `.artifacts/` | 测试生成、Git ignore | 发布只附脱敏摘要/hash |
@@ -507,8 +515,8 @@ API 不直接接受宿主任意路径。请求引用预先授权的 workspace/ro
 ### Gate 0：状态、仓库与架构收口（1–3 天）
 
 - [x] 生成本文，区分 Windows 开发完成与发布认证完成。
-- [ ] 创建首个 Git 基线提交；确认忽略规则不包含源码/配置，建立 `main` 保护和可回滚的小提交规范。
-- [x] 建立 `docs/DEFECT_REGISTER.md`，录入 R-001 至 R-009；owner、修复提交和关闭证据在执行时填写。
+- [x] 创建首个 Git 基线提交；确认忽略规则不包含源码/配置，并开始使用可回滚的小提交；远端 `main` 保护待托管后配置。
+- [x] 建立 `docs/DEFECT_REGISTER.md`，录入 R-001 至 R-010；owner、修复提交和关闭证据在执行时填写。
 - [ ] 修正全部追踪矩阵旧描述，逐条关联最新 preset/scheduler/security 证据。
 - [ ] ADR-0007：确定性资源调度；ADR-0008：PresetLibrary 与原子迁移。
 - [ ] 冻结最低 OS、引擎分发和签名/许可证决策。
@@ -519,9 +527,9 @@ API 不直接接受宿主任意路径。请求引用预先授权的 workspace/ro
 ### Gate U：Windows 真正可用纵向闭环（3–7 天）
 
 - [ ] 冻结 Windows Starter pack：Core + PDF + Media；完成每个二进制与运行库的再分发/许可证审查，无法合法捆绑的能力不得进入 Starter 宣传。
-- [ ] 建立确定性 pack builder/stager，输出 manifest、SHA-256、来源、许可证、SBOM 和版本锁；Tauri/NSIS 构建显式携带或同介质附带 pack。
-- [ ] 实现版本化 pack store、原子 install/activate/rollback，以及 Release-only 的精确 `EngineLocator`；关闭 ambient `PATH`、`.cmd`、`.bat` 和隐式开发 override。
-- [ ] 让 Doctor、Planner、推荐格式、目标选择器和执行后端消费同一 capability snapshot；不可运行路线禁用并提供 pack 修复入口。
+- [ ] 建立确定性 pack builder/stager：manifest、SHA-256、来源、许可证、版本锁与 Tauri/NSIS 内嵌已完成；完整 transitive SBOM/许可证审查仍待完成。
+- [ ] 实现版本化 pack store、原子 install/activate/rollback：install/activate 与 Release-only 精确 `EngineLocator` 已完成，ambient `PATH`/脚本/override 已关闭；多版本 rollback 与故障矩阵仍待完成。
+- [x] 让 Doctor、Planner、推荐格式、目标选择器和执行后端消费同一 capability snapshot；不可运行路线禁用并指出缺失 pack。
 - [ ] 重建 unsigned Windows RC，在完全没有相关系统工具和 Codex 开发环境的干净 VM 中离线安装，完成 JSON→YAML、PDF→PNG/JPG 和一条视频/音频转换，核对报告、输出和零网络。
 - [ ] 为缺包、hash 篡改、版本不兼容、撤销、半安装、升级失败回滚和恶意 PATH 注入建立自动化负向测试。
 
@@ -732,9 +740,9 @@ API 不直接接受宿主任意路径。请求引用预先授权的 workspace/ro
 
 ### 第 1 周：基线与 Windows 可用纵向闭环
 
-- 创建 Git 基线，固定当前 79 Rust + 6 TS 测试基线。
-- 为 R-008/R-009 写失败测试，冻结 Starter pack、许可证与 Release locator 决策。
-- 实现 Core/PDF/Media pack staging、版本化安装/激活和 capability snapshot；UI 按能力门控。
+- [x] 创建 Git 基线，当前固定为 92 Rust + 6 TS 普通测试基线。
+- [ ] 为 R-008/R-009 写失败测试并冻结 Starter pack、许可证与 Release locator 决策：实现与定位决策已完成，许可证/签名认证待冻结。
+- [x] 实现 Core/PDF/Media pack staging、版本化安装/激活和 capability snapshot；UI 与后端按能力门控。
 - 在无系统引擎、污染 PATH、完全离线的干净 Windows VM 完成 Starter 三条 smoke；把产物与日志存入 release evidence。
 - 同时为 R-001 至 R-006 建立最小复现并冻结 Job/Pause/Report/Plan-approval 语义 ADR。
 

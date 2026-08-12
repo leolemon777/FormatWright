@@ -3,7 +3,7 @@
 - Status: Development guide; no Public Beta support claim
 - Updated: 2026-08-12
 
-> Current Alpha limitation: the recorded Windows installer contains no conversion engines and may discover unrelated development tools from PATH. It is not an out-of-box usable build. Use only a known development setup or a manually verified/imported pack until R-008/R-009 close; do not use irreplaceable originals.
+> Current Alpha limitation: the local Windows candidate now includes a hash-verified PDF/Media Starter pack and Release ignores unrelated tools from `PATH`, but the packs and installer are not yet signed or release-certified. Clean-VM, SBOM, license/source-offer, upgrade/rollback, and Authenticode gates remain open. Do not use the Alpha on the only copy of irreplaceable data.
 
 ## First local conversion
 
@@ -24,9 +24,9 @@ Open **Presets** to name and save the current target, quality, width, DPI, color
 
 ## Engines
 
-**Engines** runs Doctor without downloading anything. A local engine pack can be imported by selecting its `manifest.json`. FormatWright verifies protocol, platform/architecture, canonical paths, executable hashes, and declared license files, then stores only a reference. It re-verifies the pack at startup. Imported packs remain `Unverified` until the release keyring cryptographically trusts their signatures.
+**Engines** runs Doctor without downloading anything. The Windows candidate installs its embedded Starter packs into a versioned application-data store on first launch. A local engine pack can also be imported by selecting its `manifest.json`; FormatWright verifies protocol, platform/architecture, canonical paths, executable/runtime hashes, and declared license files, then copies only declared files into the same store and atomically switches the active registry record. Every pack is re-verified at startup. Packs remain `Unverified` until the release keyring cryptographically trusts their signatures.
 
-For development only, an exact system executable can be selected before startup with `FORMATWRIGHT_ENGINE_<NAME>`, such as `FORMATWRIGHT_ENGINE_FFMPEG` or `FORMATWRIGHT_ENGINE_PDFTOPPM`. The target Release will ignore PATH and these overrides unless explicitly running in a developer mode; production capability comes only from an activated verified pack.
+For development only, an exact system executable can be selected before startup with `FORMATWRIGHT_ENGINE_<NAME>`, such as `FORMATWRIGHT_ENGINE_FFMPEG` or `FORMATWRIGHT_ENGINE_PDFTOPPM`. Release ignores `PATH` and these overrides; production capability comes only from an activated verified pack.
 
 ## CLI essentials
 

@@ -641,14 +641,14 @@ fn expected_dimensions(probe: &Probe, dpi: u16) -> Result<Vec<[u32; 2]>> {
                 std::mem::swap(&mut width, &mut height);
             }
             let scale = f64::from(dpi) / 72.0;
-            let width = rounded_dimension(width * scale)?;
-            let height = rounded_dimension(height * scale)?;
+            let width = poppler_raster_dimension(width * scale)?;
+            let height = poppler_raster_dimension(height * scale)?;
             Ok([width, height])
         })
         .collect()
 }
 
-fn rounded_dimension(value: f64) -> Result<u32> {
+fn poppler_raster_dimension(value: f64) -> Result<u32> {
     if !value.is_finite() || !(1.0..=16_384.0).contains(&value) {
         return Err(FormatWrightError::new(
             ErrorCode::ResourceExhausted,
@@ -657,7 +657,7 @@ fn rounded_dimension(value: f64) -> Result<u32> {
             "Choose a lower DPI or split unusual pages into another document.",
         ));
     }
-    value.round().to_string().parse::<u32>().map_err(|error| {
+    value.ceil().to_string().parse::<u32>().map_err(|error| {
         FormatWrightError::new(
             ErrorCode::Internal,
             Stage::Plan,
@@ -899,7 +899,7 @@ mod tests {
 
     use formatwright_engine_sdk::{Certification, EngineIdentity};
 
-    use super::{parse_page_details, plan_pdf_render};
+    use super::{parse_page_details, plan_pdf_render, poppler_raster_dimension};
     use crate::domain::{
         ArtifactIdentity, FormatDescriptor, FormatKind, PlanRequest, Probe, ProbeEvidence,
         SCHEMA_VERSION,
@@ -966,6 +966,22 @@ mod tests {
             serde_json::json!([[1224, 1584], [1584, 1224]])
         );
         assert_eq!(plan.steps[0].arguments["color_mode"], "gray");
+    }
+
+    #[test]
+    fn poppler_dimensions_round_fractional_pixels_up() {
+        assert_eq!(
+            poppler_raster_dimension(595.32).expect("A4 width at 72 DPI"),
+            596
+        );
+        assert_eq!(
+            poppler_raster_dimension(420.96).expect("A4 height at 36 DPI"),
+            421
+        );
+        assert_eq!(
+            poppler_raster_dimension(612.0).expect("integral letter width"),
+            612
+        );
     }
 
     #[test]

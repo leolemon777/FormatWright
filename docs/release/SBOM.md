@@ -28,4 +28,4 @@ contains_windows_absolute_path=false
 
 This is a conservative workspace/application dependency inventory. Cargo metadata can include build or test-only packages; over-reporting is preferred to silently omitting a linked dependency. A release pipeline should eventually reconcile the inventory against each final target artifact.
 
-Third-party conversion engines are separate programs and are intentionally absent. Every redistributable engine pack requires its own manifest, transitive library inventory, notices/source offer, signature, and SBOM under `docs/security/ENGINE_SUPPLY_CHAIN.md`.
+Third-party conversion engines remain separate programs even when a Starter pack is embedded in the Windows installer. The current development candidate includes pinned PDF and Media packs with manifests, file hashes, provenance, and notices, but their complete transitive library inventory, source-offer review, trusted signature, and pack SBOM remain release gates under `docs/security/ENGINE_SUPPLY_CHAIN.md`.
