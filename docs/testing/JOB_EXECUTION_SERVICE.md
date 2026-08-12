@@ -1,6 +1,6 @@
 # Shared JobExecutionService Evidence
 
-- Status: Gate 1 atomic extraction evidence
+- Status: Gate 1 shared execution and R-001 failure-unwind evidence
 - Updated: 2026-08-11
 - Platform observed: Windows 11 x64 (development)
 
@@ -17,6 +17,8 @@ The durable queue scheduling loop that previously lived only in the CLI now exec
 - Cancellation stops new admissions; active workers receive the same token
 - Central control plane persists `QUEUE_REINSPECTING`, `ENGINE_FINISHED`, `VALIDATION_FINISHED`, `QUEUE_CANCELLED`, and related events
 - `QueueRunReport` schema_version 1 fields are unchanged for CLI JSON output
+- Any prepare, milestone, report callback, terminal transition, or worker-join failure first stops admission, cancels the shared worker token, drains the complete `JoinSet`, releases scheduler resources, and persists unfinished active jobs as recoverable `Interrupted / CONTROL_PLANE_FAILED` before returning the original error
+- A cleanup persistence failure is attached to the original diagnostic after worker drain; the control plane does not hide the initiating failure
 
 ## Automated assertions
 
@@ -29,6 +31,8 @@ The durable queue scheduling loop that previously lived only in the CLI now exec
 - `QueueWindowControl::pause_immediate` and a pre-cancelled shared token stop admission without mutating queued jobs
 - A blocked stale-fingerprint job releases its scheduler slot so a later valid job in the same window can complete
 - A plan with no steps transitions to `Failed` via `PLAN_INVALID`
+- An injected report-storage callback failure with two admitted workers cancels and drains the peer, marks both jobs `Interrupted / CONTROL_PLANE_FAILED`, leaves no staged output, permits requeue, and releases reservations after terminal cleanup
+- An injected worker panic with an admitted delayed peer returns `Internal` only after peer drain and leaves both jobs recoverable rather than silently aborting the `JoinSet`
 
 ## Sandbox continuity
 
@@ -58,3 +62,4 @@ Known gaps: recovery banner and bulk retry UI are not implemented.
 - Desktop recovery banner, bulk retry
 - ConversionService extraction / remove CLI duplicate `prepare_conversion`
 - Multi-connection reservation races and 10k mixed workload certification
+- Cancellation-link task lifecycle and real subprocess in-flight pause evidence (R-006)

@@ -18,7 +18,7 @@
 - **未开始**：只有规格或方向，没有可运行实现。
 - **发布阻断**：不完成就不能发布 Public Beta；不是一般优化项。
 
-当前产品结论：**FormatWright 已具备 Windows 自包含开发候选：Release 内嵌并首次启动安装 PDF/Media Starter，生产只解析激活 pack 的精确路径，UI 与后端共同按 capability snapshot 门控；真实 PDF→PNG/JPG、GIF 与结构化链路已在本机通过。** 但这仍不是 Public Beta：R-008/R-009 尚缺离线干净虚拟机、完整引擎 SBOM/许可证与源码义务、可信签名/吊销、升级回滚和正式代码签名证据；R-001 至 R-007 的状态一致性缺陷仍按顺序阻断发布。不得用于唯一副本或不可替代数据，也不得宣称“已认证”或“正式发布”。
+当前产品结论：**FormatWright 已具备 Windows 自包含开发候选：Release 内嵌并首次启动安装 PDF/Media Starter，生产只解析激活 pack 的精确路径，UI 与后端共同按 capability snapshot 门控；真实 PDF→PNG/JPG、GIF 与结构化链路已在本机通过；R-001 控制面错误收口与 R-010 PDF 验证缺陷已关闭。** 但这仍不是 Public Beta：R-008/R-009 尚缺离线干净虚拟机、完整引擎 SBOM/许可证与源码义务、可信签名/吊销、升级回滚和正式代码签名证据；R-002 至 R-007 的状态一致性缺陷仍按顺序阻断发布。不得用于唯一副本或不可替代数据，也不得宣称“已认证”或“正式发布”。
 
 ### 1.1 近期进度快照（2026-08-12）
 
@@ -32,7 +32,7 @@
 - [x] Desktop 接入同一执行器：`queue_desktop_conversion`、`run_desktop_queue_window`、`pause_desktop_queue_window`（finish-current / immediate）、`cancel_desktop_queue_window`；Convert「加入队列」、Jobs「运行 / 完成当前后暂停 / 立即停止」。
 - [x] 队列窗口通过 `run_window_observed` 在终态前提交 ValidationReport 文件（Desktop `reports/`）。
 - [x] Core `QueueWindowControl`：finish-current 只停准入；immediate 同时取消活跃 worker。
-- [x] 2026-08-12 最新验证：92 项普通 Rust 测试、6 项前端测试、TypeScript、生产构建、Rustfmt、Clippy、仓库合同与 pnpm production audit 通过；10k release test 按设计默认忽略。
+- [x] 2026-08-12 最新验证：94 项普通 Rust 测试、6 项前端测试、TypeScript、生产构建、Rustfmt、Clippy、仓库合同与 pnpm production audit 通过；10k release test 按设计默认忽略。
 - [x] 初次审查确认仓库没有提交；已用验证后的完整快照建立首个可回滚 Git 基线。
 - [x] 建立首个 Git 基线 `412c475`；Release/Development 引擎隔离提交 `7782e47`。
 - [x] 实现并验证 Release 精确 pack 路径、Windows 脚本包装拒绝、Desktop/Core capability snapshot 双重门控。
@@ -46,7 +46,7 @@
 |---|---|---|---|
 | 1 | 建立首个可回滚 Git 基线、保护分支和缺陷台账 | Gate 0 | 本地基线完成；远端保护待仓库托管 |
 | 2 | 关闭 R-008/R-009：Starter 引擎包、Release 精确解析、能力门控、干净机离线真实转换 | Gate U | 实现与本机 E2E 完成；认证/干净机待完成 |
-| 3 | 关闭审查 P1：worker 失败收口、Plan hash 批准、报告/终态顺序、immediate pause 可恢复 | Gate 1 | 未开始 |
+| 3 | 关闭审查 P1：worker 失败收口、Plan hash 批准、报告/终态顺序、immediate pause 可恢复 | Gate 1 | R-001 已关闭；R-003 → R-002 → R-004 待完成 |
 | 4 | 补 Windows 路径预约规范化、运行中 pause/failure-injection 测试、取消桥接任务生命周期 | Gate 1 | 未开始 |
 | 5 | 抽取完整 `ConversionService` 和 `ReportService`；删除入口层重复编排 | Gate 1 | 部分 |
 | 6 | Desktop 恢复横幅、批量取消/重试、实时队列读取 | Gate 1 / 2 | 未开始 |
@@ -143,7 +143,7 @@
 
 - [x] `cargo fmt --all --check`。
 - [x] `cargo clippy --workspace --all-targets --all-features -- -D warnings`。
-- [x] 92 项普通 Rust 测试通过（76 Core、7 Schema、5 Desktop、4 Engine SDK）；另有 1 项昂贵的 10k 发布测试按设计默认忽略，已有显式 release 运行证据。
+- [x] 94 项普通 Rust 测试通过（78 Core、7 Schema、5 Desktop、4 Engine SDK）；另有 1 项昂贵的 10k 发布测试按设计默认忽略，已有显式 release 运行证据。
 - [x] 6 项前端测试、TypeScript check 和生产构建通过。
 - [x] Rust 1.88 MSRV 全 workspace locked check 通过。
 - [x] 6 个 Schema、12 个黄金工作流和必需文件的仓库合同检查通过。
@@ -167,7 +167,7 @@
 ### 4.2 P1：Core、队列与验证
 
 - [x] 将 CLI 的队列执行循环抽成共享 `JobExecutionService`（`crates/core/src/application/job_execution.rs`）；CLI `jobs run` 与 Desktop 队列窗口已委托，两种 pause 控制和队列报告落盘已接入；恢复横幅、批量动作、可恢复 immediate 语义与失败收口仍未完成。
-- [ ] **R-001 worker 失败收口**：任何 prepare、milestone、report callback、terminal transition 或 join 失败都必须先取消并 drain 活跃 worker，将未完成任务原子转为 `interrupted`，再释放调度资源与返回错误；不得遗留同进程不可见的 `running/validating`。
+- [x] **R-001 worker 失败收口**：任何 prepare、milestone、report callback、terminal transition 或 join 失败都会先停止准入、取消并 drain 活跃 worker，将未完成任务转为 `Interrupted / CONTROL_PLANE_FAILED`，释放调度资源后再返回原错误；报告存储失败和 worker panic 双 worker 故障注入通过。
 - [ ] **R-002 Plan 批准边界**：Desktop/CLI/API 的执行与入队必须提交已预览的 `plan_hash`；Core 重新检查输入/引擎后仅在 hash 相同才执行，变化时返回“计划已变化，请重新确认”。
 - [ ] **R-003 Report/终态一致性**：立即转换与队列统一为“输出验证并提交 → 报告原子持久化 → SQLite 终态”；报告失败时不得出现无报告的 Completed/Warning，并支持已有报告的原子替换/版本化恢复。
 - [ ] **R-004 pause/retry 语义**：finish-current 完成活跃项；immediate 取消活跃步骤后进入 `interrupted` 或可自动重排的明确状态；Desktop 必须提供 retry/resume，不能让“暂停”产生只能借助 CLI 恢复的 Cancelled 作业。
@@ -538,10 +538,10 @@ API 不直接接受宿主任意路径。请求引用预先授权的 workspace/ro
 ### Gate 1：共享应用服务与队列可靠性（1–2 周）
 
 - [x] 抽取 `JobExecutionService`（CLI + Desktop 窗口执行 + ValidationReport 观察回调 + `QueueWindowControl` 两种 pause）；`ConversionService` 仍为 `workflow::prepare_conversion`，CLI 本地重复实现尚未删除。
-- [ ] 先关闭 R-001 至 R-006；每项必须有失败注入或并发回归测试，不能只覆盖成功路径。
+- [ ] 依次关闭 R-001 至 R-006：R-001 已关闭；R-003、R-002、R-004、R-005、R-006 待完成；每项必须有失败注入或并发回归测试，不能只覆盖成功路径。
 - [ ] 引入 `MaintenanceService` 最小切片：一致性检查、在线安全备份、恢复到临时副本、升级前自动快照和保留策略。
 - [ ] Desktop 恢复横幅、批量取消/重试。
-- [ ] 多连接 reservation/transition race、提交前 destination race、worker panic 恢复测试。
+- [ ] 多连接 reservation/transition race、提交前 destination race；worker panic 恢复测试已随 R-001 完成。
 - [ ] 加入 batch/selection model、稳定分页与批量动作事件。
 - [ ] 10k 混合 workload、公平性/延迟/资源/DB 基线。
 - [ ] 拆分 runner adapter，补齐 failure classification 和 validation-only。
@@ -740,7 +740,7 @@ API 不直接接受宿主任意路径。请求引用预先授权的 workspace/ro
 
 ### 第 1 周：基线与 Windows 可用纵向闭环
 
-- [x] 创建 Git 基线，当前固定为 92 Rust + 6 TS 普通测试基线。
+- [x] 创建 Git 基线，当前固定为 94 Rust + 6 TS 普通测试基线。
 - [ ] 为 R-008/R-009 写失败测试并冻结 Starter pack、许可证与 Release locator 决策：实现与定位决策已完成，许可证/签名认证待冻结。
 - [x] 实现 Core/PDF/Media pack staging、版本化安装/激活和 capability snapshot；UI 与后端按能力门控。
 - 在无系统引擎、污染 PATH、完全离线的干净 Windows VM 完成 Starter 三条 smoke；把产物与日志存入 release evidence。

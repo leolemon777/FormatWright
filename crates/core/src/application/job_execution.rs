@@ -1,6 +1,6 @@
 //! Shared durable-queue execution window used by every surface.
 
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 
 use formatwright_engine_sdk::EngineIdentity;
 use serde::Serialize;
@@ -186,145 +186,168 @@ impl JobExecutionService {
         let mut workers = tokio::task::JoinSet::new();
         let (milestone_sender, mut milestone_receiver) = tokio::sync::mpsc::unbounded_channel();
         let mut peak_active = 0_usize;
+        let mut active_jobs = HashSet::new();
 
-        while !pending.is_empty() || !workers.is_empty() {
-            while !control.admission_cancelled()
-                && scheduler.active_count() < policy.max_processes
-                && !pending.is_empty()
-            {
-                let scan_length = pending.len();
-                let mut admitted = None;
-                for _ in 0..scan_length {
-                    let Some(candidate) = pending.pop_front() else {
+        let execution = async {
+            while !pending.is_empty() || !workers.is_empty() {
+                while !control.admission_cancelled()
+                    && scheduler.active_count() < policy.max_processes
+                    && !pending.is_empty()
+                {
+                    let scan_length = pending.len();
+                    let mut admitted = None;
+                    for _ in 0..scan_length {
+                        let Some(candidate) = pending.pop_front() else {
+                            break;
+                        };
+                        if scheduler.try_admit(candidate.resources.clone()) {
+                            admitted = Some(candidate);
+                            break;
+                        }
+                        pending.push_back(candidate);
+                    }
+                    let Some(candidate) = admitted else {
                         break;
                     };
-                    if scheduler.try_admit(candidate.resources.clone()) {
-                        admitted = Some(candidate);
+                    let job_id = candidate.details.job.id;
+                    active_jobs.insert(job_id);
+                    match prepare_queued_job(store, candidate.details).await? {
+                        QueuePreparation::Ready(prepared) => {
+                            let prepared = *prepared;
+                            let worker_cancellation = control.worker_token();
+                            let worker_milestones = milestone_sender.clone();
+                            workers.spawn(async move {
+                                #[cfg(test)]
+                                run_worker_test_hook(&prepared.plan).await;
+                                let result = execute_plan_observed(
+                                    &prepared.probe,
+                                    &prepared.plan,
+                                    &prepared.validation_engine,
+                                    prepared.job_id,
+                                    worker_cancellation,
+                                    |milestone| {
+                                        if milestone == ExecutionMilestone::EngineFinished {
+                                            let _ = worker_milestones.send(prepared.job_id);
+                                        }
+                                        Ok(())
+                                    },
+                                )
+                                .await;
+                                QueueWorkerOutcome {
+                                    job_id: prepared.job_id,
+                                    result,
+                                }
+                            });
+                            peak_active = peak_active.max(scheduler.active_count());
+                        }
+                        QueuePreparation::Blocked => {
+                            blocked = blocked.saturating_add(1);
+                            scheduler.release(job_id);
+                            active_jobs.remove(&job_id);
+                        }
+                        QueuePreparation::Failed => {
+                            failed = failed.saturating_add(1);
+                            scheduler.release(job_id);
+                            active_jobs.remove(&job_id);
+                        }
+                    }
+                }
+
+                if workers.is_empty() {
+                    if control.admission_cancelled() || pending.is_empty() {
                         break;
                     }
-                    pending.push_back(candidate);
+                    return Err(FormatWrightError::new(
+                        ErrorCode::ResourceExhausted,
+                        Stage::Execute,
+                        "No queued job fits within the configured scheduler resource budget",
+                        "Reduce --parallel or split the queue into a smaller scheduling window.",
+                    ));
                 }
-                let Some(candidate) = admitted else {
-                    break;
-                };
-                let job_id = candidate.details.job.id;
-                match prepare_queued_job(store, candidate.details).await? {
-                    QueuePreparation::Ready(prepared) => {
-                        let prepared = *prepared;
-                        let worker_cancellation = control.worker_token();
-                        let worker_milestones = milestone_sender.clone();
-                        workers.spawn(async move {
-                            let result = execute_plan_observed(
-                                &prepared.probe,
-                                &prepared.plan,
-                                &prepared.validation_engine,
-                                prepared.job_id,
-                                worker_cancellation,
-                                |milestone| {
-                                    if milestone == ExecutionMilestone::EngineFinished {
-                                        let _ = worker_milestones.send(prepared.job_id);
-                                    }
-                                    Ok(())
-                                },
-                            )
-                            .await;
-                            QueueWorkerOutcome {
-                                job_id: prepared.job_id,
-                                result,
-                            }
-                        });
-                        peak_active = peak_active.max(scheduler.active_count());
-                    }
-                    QueuePreparation::Blocked => {
-                        blocked = blocked.saturating_add(1);
-                        scheduler.release(job_id);
-                    }
-                    QueuePreparation::Failed => {
-                        failed = failed.saturating_add(1);
-                        scheduler.release(job_id);
-                    }
-                }
-            }
 
-            if workers.is_empty() {
-                if control.admission_cancelled() || pending.is_empty() {
-                    break;
+                let joined = tokio::select! {
+                    Some(job_id) = milestone_receiver.recv() => {
+                        mark_job_validating(store, job_id)?;
+                        continue;
+                    }
+                    joined = workers.join_next() => joined,
+                };
+                let outcome = joined
+                    .ok_or_else(|| {
+                        FormatWrightError::new(
+                            ErrorCode::Internal,
+                            Stage::Execute,
+                            "Scheduler lost its active worker set",
+                            "Run jobs recover and retry interrupted work.",
+                        )
+                    })?
+                    .map_err(|error| {
+                        FormatWrightError::new(
+                            ErrorCode::Internal,
+                            Stage::Execute,
+                            format!("Queue worker stopped unexpectedly: {error}"),
+                            "Run jobs recover and retry interrupted work.",
+                        )
+                    })?;
+                scheduler.release(outcome.job_id);
+                match outcome.result {
+                    Ok(result) => {
+                        on_report(outcome.job_id, &result.report)?;
+                        match result.report.status {
+                            ValidationStatus::Pass => {
+                                mark_job_validating(store, outcome.job_id)?;
+                                store.transition(
+                                    outcome.job_id,
+                                    JobState::Completed,
+                                    "VALIDATION_FINISHED",
+                                )?;
+                                completed = completed.saturating_add(1);
+                            }
+                            ValidationStatus::Warning | ValidationStatus::Unknown => {
+                                mark_job_validating(store, outcome.job_id)?;
+                                store.transition(
+                                    outcome.job_id,
+                                    JobState::Warning,
+                                    "VALIDATION_FINISHED",
+                                )?;
+                                warning = warning.saturating_add(1);
+                            }
+                            ValidationStatus::Fail => {
+                                mark_job_validating(store, outcome.job_id)?;
+                                store.transition(
+                                    outcome.job_id,
+                                    JobState::Failed,
+                                    "VALIDATION_FINISHED",
+                                )?;
+                                failed = failed.saturating_add(1);
+                            }
+                        }
+                    }
+                    Err(error) if error.code == ErrorCode::Cancelled => {
+                        store.transition(outcome.job_id, JobState::Cancelled, "QUEUE_CANCELLED")?;
+                        cancelled = cancelled.saturating_add(1);
+                    }
+                    Err(_) => {
+                        store.transition(outcome.job_id, JobState::Failed, "EXECUTION_STOPPED")?;
+                        failed = failed.saturating_add(1);
+                    }
                 }
-                return Err(FormatWrightError::new(
-                    ErrorCode::ResourceExhausted,
-                    Stage::Execute,
-                    "No queued job fits within the configured scheduler resource budget",
-                    "Reduce --parallel or split the queue into a smaller scheduling window.",
+                active_jobs.remove(&outcome.job_id);
+            }
+            Ok(())
+        }
+        .await;
+        if let Err(mut error) = execution {
+            if let Err(cleanup_error) =
+                abort_active_window(store, &control, &mut workers, &mut scheduler, &active_jobs)
+                    .await
+            {
+                let previous = error.diagnostic.take().unwrap_or_default();
+                error.diagnostic = Some(format!(
+                    "{previous} control-plane cleanup also failed: {cleanup_error}"
                 ));
             }
-
-            let joined = tokio::select! {
-                Some(job_id) = milestone_receiver.recv() => {
-                    mark_job_validating(store, job_id)?;
-                    continue;
-                }
-                joined = workers.join_next() => joined,
-            };
-            let outcome = joined
-                .ok_or_else(|| {
-                    FormatWrightError::new(
-                        ErrorCode::Internal,
-                        Stage::Execute,
-                        "Scheduler lost its active worker set",
-                        "Run jobs recover and retry interrupted work.",
-                    )
-                })?
-                .map_err(|error| {
-                    FormatWrightError::new(
-                        ErrorCode::Internal,
-                        Stage::Execute,
-                        format!("Queue worker stopped unexpectedly: {error}"),
-                        "Run jobs recover and retry interrupted work.",
-                    )
-                })?;
-            scheduler.release(outcome.job_id);
-            match outcome.result {
-                Ok(result) => {
-                    on_report(outcome.job_id, &result.report)?;
-                    match result.report.status {
-                        ValidationStatus::Pass => {
-                            mark_job_validating(store, outcome.job_id)?;
-                            store.transition(
-                                outcome.job_id,
-                                JobState::Completed,
-                                "VALIDATION_FINISHED",
-                            )?;
-                            completed = completed.saturating_add(1);
-                        }
-                        ValidationStatus::Warning | ValidationStatus::Unknown => {
-                            mark_job_validating(store, outcome.job_id)?;
-                            store.transition(
-                                outcome.job_id,
-                                JobState::Warning,
-                                "VALIDATION_FINISHED",
-                            )?;
-                            warning = warning.saturating_add(1);
-                        }
-                        ValidationStatus::Fail => {
-                            mark_job_validating(store, outcome.job_id)?;
-                            store.transition(
-                                outcome.job_id,
-                                JobState::Failed,
-                                "VALIDATION_FINISHED",
-                            )?;
-                            failed = failed.saturating_add(1);
-                        }
-                    }
-                }
-                Err(error) if error.code == ErrorCode::Cancelled => {
-                    store.transition(outcome.job_id, JobState::Cancelled, "QUEUE_CANCELLED")?;
-                    cancelled = cancelled.saturating_add(1);
-                }
-                Err(_) => {
-                    store.transition(outcome.job_id, JobState::Failed, "EXECUTION_STOPPED")?;
-                    failed = failed.saturating_add(1);
-                }
-            }
+            return Err(error);
         }
         let terminal = completed
             .saturating_add(warning)
@@ -343,6 +366,61 @@ impl JobExecutionService {
             parallelism: policy.max_processes,
             peak_active,
         })
+    }
+}
+
+async fn abort_active_window(
+    store: &mut SqliteJobStore,
+    control: &QueueWindowControl,
+    workers: &mut tokio::task::JoinSet<QueueWorkerOutcome>,
+    scheduler: &mut ResourceScheduler,
+    active_jobs: &HashSet<Uuid>,
+) -> Result<()> {
+    control.pause_immediate();
+    while let Some(joined) = workers.join_next().await {
+        if let Ok(outcome) = joined {
+            scheduler.release(outcome.job_id);
+        }
+    }
+
+    let mut first_error = None;
+    for job_id in active_jobs {
+        scheduler.release(*job_id);
+        let transition = match store.get_job(*job_id) {
+            Ok(Some(job)) if matches!(job.state, JobState::Running | JobState::Validating) => store
+                .transition(*job_id, JobState::Interrupted, "CONTROL_PLANE_FAILED")
+                .map(drop),
+            Ok(Some(job)) if matches!(job.state, JobState::Inspecting | JobState::Planned) => store
+                .transition(*job_id, JobState::Failed, "CONTROL_PLANE_FAILED")
+                .map(drop),
+            Ok(_) => Ok(()),
+            Err(error) => Err(error),
+        };
+        if let Err(error) = transition
+            && first_error.is_none()
+        {
+            first_error = Some(error);
+        }
+    }
+    first_error.map_or(Ok(()), Err)
+}
+
+#[cfg(test)]
+async fn run_worker_test_hook(plan: &Plan) {
+    if plan
+        .constraints
+        .get("__test_worker_panic")
+        .and_then(serde_json::Value::as_bool)
+        == Some(true)
+    {
+        panic!("injected queue worker panic");
+    }
+    if let Some(delay) = plan
+        .constraints
+        .get("__test_worker_delay_millis")
+        .and_then(serde_json::Value::as_u64)
+    {
+        tokio::time::sleep(std::time::Duration::from_millis(delay.min(5_000))).await;
     }
 }
 
@@ -486,12 +564,12 @@ mod tests {
     use tokio_util::sync::CancellationToken;
 
     use super::{JobExecutionService, QueueRunReport, QueueWindowControl};
-    use crate::ErrorCode;
     use crate::domain::{
         ChangeSet, JobState, NetworkPolicy, Plan, PlanRequest, SCHEMA_VERSION, ValidationStatus,
     };
     use crate::job_store::SqliteJobStore;
     use crate::structured::{inspect_structured, plan_structured_conversion};
+    use crate::{ErrorCode, FormatWrightError, Stage};
     use crate::{inspect_builtin_engine, prepare_conversion};
 
     async fn queue_structured_job(
@@ -499,12 +577,22 @@ mod tests {
         input: &PathBuf,
         output: &PathBuf,
     ) -> uuid::Uuid {
+        queue_structured_job_with_test_controls(store, input, output, None, false).await
+    }
+
+    async fn queue_structured_job_with_test_controls(
+        store: &mut SqliteJobStore,
+        input: &PathBuf,
+        output: &PathBuf,
+        delay_millis: Option<u64>,
+        panic_worker: bool,
+    ) -> uuid::Uuid {
         fs::write(input, r#"[{"id":1,"ok":true}]"#).expect("write JSON");
         let engine = inspect_builtin_engine("formatwright.structured")
             .await
             .expect("structured engine");
         let probe = inspect_structured(input).await.expect("inspect");
-        let plan = plan_structured_conversion(
+        let mut plan = plan_structured_conversion(
             &probe,
             &PlanRequest {
                 target_format: "yaml".to_owned(),
@@ -514,11 +602,42 @@ mod tests {
             &engine,
         )
         .expect("plan");
+        if let Some(delay) = delay_millis {
+            plan.constraints.insert(
+                "__test_worker_delay_millis".to_owned(),
+                serde_json::json!(delay),
+            );
+        }
+        if panic_worker {
+            plan.constraints
+                .insert("__test_worker_panic".to_owned(), serde_json::json!(true));
+        }
         let job = store.create_job(input, output, &plan).expect("create job");
         store
             .transition(job.id, JobState::Queued, "JOB_ENQUEUED")
             .expect("enqueue");
         job.id
+    }
+
+    fn assert_recoverable_and_release_reservation(store: &mut SqliteJobStore, job_id: uuid::Uuid) {
+        assert_eq!(
+            store.get_job(job_id).expect("read").expect("exists").state,
+            JobState::Interrupted
+        );
+        let details = store
+            .get_job_details(job_id)
+            .expect("read details")
+            .expect("details exist");
+        assert_eq!(
+            details.events.last().expect("last event").code,
+            "CONTROL_PLANE_FAILED"
+        );
+        store
+            .transition(job_id, JobState::Queued, "TEST_RETRY")
+            .expect("interrupted job can be requeued");
+        store
+            .transition(job_id, JobState::Cancelled, "TEST_CLEANUP")
+            .expect("cancelled retry releases its reservation");
     }
 
     #[tokio::test]
@@ -629,6 +748,90 @@ mod tests {
             store.get_job(job_id).expect("read").expect("exists").state,
             JobState::Completed
         );
+    }
+
+    #[tokio::test]
+    async fn report_storage_failure_cancels_drains_and_interrupts_all_workers() {
+        let suite = tempdir().expect("suite");
+        let mut store = SqliteJobStore::open(suite.path().join("jobs.sqlite3")).expect("store");
+        let first = queue_structured_job(
+            &mut store,
+            &suite.path().join("first.json"),
+            &suite.path().join("first.yaml"),
+        )
+        .await;
+        let second = queue_structured_job_with_test_controls(
+            &mut store,
+            &suite.path().join("second.json"),
+            &suite.path().join("second.yaml"),
+            Some(250),
+            false,
+        )
+        .await;
+        let control = QueueWindowControl::new();
+        let observed_control = control.clone();
+
+        let error = JobExecutionService::run_window_observed(&mut store, 8, 2, control, |_, _| {
+            Err(FormatWrightError::new(
+                ErrorCode::StorageFailed,
+                Stage::Store,
+                "injected report storage failure",
+                "retry",
+            ))
+        })
+        .await
+        .expect_err("report persistence must fail the window");
+
+        assert_eq!(error.code, ErrorCode::StorageFailed);
+        assert!(observed_control.workers_cancelled());
+        assert_recoverable_and_release_reservation(&mut store, first);
+        assert_recoverable_and_release_reservation(&mut store, second);
+        assert_eq!(
+            fs::read_dir(suite.path())
+                .expect("read suite")
+                .filter_map(std::result::Result::ok)
+                .filter(|entry| entry
+                    .file_name()
+                    .to_string_lossy()
+                    .contains("formatwright-partial"))
+                .count(),
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn worker_panic_cancels_drains_and_interrupts_peer_workers() {
+        let suite = tempdir().expect("suite");
+        let mut store = SqliteJobStore::open(suite.path().join("jobs.sqlite3")).expect("store");
+        let panicked = queue_structured_job_with_test_controls(
+            &mut store,
+            &suite.path().join("panic.json"),
+            &suite.path().join("panic.yaml"),
+            None,
+            true,
+        )
+        .await;
+        let peer = queue_structured_job_with_test_controls(
+            &mut store,
+            &suite.path().join("peer.json"),
+            &suite.path().join("peer.yaml"),
+            Some(250),
+            false,
+        )
+        .await;
+        let control = QueueWindowControl::new();
+        let observed_control = control.clone();
+
+        let error =
+            JobExecutionService::run_window_observed(&mut store, 8, 2, control, |_, _| Ok(()))
+                .await
+                .expect_err("worker panic must fail the window");
+
+        assert_eq!(error.code, ErrorCode::Internal);
+        assert!(error.message.contains("stopped unexpectedly"));
+        assert!(observed_control.workers_cancelled());
+        assert_recoverable_and_release_reservation(&mut store, panicked);
+        assert_recoverable_and_release_reservation(&mut store, peer);
     }
 
     #[tokio::test]
