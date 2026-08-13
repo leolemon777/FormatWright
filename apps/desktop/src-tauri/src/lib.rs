@@ -3,6 +3,8 @@
 mod queue_bridge;
 
 use std::collections::{HashMap, HashSet};
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Instant;
@@ -10,12 +12,14 @@ use std::time::Instant;
 use formatwright_core::{
     ApplicationSettings, ApplicationSettingsService, ApplicationStateLayout,
     ApplicationStateService, BatchRecord, BulkActionReport, BulkJobAction, BulkJobService,
-    CapabilitySnapshot, ConversionPreset, ConversionService, DoctorReport, EngineDiscoveryPolicy,
-    EngineRegistryIdentity, JobExecutionService, JobQueryPage, JobRecord, JobSelectionQuery,
-    JobState, JobStateCount, PRESET_SCHEMA_VERSION, Plan, PlanRequest, PresetLibrary, Probe,
+    CapabilitySnapshot, CompactReport, ConversionPreset, ConversionService, DoctorReport,
+    EngineDiscoveryPolicy, EngineRegistryIdentity, IntegrityReport, JobExecutionService,
+    JobQueryPage, JobRecord, JobSelectionQuery, JobState, JobStateCount, MaintenanceService,
+    MaintenanceStatus, PRESET_SCHEMA_VERSION, Plan, PlanRequest, PresetLibrary, Probe,
     QueueRunReport, QueueWindowControl, ReportService, SelectionSnapshot, SqliteJobStore,
-    ValidationReport, VerifiedEnginePack, activate_engine_pack, capability_snapshot_for_input,
-    cleanup_staged_output, prepare_conversion,
+    StateBundleBackupReport, StateBundleOptions, StateBundlePreflightReport, ValidationReport,
+    VerifiedEnginePack, activate_engine_pack, capability_snapshot_for_input, cleanup_staged_output,
+    prepare_conversion,
 };
 use queue_bridge::{DEFAULT_BATCH_JOBS, DEFAULT_BENCHMARK_JOBS, QueueBatchIter};
 use serde::{Deserialize, Serialize};
@@ -36,19 +40,97 @@ struct DesktopState {
     engine_registry_directory: PathBuf,
     engine_store_directory: PathBuf,
     startup_recovery: DesktopStartupRecovery,
+    operation_gate: Mutex<DesktopOperationGate>,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
 struct DesktopStartupRecovery {
     recovered_after_restart: usize,
     removed_staged_outputs: usize,
+    restored_bundle_id: Option<Uuid>,
+    restore_error: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
 struct DesktopRecoverySummary {
     recovered_after_restart: usize,
     removed_staged_outputs: usize,
+    restored_bundle_id: Option<Uuid>,
+    restore_error: Option<String>,
     state_counts: Vec<JobStateCount>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct DesktopScheduledRestore {
+    bundle_id: Uuid,
+    bundle_path: PathBuf,
+    restart_required: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct DesktopOperationGate {
+    active_operations: usize,
+    maintenance_exclusive: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct DesktopPendingRestore {
+    schema_version: u16,
+    bundle_id: Uuid,
+    bundle_path: PathBuf,
+    bundle_size_bytes: u64,
+    bundle_blake3: String,
+}
+
+const DESKTOP_PENDING_RESTORE_SCHEMA_VERSION: u16 = 1;
+const DESKTOP_PENDING_RESTORE_FILE: &str = ".desktop-state-restore.json";
+
+struct DesktopOperationLease<'a> {
+    gate: &'a Mutex<DesktopOperationGate>,
+    exclusive: bool,
+}
+
+impl Drop for DesktopOperationLease<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut gate) = self.gate.lock() {
+            if self.exclusive {
+                gate.maintenance_exclusive = false;
+            } else {
+                gate.active_operations = gate.active_operations.saturating_sub(1);
+            }
+        }
+    }
+}
+
+fn acquire_active_operation(
+    gate: &Mutex<DesktopOperationGate>,
+) -> Result<DesktopOperationLease<'_>, String> {
+    let mut current = lock(gate)?;
+    if current.maintenance_exclusive {
+        return Err("maintenance is running; retry after it finishes".to_owned());
+    }
+    current.active_operations = current.active_operations.saturating_add(1);
+    drop(current);
+    Ok(DesktopOperationLease {
+        gate,
+        exclusive: false,
+    })
+}
+
+fn acquire_maintenance_operation(
+    gate: &Mutex<DesktopOperationGate>,
+) -> Result<DesktopOperationLease<'_>, String> {
+    let mut current = lock(gate)?;
+    if current.maintenance_exclusive || current.active_operations > 0 {
+        return Err("stop the queue and wait for active conversions before maintenance".to_owned());
+    }
+    current.maintenance_exclusive = true;
+    drop(current);
+    Ok(DesktopOperationLease {
+        gate,
+        exclusive: true,
+    })
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -100,6 +182,7 @@ fn save_desktop_settings(
     state: tauri::State<'_, DesktopState>,
     settings: ApplicationSettings,
 ) -> Result<ApplicationSettings, String> {
+    let _operation = acquire_active_operation(&state.operation_gate)?;
     let mut current = lock(&state.settings)?;
     ApplicationSettingsService::new(&state.settings_path)
         .save(&settings)
@@ -222,6 +305,7 @@ async fn import_desktop_engine_pack(
     state: tauri::State<'_, DesktopState>,
     manifest_path: PathBuf,
 ) -> Result<DesktopEnginePackSummary, String> {
+    let _operation = acquire_active_operation(&state.operation_gate)?;
     let engine_store_directory = state.engine_store_directory.clone();
     let verified = tokio::task::spawn_blocking(move || {
         formatwright_core::install_engine_pack(manifest_path, engine_store_directory)
@@ -286,6 +370,7 @@ async fn run_desktop_conversion(
     state: tauri::State<'_, DesktopState>,
     request: DesktopConversionRequest,
 ) -> Result<DesktopRunResult, String> {
+    let _operation = acquire_active_operation(&state.operation_gate)?;
     let (probe, plan, validation_engine) = prepare_approved_desktop_conversion(&request).await?;
     let cancellation = CancellationToken::new();
     let cancellation_slot = &state.cancellations;
@@ -329,6 +414,7 @@ async fn queue_desktop_conversion(
     state: tauri::State<'_, DesktopState>,
     request: DesktopConversionRequest,
 ) -> Result<JobRecord, String> {
+    let _operation = acquire_active_operation(&state.operation_gate)?;
     let (probe, plan, _) = prepare_approved_desktop_conversion(&request).await?;
     let job = {
         let mut store = lock(&state.store)?;
@@ -377,6 +463,7 @@ async fn run_desktop_queue_window(
     limit: Option<usize>,
     parallel: Option<usize>,
 ) -> Result<QueueRunReport, String> {
+    let _operation = acquire_active_operation(&state.operation_gate)?;
     let limit = limit.unwrap_or(100).clamp(1, 256);
     let parallel = parallel.unwrap_or(4).clamp(1, 16);
     let (control, _lease) = acquire_queue_window(&state.queue_control)?;
@@ -500,6 +587,7 @@ fn requeue_desktop_job(
     state: tauri::State<'_, DesktopState>,
     job_id: String,
 ) -> Result<JobRecord, String> {
+    let _operation = acquire_active_operation(&state.operation_gate)?;
     let job_id = Uuid::parse_str(&job_id).map_err(|error| error.to_string())?;
     let mut store = lock(&state.store)?;
     requeue_job(&mut store, job_id).map_err(serialize_error)
@@ -550,10 +638,105 @@ fn get_desktop_recovery_summary(
     Ok(DesktopRecoverySummary {
         recovered_after_restart: state.startup_recovery.recovered_after_restart,
         removed_staged_outputs: state.startup_recovery.removed_staged_outputs,
+        restored_bundle_id: state.startup_recovery.restored_bundle_id,
+        restore_error: state.startup_recovery.restore_error.clone(),
         state_counts: lock(&state.store)?
             .count_jobs_by_state()
             .map_err(serialize_error)?,
     })
+}
+
+#[tauri::command]
+async fn get_desktop_maintenance_status(
+    state: tauri::State<'_, DesktopState>,
+) -> Result<MaintenanceStatus, String> {
+    let database_path = state.job_database_path.clone();
+    tokio::task::spawn_blocking(move || MaintenanceService::new(database_path).status())
+        .await
+        .map_err(|error| format!("maintenance status worker failed: {error}"))?
+        .map_err(serialize_error)
+}
+
+#[tauri::command]
+async fn check_desktop_integrity(
+    state: tauri::State<'_, DesktopState>,
+) -> Result<IntegrityReport, String> {
+    let _operation = acquire_maintenance_operation(&state.operation_gate)?;
+    let database_path = state.job_database_path.clone();
+    tokio::task::spawn_blocking(move || MaintenanceService::new(database_path).integrity_check())
+        .await
+        .map_err(|error| format!("integrity-check worker failed: {error}"))?
+        .map_err(serialize_error)
+}
+
+#[tauri::command]
+async fn backup_desktop_state(
+    state: tauri::State<'_, DesktopState>,
+    destination_path: PathBuf,
+    include_reports: Option<bool>,
+) -> Result<StateBundleBackupReport, String> {
+    let _operation = acquire_maintenance_operation(&state.operation_gate)?;
+    let database_path = state.job_database_path.clone();
+    tokio::task::spawn_blocking(move || {
+        ApplicationStateService::from_database(database_path)?.backup(
+            destination_path,
+            StateBundleOptions {
+                include_reports: include_reports.unwrap_or(false),
+            },
+        )
+    })
+    .await
+    .map_err(|error| format!("state-backup worker failed: {error}"))?
+    .map_err(serialize_error)
+}
+
+#[tauri::command]
+async fn preflight_desktop_state_restore(
+    state: tauri::State<'_, DesktopState>,
+    bundle_path: PathBuf,
+) -> Result<StateBundlePreflightReport, String> {
+    let _operation = acquire_maintenance_operation(&state.operation_gate)?;
+    let database_path = state.job_database_path.clone();
+    tokio::task::spawn_blocking(move || {
+        ApplicationStateService::from_database(database_path)?.restore_preflight(bundle_path)
+    })
+    .await
+    .map_err(|error| format!("restore-preflight worker failed: {error}"))?
+    .map_err(serialize_error)
+}
+
+#[tauri::command]
+async fn schedule_desktop_state_restore(
+    state: tauri::State<'_, DesktopState>,
+    bundle_path: PathBuf,
+    expected_bundle_id: String,
+) -> Result<DesktopScheduledRestore, String> {
+    let _operation = acquire_maintenance_operation(&state.operation_gate)?;
+    let database_path = state.job_database_path.clone();
+    let expected_bundle_id =
+        Uuid::parse_str(&expected_bundle_id).map_err(|error| error.to_string())?;
+    tokio::task::spawn_blocking(move || {
+        stage_pending_restore(&database_path, &bundle_path, expected_bundle_id)
+    })
+    .await
+    .map_err(|error| format!("restore-preflight worker failed: {error}"))?
+    .map_err(serialize_error)
+}
+
+#[tauri::command]
+async fn compact_desktop_database(
+    state: tauri::State<'_, DesktopState>,
+) -> Result<CompactReport, String> {
+    let _operation = acquire_maintenance_operation(&state.operation_gate)?;
+    let database_path = state.job_database_path.clone();
+    let report =
+        tokio::task::spawn_blocking(move || MaintenanceService::new(database_path).compact())
+            .await
+            .map_err(|error| format!("compact worker failed: {error}"))?
+            .map_err(serialize_error)?;
+    let replacement = SqliteJobStore::open(&state.job_database_path).map_err(serialize_error)?;
+    *lock(&state.store)? = replacement;
+    Ok(report)
 }
 
 #[tauri::command]
@@ -579,6 +762,7 @@ fn capture_desktop_job_selection(
     states: Vec<JobState>,
     search: Option<String>,
 ) -> Result<SelectionSnapshot, String> {
+    let _operation = acquire_active_operation(&state.operation_gate)?;
     let batch_id = batch_id
         .map(|value| Uuid::parse_str(&value).map_err(|error| error.to_string()))
         .transpose()?;
@@ -598,6 +782,7 @@ fn run_desktop_bulk_action(
     selection_id: String,
     action: BulkJobAction,
 ) -> Result<BulkActionReport, String> {
+    let _operation = acquire_active_operation(&state.operation_gate)?;
     let selection_id = Uuid::parse_str(&selection_id).map_err(|error| error.to_string())?;
     let mut store = lock(&state.store)?;
     BulkJobService::apply(&mut store, selection_id, action).map_err(serialize_error)
@@ -629,6 +814,7 @@ fn save_desktop_preset(
     state: tauri::State<'_, DesktopState>,
     request: DesktopPresetRequest,
 ) -> Result<ConversionPreset, String> {
+    let _operation = acquire_active_operation(&state.operation_gate)?;
     let preset = request.into_preset();
     let preset_id = preset.preset_id;
     let mut current = lock(&state.presets)?;
@@ -651,6 +837,7 @@ fn delete_desktop_preset(
     state: tauri::State<'_, DesktopState>,
     preset_id: String,
 ) -> Result<bool, String> {
+    let _operation = acquire_active_operation(&state.operation_gate)?;
     let preset_id = Uuid::parse_str(&preset_id).map_err(|error| error.to_string())?;
     let mut current = lock(&state.presets)?;
     let mut updated = current.clone();
@@ -668,6 +855,7 @@ fn import_desktop_presets(
     state: tauri::State<'_, DesktopState>,
     source_path: PathBuf,
 ) -> Result<DesktopPresetImportResult, String> {
+    let _operation = acquire_active_operation(&state.operation_gate)?;
     let imported = read_preset_library(&source_path)?;
     let imported_count = imported.presets.len();
     let mut current = lock(&state.presets)?;
@@ -758,6 +946,255 @@ fn persist_preset_library(path: &Path, library: &PresetLibrary) -> Result<(), St
         std::fs::remove_file(backup).map_err(|error| error.to_string())?;
     }
     Ok(())
+}
+
+fn pending_restore_path(database_path: &Path) -> PathBuf {
+    database_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join(DESKTOP_PENDING_RESTORE_FILE)
+}
+
+fn stage_pending_restore(
+    database_path: &Path,
+    bundle_path: &Path,
+    expected_bundle_id: Uuid,
+) -> formatwright_core::Result<DesktopScheduledRestore> {
+    let state = ApplicationStateService::from_database(database_path.to_path_buf())?;
+    let report = state.restore_preflight(bundle_path)?;
+    if report.bundle_id != expected_bundle_id {
+        return Err(formatwright_core::FormatWrightError::new(
+            formatwright_core::ErrorCode::InputChanged,
+            formatwright_core::Stage::Store,
+            "The selected bundle changed after restore preflight",
+            "Choose the bundle again and repeat restore preflight.",
+        ));
+    }
+    let root = database_path.parent().unwrap_or_else(|| Path::new("."));
+    let staged_bundle = root.join(format!(
+        ".desktop-state-restore-{}.fwstate",
+        report.bundle_id
+    ));
+    let mut source = std::fs::File::open(&report.bundle_path).map_err(desktop_storage_error)?;
+    let mut staged = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&staged_bundle)
+        .map_err(desktop_storage_error)?;
+    if let Err(error) = std::io::copy(&mut source, &mut staged).and_then(|_| staged.sync_all()) {
+        let _ = std::fs::remove_file(&staged_bundle);
+        return Err(desktop_storage_error(error));
+    }
+    drop(staged);
+    let staged_report = match state.restore_preflight(&staged_bundle) {
+        Ok(report) if report.bundle_id == expected_bundle_id => report,
+        Ok(_) => {
+            let _ = std::fs::remove_file(&staged_bundle);
+            return Err(formatwright_core::FormatWrightError::new(
+                formatwright_core::ErrorCode::InputChanged,
+                formatwright_core::Stage::Store,
+                "The state bundle changed while it was staged",
+                "Choose the bundle again and repeat restore preflight.",
+            ));
+        }
+        Err(error) => {
+            let _ = std::fs::remove_file(&staged_bundle);
+            return Err(error);
+        }
+    };
+    let request = DesktopPendingRestore {
+        schema_version: DESKTOP_PENDING_RESTORE_SCHEMA_VERSION,
+        bundle_id: staged_report.bundle_id,
+        bundle_size_bytes: std::fs::metadata(&staged_bundle)
+            .map_err(desktop_storage_error)?
+            .len(),
+        bundle_blake3: blake3_file(&staged_bundle)?,
+        bundle_path: staged_bundle,
+    };
+    if let Err(error) = persist_pending_restore(&pending_restore_path(database_path), &request) {
+        let _ = std::fs::remove_file(&request.bundle_path);
+        return Err(error);
+    }
+    Ok(DesktopScheduledRestore {
+        bundle_id: request.bundle_id,
+        bundle_path: request.bundle_path,
+        restart_required: true,
+    })
+}
+
+fn apply_pending_restore(database_path: &Path) -> (Option<Uuid>, Option<String>) {
+    let path = pending_restore_path(database_path);
+    if !path.is_file() {
+        cleanup_orphaned_pending_restore_bundles(database_path);
+        return (None, None);
+    }
+    let result = (|| -> formatwright_core::Result<Uuid> {
+        let bytes = std::fs::read(&path).map_err(desktop_storage_error)?;
+        if bytes.len() > 64 * 1024 {
+            return Err(formatwright_core::FormatWrightError::new(
+                formatwright_core::ErrorCode::StorageFailed,
+                formatwright_core::Stage::Store,
+                "Pending desktop restore request exceeds 64 KiB",
+                "Remove the pending restore request and schedule the restore again.",
+            ));
+        }
+        let request = serde_json::from_slice::<DesktopPendingRestore>(&bytes).map_err(|error| {
+            formatwright_core::FormatWrightError::new(
+                formatwright_core::ErrorCode::StorageFailed,
+                formatwright_core::Stage::Store,
+                "Pending desktop restore request is invalid",
+                "Remove the pending restore request and schedule the restore again.",
+            )
+            .with_diagnostic(error.to_string())
+        })?;
+        if request.schema_version != DESKTOP_PENDING_RESTORE_SCHEMA_VERSION {
+            return Err(formatwright_core::FormatWrightError::new(
+                formatwright_core::ErrorCode::InputInvalid,
+                formatwright_core::Stage::Store,
+                "Pending desktop restore request uses an unsupported version",
+                "Update FormatWright and schedule the restore again.",
+            ));
+        }
+        let current_size = std::fs::metadata(&request.bundle_path)
+            .map_err(desktop_storage_error)?
+            .len();
+        let current_blake3 = blake3_file(&request.bundle_path)?;
+        if current_size != request.bundle_size_bytes || current_blake3 != request.bundle_blake3 {
+            return Err(formatwright_core::FormatWrightError::new(
+                formatwright_core::ErrorCode::InputChanged,
+                formatwright_core::Stage::Store,
+                "The scheduled state bundle changed before restart",
+                "Choose the bundle again and repeat restore preflight.",
+            ));
+        }
+        let service = ApplicationStateService::from_database(database_path.to_path_buf())?;
+        let preflight = service.restore_preflight(&request.bundle_path)?;
+        if preflight.bundle_id != request.bundle_id {
+            return Err(formatwright_core::FormatWrightError::new(
+                formatwright_core::ErrorCode::InputChanged,
+                formatwright_core::Stage::Store,
+                "The scheduled state bundle changed before restart",
+                "Choose the bundle again and repeat restore preflight.",
+            ));
+        }
+        let restored = service.restore(&request.bundle_path)?;
+        std::fs::remove_file(&path).map_err(desktop_storage_error)?;
+        let _ = std::fs::remove_file(&request.bundle_path);
+        Ok(restored.bundle_id)
+    })();
+    match result {
+        Ok(bundle_id) => (Some(bundle_id), None),
+        Err(error) => {
+            cleanup_pending_restore_bundle(database_path, &path);
+            let _ = std::fs::remove_file(&path);
+            (None, Some(error.to_string()))
+        }
+    }
+}
+
+fn cleanup_orphaned_pending_restore_bundles(database_path: &Path) {
+    let root = database_path.parent().unwrap_or_else(|| Path::new("."));
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.filter_map(std::result::Result::ok) {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if name.starts_with(".desktop-state-restore-")
+            && name.ends_with(".fwstate")
+            && entry.file_type().is_ok_and(|kind| kind.is_file())
+        {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
+fn cleanup_pending_restore_bundle(database_path: &Path, request_path: &Path) {
+    let Ok(bytes) = std::fs::read(request_path) else {
+        return;
+    };
+    let Ok(request) = serde_json::from_slice::<DesktopPendingRestore>(&bytes) else {
+        return;
+    };
+    let expected_parent = database_path.parent().unwrap_or_else(|| Path::new("."));
+    let safe_name = request
+        .bundle_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| {
+            name == format!(".desktop-state-restore-{}.fwstate", request.bundle_id)
+        });
+    if safe_name && request.bundle_path.parent() == Some(expected_parent) {
+        let _ = std::fs::remove_file(request.bundle_path);
+    }
+}
+
+fn persist_pending_restore(
+    path: &Path,
+    request: &DesktopPendingRestore,
+) -> formatwright_core::Result<()> {
+    let parent = path.parent().ok_or_else(|| {
+        formatwright_core::FormatWrightError::new(
+            formatwright_core::ErrorCode::StorageFailed,
+            formatwright_core::Stage::Store,
+            "Pending restore request has no parent directory",
+            "Choose a valid application data directory.",
+        )
+    })?;
+    std::fs::create_dir_all(parent).map_err(desktop_storage_error)?;
+    let partial = parent.join(format!(".desktop-state-restore-{}.partial", Uuid::new_v4()));
+    let bytes = serde_json::to_vec_pretty(request).map_err(|error| {
+        formatwright_core::FormatWrightError::new(
+            formatwright_core::ErrorCode::Internal,
+            formatwright_core::Stage::Store,
+            "Pending restore request could not be serialized",
+            "Retry scheduling the restore.",
+        )
+        .with_diagnostic(error.to_string())
+    })?;
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&partial)
+        .map_err(desktop_storage_error)?;
+    if let Err(error) = file.write_all(&bytes).and_then(|()| file.sync_all()) {
+        let _ = std::fs::remove_file(&partial);
+        return Err(desktop_storage_error(error));
+    }
+    drop(file);
+    if path.exists() {
+        std::fs::remove_file(&partial).map_err(desktop_storage_error)?;
+        return Err(formatwright_core::FormatWrightError::new(
+            formatwright_core::ErrorCode::OutputConflict,
+            formatwright_core::Stage::Store,
+            "A desktop state restore is already scheduled",
+            "Restart FormatWright before scheduling another restore.",
+        ));
+    }
+    std::fs::rename(&partial, path).map_err(|error| {
+        let _ = std::fs::remove_file(&partial);
+        desktop_storage_error(error)
+    })
+}
+
+#[allow(clippy::needless_pass_by_value)]
+fn desktop_storage_error(error: std::io::Error) -> formatwright_core::FormatWrightError {
+    formatwright_core::FormatWrightError::new(
+        formatwright_core::ErrorCode::StorageFailed,
+        formatwright_core::Stage::Store,
+        "Desktop maintenance state could not be persisted",
+        "Check the application data directory permissions and retry.",
+    )
+    .with_diagnostic(error.to_string())
+}
+
+fn blake3_file(path: &Path) -> formatwright_core::Result<String> {
+    let mut file = std::fs::File::open(path).map_err(desktop_storage_error)?;
+    let mut hasher = blake3::Hasher::new();
+    std::io::copy(&mut file, &mut hasher).map_err(desktop_storage_error)?;
+    Ok(format!("blake3:{}", hasher.finalize().to_hex()))
 }
 
 fn backup_path(path: &Path) -> PathBuf {
@@ -960,6 +1397,8 @@ fn recover_desktop_jobs(
     Ok(DesktopStartupRecovery {
         recovered_after_restart: interrupted.len(),
         removed_staged_outputs,
+        restored_bundle_id: None,
+        restore_error: None,
     })
 }
 
@@ -976,6 +1415,7 @@ pub fn run() {
             let data_directory = app.path().app_data_dir()?;
             let resource_directory = app.path().resource_dir()?;
             let job_database_path = data_directory.join("jobs.sqlite3");
+            let (restored_bundle_id, restore_error) = apply_pending_restore(&job_database_path);
             let state_layout = ApplicationStateLayout::from_database(&job_database_path)
                 .map_err(|error| Box::<dyn std::error::Error>::from(error.to_string()))?;
             ApplicationStateService::new(state_layout.clone())
@@ -1002,8 +1442,10 @@ pub fn run() {
             }
             let mut store = SqliteJobStore::open(&job_database_path)
                 .map_err(|error| Box::<dyn std::error::Error>::from(error.to_string()))?;
-            let startup_recovery = recover_desktop_jobs(&mut store)
+            let mut startup_recovery = recover_desktop_jobs(&mut store)
                 .map_err(|error| Box::<dyn std::error::Error>::from(error.to_string()))?;
+            startup_recovery.restored_bundle_id = restored_bundle_id;
+            startup_recovery.restore_error = restore_error;
             let presets =
                 load_preset_library(&presets_path).map_err(Box::<dyn std::error::Error>::from)?;
             let settings = ApplicationSettingsService::new(&settings_path)
@@ -1022,6 +1464,7 @@ pub fn run() {
                 engine_registry_directory,
                 engine_store_directory,
                 startup_recovery,
+                operation_gate: Mutex::new(DesktopOperationGate::default()),
             });
             Ok(())
         })
@@ -1042,6 +1485,12 @@ pub fn run() {
             list_desktop_jobs,
             query_desktop_jobs,
             get_desktop_recovery_summary,
+            get_desktop_maintenance_status,
+            check_desktop_integrity,
+            backup_desktop_state,
+            preflight_desktop_state_restore,
+            schedule_desktop_state_restore,
+            compact_desktop_database,
             list_desktop_batches,
             capture_desktop_job_selection,
             run_desktop_bulk_action,
@@ -1061,6 +1510,8 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::fs::OpenOptions;
+    use std::io::Write;
     use std::path::PathBuf;
     use std::sync::mpsc;
     use std::time::Duration;
@@ -1068,17 +1519,20 @@ mod tests {
     use tempfile::tempdir;
 
     use formatwright_core::{
-        ArtifactSummary, ChangeSet, ConversionPreset, JobState, NetworkPolicy,
-        PRESET_SCHEMA_VERSION, Plan, PlanRequest, PresetLibrary, QueueWindowControl,
-        ReportRedaction, ReportService, SqliteJobStore, ValidationReport, ValidationStatus,
+        ApplicationStateService, ArtifactSummary, ChangeSet, ConversionPreset, JobState,
+        NetworkPolicy, PRESET_SCHEMA_VERSION, Plan, PlanRequest, PresetLibrary, QueueWindowControl,
+        ReportRedaction, ReportService, SqliteJobStore, StateBundleOptions, ValidationReport,
+        ValidationStatus,
     };
     use uuid::Uuid;
 
     use super::{
-        DesktopConversionRequest, DesktopEngineRegistryEntry, acquire_queue_window, backup_path,
-        bundled_manifest_paths, load_preset_library, persist_preset_library,
-        prepare_approved_desktop_conversion, recover_desktop_jobs, registered_manifest_paths,
-        requeue_job, run_queue_window_on_database,
+        DesktopConversionRequest, DesktopEngineRegistryEntry, DesktopOperationGate,
+        acquire_active_operation, acquire_maintenance_operation, acquire_queue_window,
+        apply_pending_restore, backup_path, bundled_manifest_paths, load_preset_library,
+        pending_restore_path, persist_preset_library, prepare_approved_desktop_conversion,
+        recover_desktop_jobs, registered_manifest_paths, requeue_job, run_queue_window_on_database,
+        stage_pending_restore,
     };
 
     fn plan(output_path: PathBuf) -> Plan {
@@ -1154,6 +1608,35 @@ mod tests {
             preserve_all_streams: Some(true),
             approved_plan_hash,
             idempotency_key: None,
+        }
+    }
+
+    fn structured_job_request(
+        root: &std::path::Path,
+        name: &str,
+    ) -> formatwright_core::JobCreateRequest {
+        let input = root.join(format!("{name}.json"));
+        let output = root.join(format!("{name}.yaml"));
+        fs::write(&input, r#"[{"id":1}]"#).expect("write structured input");
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("planning runtime");
+        let plan = runtime
+            .block_on(formatwright_core::prepare_conversion(
+                &input,
+                &PlanRequest {
+                    target_format: "yaml".to_owned(),
+                    output_path: Some(output.clone()),
+                    ..PlanRequest::default()
+                },
+            ))
+            .expect("prepare structured conversion")
+            .1;
+        formatwright_core::JobCreateRequest {
+            input_path: input,
+            output_path: output,
+            plan,
         }
     }
 
@@ -1391,6 +1874,133 @@ mod tests {
         assert_eq!(
             details.events.last().expect("recovery event").code,
             "RECOVERED_AFTER_RESTART"
+        );
+    }
+
+    #[test]
+    fn desktop_operation_gate_prevents_maintenance_overlap() {
+        let gate = std::sync::Mutex::new(DesktopOperationGate::default());
+        let active = acquire_active_operation(&gate).expect("start active operation");
+        assert!(acquire_maintenance_operation(&gate).is_err());
+        drop(active);
+
+        let maintenance = acquire_maintenance_operation(&gate).expect("start maintenance");
+        assert!(acquire_active_operation(&gate).is_err());
+        assert!(acquire_maintenance_operation(&gate).is_err());
+        drop(maintenance);
+
+        assert!(acquire_active_operation(&gate).is_ok());
+    }
+
+    #[test]
+    fn scheduled_desktop_restore_is_staged_verified_and_applied_before_open() {
+        let suite = tempdir().expect("suite");
+        let source_root = suite.path().join("source");
+        let live_root = suite.path().join("live");
+        fs::create_dir_all(&source_root).expect("source root");
+        fs::create_dir_all(&live_root).expect("live root");
+        let source_database = source_root.join("jobs.sqlite3");
+        let live_database = live_root.join("jobs.sqlite3");
+        drop(SqliteJobStore::open(&source_database).expect("source store"));
+        drop(SqliteJobStore::open(&live_database).expect("live store"));
+        let mut source = SqliteJobStore::open(&source_database).expect("source store");
+        let mut live = SqliteJobStore::open(&live_database).expect("live store");
+        source
+            .create_batch(
+                "source batch",
+                &[structured_job_request(&source_root, "source")],
+            )
+            .expect("source marker");
+        live.create_batch(
+            "live batch 1",
+            &[structured_job_request(&live_root, "live-1")],
+        )
+        .expect("live marker");
+        live.create_batch(
+            "live batch 2",
+            &[structured_job_request(&live_root, "live-2")],
+        )
+        .expect("second live marker");
+        drop(source);
+        drop(live);
+        let bundle = suite.path().join("portable.fwstate");
+        let backup = ApplicationStateService::from_database(&source_database)
+            .expect("source state")
+            .backup(&bundle, StateBundleOptions::default())
+            .expect("state backup");
+
+        let scheduled = stage_pending_restore(&live_database, &bundle, backup.bundle_id)
+            .expect("schedule restore");
+        assert!(scheduled.restart_required);
+        assert_ne!(scheduled.bundle_path, bundle);
+        assert!(scheduled.bundle_path.is_file());
+        assert!(pending_restore_path(&live_database).is_file());
+        fs::write(&bundle, b"the original selected bundle may move or change")
+            .expect("change original bundle after staging");
+
+        let (restored, error) = apply_pending_restore(&live_database);
+        assert_eq!(restored, Some(backup.bundle_id));
+        assert_eq!(error, None);
+        assert!(!pending_restore_path(&live_database).exists());
+        assert!(!scheduled.bundle_path.exists());
+        assert_eq!(
+            SqliteJobStore::open(&live_database)
+                .expect("restored store")
+                .list_batches_page(10, 0)
+                .expect("restored batches")
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn tampered_scheduled_restore_preserves_live_database() {
+        let suite = tempdir().expect("suite");
+        let source_database = suite.path().join("source/jobs.sqlite3");
+        let live_database = suite.path().join("live/jobs.sqlite3");
+        fs::create_dir_all(source_database.parent().expect("source parent")).expect("source root");
+        fs::create_dir_all(live_database.parent().expect("live parent")).expect("live root");
+        SqliteJobStore::open(&source_database).expect("source store");
+        let mut live = SqliteJobStore::open(&live_database).expect("live store");
+        live.create_batch(
+            "keep",
+            &[structured_job_request(
+                live_database.parent().expect("live root"),
+                "keep",
+            )],
+        )
+        .expect("live marker");
+        drop(live);
+        let bundle = suite.path().join("portable.fwstate");
+        let backup = ApplicationStateService::from_database(&source_database)
+            .expect("source state")
+            .backup(&bundle, StateBundleOptions::default())
+            .expect("state backup");
+        let scheduled = stage_pending_restore(&live_database, &bundle, backup.bundle_id)
+            .expect("schedule restore");
+        let mut file = OpenOptions::new()
+            .append(true)
+            .open(&scheduled.bundle_path)
+            .expect("open staged bundle");
+        file.write_all(b"tamper").expect("tamper bundle");
+        drop(file);
+
+        let (restored, error) = apply_pending_restore(&live_database);
+        assert_eq!(restored, None);
+        assert!(
+            error
+                .expect("restore error")
+                .contains("changed before restart")
+        );
+        assert!(!pending_restore_path(&live_database).exists());
+        assert!(!scheduled.bundle_path.exists());
+        assert_eq!(
+            SqliteJobStore::open(&live_database)
+                .expect("unchanged live store")
+                .list_batches_page(10, 0)
+                .expect("live batches")
+                .len(),
+            1
         );
     }
 

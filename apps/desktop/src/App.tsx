@@ -18,7 +18,7 @@ import {
 } from "./queueProjection";
 import "./styles.css";
 
-type Tab = "convert" | "jobs" | "presets" | "engines" | "reports" | "settings";
+type Tab = "convert" | "jobs" | "presets" | "engines" | "reports" | "maintenance" | "settings";
 type JsonMap = Record<string, unknown>;
 
 type Probe = {
@@ -94,7 +94,58 @@ type JobStateCount = { state: string; count: number };
 type RecoverySummary = {
   recovered_after_restart: number;
   removed_staged_outputs: number;
+  restored_bundle_id?: string;
+  restore_error?: string;
   state_counts: JobStateCount[];
+};
+
+type MaintenanceStatus = {
+  database_path: string;
+  size_bytes: number;
+  schema_version: number;
+  supported_schema_version: number;
+  journal_mode: string;
+  job_count: number;
+  active_job_count: number;
+  integrity_ok: boolean;
+};
+
+type IntegrityReport = {
+  ok: boolean;
+  sqlite_messages: string[];
+  foreign_key_violations: string[];
+  application_issues: string[];
+};
+
+type StateBundleBackupReport = {
+  bundle_path: string;
+  bundle_id: string;
+  size_bytes: number;
+  entry_count: number;
+  reports_included: boolean;
+};
+
+type StateBundlePreflightReport = {
+  bundle_path: string;
+  bundle_id: string;
+  application_version: string;
+  entry_count: number;
+  total_uncompressed_bytes: number;
+  reports_included: boolean;
+  database: {
+    source_schema_version: number;
+    restored_schema_version: number;
+    migration_required: boolean;
+    integrity: IntegrityReport;
+  };
+  warnings: string[];
+};
+
+type CompactReport = {
+  size_before_bytes: number;
+  size_after_bytes: number;
+  reclaimed_bytes: number;
+  integrity: IntegrityReport;
 };
 
 type DoctorReport = {
@@ -254,6 +305,11 @@ export default function App() {
   const [jobBatches, setJobBatches] = useState<BatchRecord[]>([]);
   const [recovery, setRecovery] = useState<RecoverySummary | null>(null);
   const [recoveryDismissed, setRecoveryDismissed] = useState(false);
+  const [maintenanceStatus, setMaintenanceStatus] = useState<MaintenanceStatus | null>(null);
+  const [maintenanceResult, setMaintenanceResult] = useState<string | null>(null);
+  const [restorePreflight, setRestorePreflight] = useState<StateBundlePreflightReport | null>(null);
+  const [maintenanceBusy, setMaintenanceBusy] = useState<"status" | "check" | "backup" | "compact" | "preflight" | "restore" | null>(null);
+  const [includeReports, setIncludeReports] = useState(false);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkReport, setBulkReport] = useState<BulkActionReport | null>(null);
   const queueSubmission = useRef<{ intent: string; key: string } | null>(null);
@@ -336,6 +392,7 @@ export default function App() {
     void refreshJobs();
     void refreshJobBatches();
     void refreshRecovery();
+    void refreshMaintenanceStatus();
     void refreshEngines();
     void refreshPresets();
     return () => {
@@ -583,6 +640,113 @@ export default function App() {
     }
   }
 
+  async function refreshMaintenanceStatus() {
+    if (!("__TAURI_INTERNALS__" in window)) return;
+    try {
+      const status = await invoke<MaintenanceStatus>("get_desktop_maintenance_status");
+      if (mounted.current) setMaintenanceStatus(status);
+    } catch (reason) {
+      if (mounted.current) setError(parseDesktopError(reason));
+    }
+  }
+
+  async function checkIntegrity() {
+    setMaintenanceBusy("check");
+    setMaintenanceResult(null);
+    setError(null);
+    try {
+      const result = await invoke<IntegrityReport>("check_desktop_integrity");
+      setMaintenanceResult(result.ok ? copy.integrityPassed : copy.integrityFailed);
+      await refreshMaintenanceStatus();
+    } catch (reason) {
+      setError(parseDesktopError(reason));
+    } finally {
+      setMaintenanceBusy(null);
+    }
+  }
+
+  async function backupState() {
+    setMaintenanceBusy("backup");
+    setMaintenanceResult(null);
+    setError(null);
+    try {
+      const selected = await save({
+        defaultPath: `formatwright-state-${new Date().toISOString().slice(0, 10)}.fwstate`,
+        title: copy.backupState,
+        filters: [{ name: "FormatWright state bundle", extensions: ["fwstate"] }],
+      });
+      if (typeof selected !== "string") return;
+      const result = await invoke<StateBundleBackupReport>("backup_desktop_state", {
+        destinationPath: selected,
+        includeReports,
+      });
+      setMaintenanceResult(`${copy.backupCreated}: ${result.bundle_path} · ${formatBytes(result.size_bytes)} · ${result.entry_count} ${copy.entries}`);
+    } catch (reason) {
+      setError(parseDesktopError(reason));
+    } finally {
+      setMaintenanceBusy(null);
+    }
+  }
+
+  async function compactDatabase() {
+    setMaintenanceBusy("compact");
+    setMaintenanceResult(null);
+    setError(null);
+    try {
+      const result = await invoke<CompactReport>("compact_desktop_database");
+      setMaintenanceResult(`${copy.compactCompleted}: ${formatBytes(result.reclaimed_bytes)} ${copy.reclaimed}`);
+      await Promise.all([refreshMaintenanceStatus(), refreshJobs()]);
+    } catch (reason) {
+      setError(parseDesktopError(reason));
+    } finally {
+      setMaintenanceBusy(null);
+    }
+  }
+
+  async function preflightRestore() {
+    setMaintenanceBusy("preflight");
+    setMaintenanceResult(null);
+    setRestorePreflight(null);
+    setError(null);
+    try {
+      const selected = await open({
+        directory: false,
+        multiple: false,
+        title: copy.restoreState,
+        filters: [{ name: "FormatWright state bundle", extensions: ["fwstate"] }],
+      });
+      if (typeof selected !== "string") return;
+      const result = await invoke<StateBundlePreflightReport>("preflight_desktop_state_restore", {
+        bundlePath: selected,
+      });
+      setRestorePreflight(result);
+      setMaintenanceResult(copy.restorePreflightPassed);
+    } catch (reason) {
+      setError(parseDesktopError(reason));
+    } finally {
+      setMaintenanceBusy(null);
+    }
+  }
+
+  async function scheduleRestore() {
+    if (!restorePreflight) return;
+    setMaintenanceBusy("restore");
+    setMaintenanceResult(null);
+    setError(null);
+    try {
+      await invoke("schedule_desktop_state_restore", {
+        bundlePath: restorePreflight.bundle_path,
+        expectedBundleId: restorePreflight.bundle_id,
+      });
+      setRestorePreflight(null);
+      setMaintenanceResult(copy.restoreScheduled);
+    } catch (reason) {
+      setError(parseDesktopError(reason));
+    } finally {
+      setMaintenanceBusy(null);
+    }
+  }
+
   async function requeueJob(job: JobRecord) {
     setJobActionBusy(job.id);
     setError(null);
@@ -817,7 +981,7 @@ export default function App() {
   const route = capabilities?.routes[normalizedTarget];
   const routeAvailable = !capabilities || route?.available === true;
   const targetOptions = Array.from(new Set([...recommendations, "jpg", "png", "webp", "avif", "mp4", "mp3", "m4a", "wav", "gif", "pdf", "docx", "json", "csv", "yaml", "xml"]));
-  const tabs: Tab[] = ["convert", "jobs", "presets", "engines", "reports", "settings"];
+  const tabs: Tab[] = ["convert", "jobs", "presets", "engines", "reports", "maintenance", "settings"];
   const recoveryCounts = Object.fromEntries(
     (recovery?.state_counts ?? []).map((entry) => [entry.state, entry.count]),
   );
@@ -826,7 +990,7 @@ export default function App() {
     0,
   );
   const showRecovery = !recoveryDismissed && recovery != null &&
-    (recovery.recovered_after_restart > 0 || recoverableCount > 0);
+    (recovery.recovered_after_restart > 0 || recovery.restored_bundle_id != null || recovery.restore_error != null || recoverableCount > 0);
   const pageStart = jobTotal === 0 ? 0 : jobOffset + 1;
   const pageEnd = Math.min(jobOffset + jobs.length, jobTotal);
 
@@ -858,6 +1022,8 @@ export default function App() {
           <div>
             <strong>{copy.recoveryTitle}</strong>
             <span>{copy.recoveryBody}: {recovery.recovered_after_restart} {copy.recoveredOnStartup} · {recovery.removed_staged_outputs} {copy.partialsCleaned} · {recoverableCount} {copy.recoverableJobs}</span>
+            {recovery.restored_bundle_id && <span>{copy.restoreCompleted}: {recovery.restored_bundle_id}</span>}
+            {recovery.restore_error && <span className="restore-error">{copy.restoreFailed}: {recovery.restore_error}</span>}
           </div>
           <span className="heading-actions">
             <button className="primary" type="button" onClick={() => setTab("jobs")}>{copy.reviewRecovery}</button>
@@ -982,6 +1148,26 @@ export default function App() {
         </section>
       )}
 
+      {tab === "maintenance" && (
+        <section className="page-card">
+          <div className="page-heading"><div><p className="section-label">LONG-TERM STATE</p><h1>{copy.maintenance}</h1><p>{copy.maintenanceHint}</p></div><div className="heading-actions"><button type="button" disabled={maintenanceBusy !== null} onClick={() => void refreshMaintenanceStatus()}>{copy.refresh}</button></div></div>
+          {maintenanceResult && <p className="success-notice" role="status" aria-live="polite">{maintenanceResult}</p>}
+          <div className="maintenance-grid">
+            <article>
+              <p className="section-label">SQLITE</p><h2>{copy.databaseHealth}</h2>
+              {!maintenanceStatus ? <p>{copy.statusUnavailable}</p> : <dl><div><dt>{copy.databasePath}</dt><dd>{maintenanceStatus.database_path}</dd></div><div><dt>{copy.databaseSize}</dt><dd>{formatBytes(maintenanceStatus.size_bytes)}</dd></div><div><dt>{copy.schemaVersion}</dt><dd>v{maintenanceStatus.schema_version} / v{maintenanceStatus.supported_schema_version}</dd></div><div><dt>{copy.journalMode}</dt><dd>{maintenanceStatus.journal_mode}</dd></div><div><dt>{copy.totalJobs}</dt><dd>{maintenanceStatus.job_count.toLocaleString()}</dd></div><div><dt>{copy.activeJobs}</dt><dd>{maintenanceStatus.active_job_count.toLocaleString()}</dd></div><div><dt>{copy.integrity}</dt><dd className={maintenanceStatus.integrity_ok ? "healthy" : "unhealthy"}>{maintenanceStatus.integrity_ok ? copy.healthy : copy.integrityFailed}</dd></div></dl>}
+              <div className="action-row"><button className="primary" type="button" disabled={maintenanceBusy !== null} onClick={checkIntegrity}>{maintenanceBusy === "check" ? copy.checking : copy.checkIntegrity}</button><button type="button" disabled={maintenanceBusy !== null} onClick={compactDatabase}>{maintenanceBusy === "compact" ? copy.compacting : copy.compactDatabase}</button></div>
+            </article>
+            <article>
+              <p className="section-label">VERIFIED BUNDLE</p><h2>{copy.backupAndRestore}</h2><p>{copy.backupHint}</p>
+              <label className="checkbox-control"><input type="checkbox" checked={includeReports} onChange={(event) => setIncludeReports(event.target.checked)} />{copy.includeReports}</label>
+              <div className="action-row"><button className="primary" type="button" disabled={maintenanceBusy !== null} onClick={backupState}>{maintenanceBusy === "backup" ? copy.backingUp : copy.backupState}</button><button type="button" disabled={maintenanceBusy !== null} onClick={preflightRestore}>{maintenanceBusy === "preflight" ? copy.preflighting : copy.restoreState}</button></div>
+              {restorePreflight && <section className="restore-confirm"><strong>{copy.restorePreflightPassed}</strong><span>{restorePreflight.bundle_path}</span><span>{copy.bundleId}: {restorePreflight.bundle_id}</span><span>{restorePreflight.entry_count} {copy.entries} · {formatBytes(restorePreflight.total_uncompressed_bytes)} · DB v{restorePreflight.database.source_schema_version} → v{restorePreflight.database.restored_schema_version}</span>{restorePreflight.warnings.map((warning) => <small key={warning}>{copy.warning}: {warning}</small>)}<p>{copy.restoreRestartWarning}</p><button className="danger" type="button" disabled={maintenanceBusy !== null} onClick={scheduleRestore}>{maintenanceBusy === "restore" ? copy.schedulingRestore : copy.confirmRestoreOnRestart}</button></section>}
+            </article>
+          </div>
+        </section>
+      )}
+
       {tab === "settings" && (
         <section className="page-card settings-grid">
           <div><p className="section-label">PREFERENCES</p><h1>{copy.settings}</h1></div>
@@ -1006,4 +1192,17 @@ function ReportView({ report, copy }: { report: ValidationReport; copy: (typeof 
   const passed = report.checks.filter((check) => check.required && check.status === "pass").length;
   const required = report.checks.filter((check) => check.required).length;
   return <div className="report-body"><div className="report-summary"><div><span>{copy.requiredChecks}</span><strong>{passed}/{required}</strong></div><div><span>{copy.openPathHint}</span><strong>{report.output.display_path ?? "—"}</strong></div></div><div className="check-list">{report.checks.map((check) => <article key={check.code}><span aria-hidden="true">{check.status === "pass" ? "✓" : check.status === "fail" ? "×" : "!"}</span><div><strong>{check.code}</strong><small>{check.message}</small></div><em>{check.status}</em></article>)}</div></div>;
+}
+
+function formatBytes(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KiB", "MiB", "GiB", "TiB"];
+  let value = bytes / 1024;
+  let unit = units[0];
+  for (const candidate of units.slice(1)) {
+    if (value < 1024) break;
+    value /= 1024;
+    unit = candidate;
+  }
+  return `${value.toFixed(value >= 100 ? 0 : value >= 10 ? 1 : 2)} ${unit}`;
 }

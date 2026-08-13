@@ -18,7 +18,7 @@
 - **未开始**：只有规格或方向，没有可运行实现。
 - **发布阻断**：不完成就不能发布 Public Beta；不是一般优化项。
 
-当前产品结论：**FormatWright 已具备 Windows 自包含开发候选：Release 内嵌并首次启动安装 PDF/Media Starter，生产只解析激活 pack 的精确路径，UI 与后端共同按 capability snapshot 门控；真实 PDF→PNG/JPG、GIF 与结构化链路已在本机通过；R-001 至 R-007 与 R-010 已关闭；SQLite MaintenanceService、可校验应用状态整包、v4 持久批次/幂等键/稳定 Selection/Bulk Action 审计、共享 ConversionService/ReportService，以及 CLI/Desktop 批量入口已完成；Desktop 已具备启动恢复摘要、精确 partial 清理、SQLite 状态/路径/批次筛选和有界分页；四进程原子认领、公平批次窗口、真实强退恢复，以及 10,000 项结构化/图片/媒体混合公平性/P50/P95/RSS/WAL 门禁已通过。** 但这仍不是 Public Beta：R-008/R-009 尚缺离线干净虚拟机、完整引擎 SBOM/许可证与源码义务、可信签名/吊销、升级回滚和正式代码签名证据；Gate 1 尚缺高分辨率/PDF/Office 扩展、长时掉电与跨平台认证，Gate 2–5 仍未完成。不得用于唯一副本或不可替代数据，也不得宣称“已认证”或“正式发布”。
+当前产品结论：**FormatWright 已具备 Windows 自包含开发候选：Release 内嵌并首次启动安装 PDF/Media Starter，生产只解析激活 pack 的精确路径，UI 与后端共同按 capability snapshot 门控；真实 PDF→PNG/JPG、GIF 与结构化链路已在本机通过；R-001 至 R-007 与 R-010 已关闭；SQLite MaintenanceService、可校验应用状态整包、v4 持久批次/幂等键/稳定 Selection/Bulk Action 审计、共享 ConversionService/ReportService，以及 CLI/Desktop 批量入口已完成；Desktop 已具备启动恢复摘要、精确 partial 清理、SQLite 状态/路径/批次筛选、有界分页，以及与执行互斥的状态/完整性/整包备份/压缩/下次启动恢复中心；四进程原子认领、公平批次窗口、真实强退恢复，以及 10,000 项结构化/图片/媒体混合公平性/P50/P95/RSS/WAL 门禁已通过。** 但这仍不是 Public Beta：R-008/R-009 尚缺离线干净虚拟机、完整引擎 SBOM/许可证与源码义务、可信签名/吊销、升级回滚和正式代码签名证据；Gate 1 尚缺高分辨率/PDF/Office 扩展、长时掉电与跨平台认证，Gate 2–5 仍未完成。不得用于唯一副本或不可替代数据，也不得宣称“已认证”或“正式发布”。
 
 ### 1.1 近期进度快照（2026-08-12）
 
@@ -62,7 +62,7 @@
 | 4 | 补 Windows 路径预约规范化、运行中 pause/failure-injection 测试、取消桥接任务生命周期 | Gate 1 | R-005/R-006 已关闭 |
 | 5 | 抽取完整 `ConversionService` 和 `ReportService`；删除入口层重复编排 | Gate 1 | 核心生命周期完成；revalidate/export 归 Gate 2 |
 | 6 | Desktop 恢复横幅、批量取消/重试、实时队列读取 | Gate 1 / 2 | 启动恢复摘要、精确 partial 清理、SQLite 路径/状态/批次筛选、有界分页、实时读取/入队与稳定筛选批量动作完成；长列表虚拟化待完成 |
-| 7 | 版本化 migration、备份/恢复/完整性检查，形成 Windows 长期自用稳定版 | Gate 1 / 4 | SQLite + 应用状态整包完成；Desktop 维护 UI、干净机升级/回滚待完成 |
+| 7 | 版本化 migration、备份/恢复/完整性检查，形成 Windows 长期自用稳定版 | Gate 1 / 4 | SQLite + 应用状态整包及 Desktop 维护中心完成；干净机升级/回滚待完成 |
 | 8 | batch/selection、10k 混合负载、公平性/延迟/RSS/WAL；拆分 `runner.rs` | Gate 1 | batch/selection/bulk、公平窗口、多进程原子认领/强退恢复、10k mixed small-file、no-clobber commit 完成；高分辨率/PDF/Office 扩展与拆分待完成 |
 | 9 | Desktop Beta 闭环（文件夹、筛选虚拟化、进度、导出、shell 集成、无障碍） | Gate 2 | 未开始 / 部分 |
 | 10 | 引擎签名与格式认证、OS 强制隔离、跨平台、物理 10 GiB | Gate 3 | 未开始 / 部分 |
@@ -124,7 +124,7 @@
 - [x] 九任务结构化/图片/视频混合队列观测到两个真实 FFmpeg 进程并发，记录父进程/进程树 RSS 和 WAL 峰值。
 - [x] Ctrl+C 停止新任务准入并取消活跃进程树；`Validating → Cancelled` 有回归测试。
 - [x] 共享 `JobExecutionService::run_window`：CLI `jobs run` 与 Desktop `run_desktop_queue_window` 已委托；两种 pause 控制、失败收口、启动恢复摘要与单任务 Resume/Retry UI 已接入。
-- [x] 共享 `MaintenanceService`：SQLite status、完整性、在线备份、恢复预检/显式恢复、compact、migration 前快照与五份保留；`ApplicationStateService` 负责分散状态整包与 journal 回滚，Desktop 可取消维护入口待完成。
+- [x] 共享 `MaintenanceService`：SQLite status、完整性、在线备份、恢复预检/显式恢复、compact、migration 前快照与五份保留；`ApplicationStateService` 负责分散状态整包与 journal 回滚；Desktop 维护中心与转换/队列互斥，恢复经复制后二次预检、大小/BLAKE3 锁定并在下次数据库打开前再次核验执行。
 - [x] 所有 SQLite mutation 用 immediate transaction 串行化 writer；独立连接 reservation/transition race 有直接回归；所有输出族使用同一 no-clobber publish primitive。
 - [x] 持久 Batch/ordinal membership、任务幂等键、稳定 Selection Snapshot 与 Bulk Action/per-job outcome；CLI/Desktop 共用 `BulkJobService`，图片 batch 写入真实 batch ID。
 
@@ -236,7 +236,7 @@
 - [ ] 可复现 fixture 生成、许可证清单、hash manifest 和外部贡献样本流程。
 - [ ] changelog、迁移说明、issue/bug/RFC 模板、支持矩阵自动校验。
 - [ ] 本地显式导出的诊断包：默认脱敏，用户预览后才写出，不含内容和 metadata value。
-- [x] `MaintenanceService` 与 CLI：`maintenance status|backup|restore|integrity-check|compact|bundle-backup|bundle-restore`；SQLite migration 前自动快照，应用状态整包恢复先做逐成员与数据库预检，再以 journal 协调切换。Desktop 可取消维护仍列为 §20 后续。
+- [x] `MaintenanceService` 与 CLI/Desktop：`status|backup|restore|integrity-check|compact|bundle-backup|bundle-restore`；SQLite migration 前自动快照，应用状态整包恢复先做逐成员与数据库预检，再以 journal 协调切换；Desktop 恢复在下次启动、数据库打开前执行并回报成功/失败。
 
 ### 4.6 Phase 6/7：Beta 后能力
 
@@ -557,7 +557,7 @@ API 不直接接受宿主任意路径。请求引用预先授权的 workspace/ro
 - [x] 抽取 `JobExecutionService`、`ConversionService` 与 `ReportService`：CLI/Desktop 即时/队列共享 Planner、执行状态与 report-before-terminal；CLI 本地重复 Planner 已删除。
 - [x] 依次关闭 R-001 至 R-006：六项均已按顺序关闭，每项有失败注入、运行中或并发回归证据。
 - [x] 关闭 R-007：Desktop 队列窗口不再占走唯一 Store，运行中实时 list/paging/queue-only 与 lease 清理回归通过。
-- [x] 引入 `MaintenanceService` 与 `ApplicationStateService`：一致性检查、在线安全备份、恢复临时副本、migration 前快照、全状态 bundle、恢复 journal 与 safety bundle；Desktop 可取消入口待后续。
+- [x] 引入 `MaintenanceService` 与 `ApplicationStateService`：一致性检查、在线安全备份、恢复临时副本、migration 前快照、全状态 bundle、恢复 journal 与 safety bundle；Desktop 维护入口、执行互斥与启动前恢复闭环已完成。
 - [x] Desktop 启动恢复横幅、精确 staging 清理、批量取消/恢复/重试已完成。
 - [x] 多连接 reservation/transition/claim race 与提交前 destination race：独立连接、四 CLI 进程 exact-once、真实进程树强退恢复和统一 no-clobber 文件/目录 publish 回归通过；长时掉电 soak 留作 release evidence。
 - [x] 加入 batch/selection model、稳定分页与批量动作事件；保留策略/审计浏览器归 Gate 2。

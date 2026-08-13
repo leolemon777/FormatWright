@@ -1131,6 +1131,7 @@ dependencies = [
 name = "formatwright-desktop"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "formatwright-core",
  "serde",
  "serde_json",
