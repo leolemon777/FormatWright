@@ -25,6 +25,8 @@ Unix descendants inherit a cancellation boundary without unsafe hooks. Windows r
 
 - The Unix unit test starts a shell-owned descendant inside the adapter group and proves it cannot write a delayed survivor marker after termination.
 - The Windows FFmpeg sandbox records the exact CLI process and uses forced-crash injection to prove the process tree and partial output are gone before recovery.
+- A Windows unit fixture starts an actual PowerShell parent and descendant, waits for the descendant-ready marker, terminates the tree, and proves the descendant cannot write its delayed survivor marker; the owned partial directory is removed before return.
+- Queue cancellation uses structured concurrency: external cancellation signals the shared worker token and continues polling the window until worker drain and durable state transition complete. A 64-window isolated-runtime test proves no cancellation-link tasks accumulate.
 - Linux, macOS, and Windows workspace tests run in CI; Unix-specific tests compile and execute only on Unix runners.
 
 ## Revisit when

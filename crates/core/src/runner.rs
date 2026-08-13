@@ -2441,7 +2441,7 @@ mod tests {
     #[cfg(windows)]
     use std::path::PathBuf;
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     use std::process::Stdio;
     #[cfg(unix)]
     use std::time::Duration;
@@ -2449,12 +2449,18 @@ mod tests {
     use tempfile::tempdir;
     #[cfg(unix)]
     use tokio::process::Command;
+    #[cfg(windows)]
+    use tokio::process::Command;
     #[cfg(unix)]
     use tokio::time::sleep;
+    #[cfg(windows)]
+    use tokio_util::sync::CancellationToken;
     use uuid::Uuid;
 
     #[cfg(unix)]
     use super::terminate_process_tree;
+    #[cfg(windows)]
+    use super::{cleanup_partial, terminate_process_tree, wait_for_regular_file};
     use super::{
         cleanup_staged_output, enforce_network_policy, resolve_output_path,
         staged_output_candidates, staged_output_path,
@@ -2555,6 +2561,58 @@ mod tests {
             .expect("write Office staged state");
         assert!(cleanup_staged_output(&output, job_id).expect("clean Office stage"));
         assert!(!office_stage.exists());
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn windows_termination_reaches_descendants_and_cleans_partial_output() {
+        let directory = tempdir().expect("temporary directory");
+        let ready_marker = directory.path().join("descendant-ready");
+        let survivor_marker = directory.path().join("descendant-survived");
+        let partial = directory.path().join(".formatwright-partial-fixture");
+        fs::create_dir(&partial).expect("create staged directory");
+        fs::write(partial.join("page-000001.tmp"), b"partial").expect("write partial fixture");
+
+        let parent_script = r"
+$payload = '$ready=$env:FORMATWRIGHT_CHILD_READY; $survivor=$env:FORMATWRIGHT_SURVIVOR_MARKER; [IO.File]::WriteAllText($ready,''ready''); Start-Sleep -Milliseconds 1200; [IO.File]::WriteAllText($survivor,''survived'')'
+$encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($payload))
+Start-Process -FilePath $env:FORMATWRIGHT_POWERSHELL -ArgumentList @('-NoProfile','-NonInteractive','-EncodedCommand',$encoded) -WindowStyle Hidden
+Start-Sleep -Seconds 30
+";
+        let powershell =
+            PathBuf::from(std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into()))
+                .join("System32/WindowsPowerShell/v1.0/powershell.exe");
+        let mut command = Command::new(&powershell);
+        command
+            .args(["-NoProfile", "-NonInteractive", "-Command", parent_script])
+            .env("FORMATWRIGHT_POWERSHELL", &powershell)
+            .env("FORMATWRIGHT_CHILD_READY", &ready_marker)
+            .env("FORMATWRIGHT_SURVIVOR_MARKER", &survivor_marker)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true);
+        let mut child = command.spawn().expect("spawn Windows process-tree fixture");
+        assert!(
+            wait_for_regular_file(
+                &ready_marker,
+                &CancellationToken::new(),
+                std::time::Duration::from_secs(3),
+            )
+            .await,
+            "descendant did not start"
+        );
+
+        terminate_process_tree(&mut child).await;
+        cleanup_partial(&partial);
+        tokio::time::sleep(std::time::Duration::from_millis(1_500)).await;
+
+        assert!(child.try_wait().expect("query parent").is_some());
+        assert!(
+            !survivor_marker.exists(),
+            "a descendant escaped taskkill /T"
+        );
+        assert!(!partial.exists(), "cancelled partial output remained");
     }
 
     #[cfg(unix)]

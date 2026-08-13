@@ -28,7 +28,10 @@ The durable queue scheduling loop that previously lived only in the CLI now exec
 - A structured JSON→YAML queued job completes with `peak_active == 1` and a second window can run after resource release
 - `run_window_observed` invokes the report callback before the terminal SQLite transition and can persist a report file
 - `QueueWindowControl::pause_finish_current` leaves hydrated jobs `queued` without cancelling
+- An in-flight finish-current pause drains the admitted delayed worker, leaves the next job queued, and the next window completes it
 - `QueueWindowControl::pause_immediate` stops admission without mutating unstarted queued jobs; an admitted delayed worker cancelled in flight becomes recoverable `Interrupted / QUEUE_PAUSED_IMMEDIATE`, leaves no output, and completes after requeue in the next window
+- External `CancellationToken` cancellation after admission follows the same immediate path and returns only after the worker is drained and state is durable
+- Sixty-four completed `run_window` calls on an isolated Tokio runtime leave `num_alive_tasks() == 0`; the old detached cancellation linker would have accumulated one task per window
 - A blocked stale-fingerprint job releases its scheduler slot so a later valid job in the same window can complete
 - A plan with no steps transitions to `Failed` via `PLAN_INVALID`
 - An injected report-storage callback failure with two admitted workers cancels and drains the peer, marks both jobs `Interrupted / CONTROL_PLANE_FAILED`, leaves no staged output, permits requeue, and releases reservations after terminal cleanup
@@ -58,9 +61,11 @@ Known gaps: recovery banner and bulk retry UI are not implemented.
 - **finish-current**: cancel admission only; hydrated but not-yet-admitted jobs remain `queued`; active workers finish.
 - **immediate**: cancel admission and active workers; unstarted hydrated jobs remain `queued`; cancelled actives become `Interrupted / QUEUE_PAUSED_IMMEDIATE`, retain their output reservation, and may be resumed from Desktop for the next window.
 
+`run_window` bridges a CLI/external cancellation token with structured `tokio::select!`, not a detached task. When cancellation wins, it signals immediate pause and then continues polling the same window future until every admitted worker has terminated, scheduler resources are released, and SQLite state is updated.
+
 ## Remaining work
 
 - Desktop recovery banner and bulk retry (single-job Resume/Retry is implemented)
 - ConversionService extraction / remove CLI duplicate `prepare_conversion`
 - Multi-connection reservation races and 10k mixed workload certification
-- Cancellation-link task lifecycle and real subprocess in-flight pause evidence (R-006)
+- Cross-platform release certification of real adapter process trees (the Windows unit fixture and existing FFmpeg sandbox are development evidence)

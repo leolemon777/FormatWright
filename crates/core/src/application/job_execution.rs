@@ -113,14 +113,18 @@ impl JobExecutionService {
         let control = QueueWindowControl::new();
         if cancellation.is_cancelled() {
             control.pause_immediate();
-        } else {
-            let linked = control.clone();
-            tokio::spawn(async move {
-                cancellation.cancelled().await;
-                linked.pause_immediate();
-            });
+            return Self::run_window_observed(store, limit, parallel, control, |_, _| Ok(())).await;
         }
-        Self::run_window_observed(store, limit, parallel, control, |_, _| Ok(())).await
+        let linked = control.clone();
+        let execution = Self::run_window_observed(store, limit, parallel, control, |_, _| Ok(()));
+        tokio::pin!(execution);
+        tokio::select! {
+            result = &mut execution => result,
+            () = cancellation.cancelled() => {
+                linked.pause_immediate();
+                execution.await
+            }
+        }
     }
 
     /// Same as [`Self::run_window`], with explicit pause control and a report
@@ -655,6 +659,32 @@ mod tests {
             .expect("cancelled retry releases its reservation");
     }
 
+    #[test]
+    fn completed_windows_leave_no_cancellation_link_tasks() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("isolated runtime");
+        let metrics = runtime.metrics();
+        let mut store = SqliteJobStore::open_in_memory().expect("store");
+        for iteration in 0..64 {
+            let report = runtime
+                .block_on(JobExecutionService::run_window(
+                    &mut store,
+                    8,
+                    1,
+                    CancellationToken::new(),
+                ))
+                .expect("empty window");
+            assert_eq!(report.selected, 0);
+            assert_eq!(
+                metrics.num_alive_tasks(),
+                0,
+                "window {iteration} left a detached Tokio task"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn rejects_parallelism_outside_one_to_sixteen() {
         let mut store = SqliteJobStore::open_in_memory().expect("store");
@@ -886,6 +916,64 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn in_flight_finish_current_pause_drains_only_the_admitted_worker() {
+        let suite = tempdir().expect("suite");
+        let mut store = SqliteJobStore::open(suite.path().join("jobs.sqlite3")).expect("store");
+        let first_output = suite.path().join("first.yaml");
+        let first = queue_structured_job_with_test_controls(
+            &mut store,
+            &suite.path().join("first.json"),
+            &first_output,
+            Some(250),
+            false,
+        )
+        .await;
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        let second_output = suite.path().join("second.yaml");
+        let second = queue_structured_job(
+            &mut store,
+            &suite.path().join("second.json"),
+            &second_output,
+        )
+        .await;
+        let control = QueueWindowControl::new();
+        let pause = control.clone();
+        let pause_task = tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            pause.pause_finish_current();
+        });
+
+        let paused =
+            JobExecutionService::run_window_observed(&mut store, 8, 1, control, |_, _| Ok(()))
+                .await
+                .expect("finish-current window");
+        pause_task.await.expect("pause task");
+        assert!(paused.stopped);
+        assert_eq!(paused.completed, 1);
+        assert_eq!(paused.cancelled, 0);
+        assert_eq!(
+            store.get_job(first).expect("read").expect("exists").state,
+            JobState::Completed
+        );
+        assert_eq!(
+            store.get_job(second).expect("read").expect("exists").state,
+            JobState::Queued
+        );
+        assert!(first_output.is_file());
+        assert!(!second_output.exists());
+
+        let resumed = JobExecutionService::run_window(&mut store, 8, 1, CancellationToken::new())
+            .await
+            .expect("next window");
+        assert_eq!(resumed.completed, 1);
+        assert_eq!(
+            store.get_job(second).expect("read").expect("exists").state,
+            JobState::Completed
+        );
+        assert!(second_output.is_file());
+    }
+
+    #[tokio::test]
     async fn immediate_pause_also_leaves_unstarted_jobs_queued() {
         let suite = tempdir().expect("suite");
         let mut store = SqliteJobStore::open(suite.path().join("jobs.sqlite3")).expect("store");
@@ -957,6 +1045,44 @@ mod tests {
             JobState::Completed
         );
         assert!(output.is_file());
+    }
+
+    #[tokio::test]
+    async fn external_cancellation_after_admission_is_drained_before_return() {
+        let suite = tempdir().expect("suite");
+        let mut store = SqliteJobStore::open(suite.path().join("jobs.sqlite3")).expect("store");
+        let output = suite.path().join("external-cancel.yaml");
+        let job_id = queue_structured_job_with_test_controls(
+            &mut store,
+            &suite.path().join("external-cancel.json"),
+            &output,
+            Some(250),
+            false,
+        )
+        .await;
+        let cancellation = CancellationToken::new();
+        let trigger = cancellation.clone();
+        let cancellation_task = tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            trigger.cancel();
+        });
+
+        let report = JobExecutionService::run_window(&mut store, 8, 1, cancellation)
+            .await
+            .expect("cancelled window drains");
+        cancellation_task.await.expect("cancellation task");
+        assert!(report.stopped);
+        assert_eq!(report.cancelled, 1);
+        let details = store
+            .get_job_details(job_id)
+            .expect("read details")
+            .expect("details");
+        assert_eq!(details.job.state, JobState::Interrupted);
+        assert_eq!(
+            details.events.last().expect("last event").code,
+            "QUEUE_PAUSED_IMMEDIATE"
+        );
+        assert!(!output.exists());
     }
 
     #[tokio::test]
