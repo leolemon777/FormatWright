@@ -1,7 +1,7 @@
 # Windows Explorer Integration
 
-- Status: implemented; source/build verification complete; isolated installed smoke pending
-- Updated: 2026-08-12
+- Status: current-user installed smoke passes; clean-VM certification pending
+- Updated: 2026-08-13
 - Scope: Windows current-user NSIS package
 
 ## Contract
@@ -33,19 +33,20 @@ No target, preset, output, approval hash, or automatic execution can enter throu
 - The Desktop crate and official single-instance plugin compile with Rust 1.88 and pass Clippy with warnings denied.
 - Frontend TypeScript check, eight unit tests, and the production build pass with the FIFO consumer.
 - The full NSIS build preprocesses `windows-explorer-hooks.nsh` and publishes a fresh setup executable.
-- The final unsigned setup build completed with 279,369,285 bytes and SHA-256 `9ff39c4dfc888e544c911c5cb3b4d3a334f7721cb786e17e881f1993fa8cb21b`; generated `installer.nsi` includes the hook file and inserts both post-install and pre-uninstall macros.
+- The first real install exposed an NSIS quoting defect: the registry contained literal `$"` tokens. The hook now emits native NSIS quotes. The final rebuild containing the accessibility fixes is 279,373,840 bytes with SHA-256 `f5e18960f7e3f30c12d4b5d1b7a0f29ced88f5b72262f97c3821b37f4d0ea961`.
+- `scripts/test_windows_explorer_integration.ps1` installs silently under ignored artifacts, exercises the actual Windows shell verb, inspects the native window through UI Automation, and always restores pre-existing application state.
 
-These checks do not write the development machine's registry.
+The installed smoke writes only the two owned current-user keys plus a uniquely named sibling fixture and removes them in `finally`.
 
-## Required isolated installed smoke
+## Installed smoke result
 
-Run this only in a disposable Windows VM or an explicitly approved test profile:
+The 2026-08-13 current-user run passed all of these assertions:
 
 1. Snapshot both owned keys as absent, install the current unsigned candidate, and verify both keys and their quoting.
 2. Right-click a local Unicode/space-bearing file with the app closed; verify one window opens on Convert with the exact path and no job is created.
 3. With that instance open and a durable job running, invoke a second local file and then a directory; verify the same process is focused, the latest accepted path appears, and no active job is marked interrupted.
 4. Try a missing path, relative path, UNC share, and ordinary bare argument; verify none pre-fills Convert.
 5. Uninstall and verify both owned keys are absent while an unrelated sibling verb remains intact.
-6. Repeat on Windows 11 and record that the classic entry is under **Show more options**.
+6. Existing Roaming and Local application-state directories were isolated and restored with exact tree hashes; zero durable jobs were created.
 
-Until this matrix passes, the feature is implemented but not installed-environment certified.
+The observed cold file and hot directory paths both contained Unicode and spaces. The hot launch exited successfully while the original PID remained the only Desktop process. A missing path was rejected without replacing the selected path. Uninstall returned zero, removed both owned keys and the install root, and preserved the unrelated sibling verb. A clean offline VM and an explicit Windows 11 **Show more options** observation remain release-certification gates.

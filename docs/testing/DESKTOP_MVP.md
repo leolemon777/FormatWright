@@ -1,7 +1,7 @@
 # Desktop MVP Verification
 
 - Status: Phase 4 Windows development evidence
-- Updated: 2026-08-12
+- Updated: 2026-08-13
 
 ## Implemented surface
 
@@ -25,8 +25,8 @@ The Tauri 2 desktop application now invokes the same `formatwright-core::prepare
 - Engine Doctor performs local discovery only and does not download automatically.
 - Engine import selects a local manifest, runs the shared pack verifier off the UI thread, persists an immutable manifest-hash registry entry, re-verifies entries on startup, rejects ambiguous executable-name claims, and activates only exact verified paths. Unsigned or merely signature-bearing packs remain `Unverified` until a trusted release keyring exists.
 - The Windows installer owns classic Explorer entries for files and directories. They pass one quoted local absolute path behind the explicit `--shell-open` marker; the backend rejects missing, relative, UNC, device-namespace, and bare arguments, then only pre-fills Convert. The single-instance plugin is registered first, queues rapid follow-up paths for the existing window, and focuses it instead of opening a second recovery-capable process.
-- Simplified Chinese and English strings live outside React components. Basic/expert mode and language preferences persist in local storage.
-- Keyboard focus, text status in addition to color, reduced-motion CSS, high-contrast CSS, responsive layouts, labels, live regions, and alert roles cover the initial accessibility baseline.
+- Simplified Chinese and English strings live outside React components. Basic/expert mode and language preferences persist in versioned application settings; the document language and accessible navigation names update with the selected language.
+- Keyboard focus, a first-stop skip link, main/navigation landmarks, active/pressed state semantics, explicit path labels, bidi-isolated paths, text status in addition to color, reduced-motion CSS, high-contrast CSS, responsive layouts, live regions, and alert roles cover the automated accessibility baseline.
 - The bounded 10,000-job projection benchmark remains available as an opt-in Jobs diagnostic.
 
 ## Direct verification
@@ -38,11 +38,13 @@ The Tauri 2 desktop application now invokes the same `formatwright-core::prepare
 - `formatwright-desktop.exe` starts a native window titled `FormatWright`, remains responsive, and is then terminated by the harness.
 - Edge headless rendered the local production UI at 1440×1000. The captured Convert page, including native-picker affordances, was visually checked for navigation, hierarchy, clipping, contrast, disabled controls, bilingual typography, and responsive column boundaries.
 - The shared-core preparation path has a native Rust test that inspects JSON and produces a runnable YAML Plan, proving the desktop does not depend on CLI-only routing.
+- `scripts/test_windows_explorer_integration.ps1` passed a real current-user silent install, exact registry command quoting, actual Shell verb cold/hot launches, UIA path observation, one-PID forwarding, zero durable jobs, negative missing path, owned-key cleanup, unrelated-key preservation, install-root removal, and byte-for-byte state restoration.
+- `scripts/test_desktop_accessibility.ps1` passed against a real accessibility-instrumented Tauri/WebView2 debug build: 198 AX nodes, zero unnamed focusable controls, localized landmarks/skip link, first-Tab skip behavior, no horizontal document overflow at a 200% physical-equivalent viewport, Arabic/Hebrew/CJK path retention, reduced motion, forced colors/high contrast, and live Chinese→English language semantics. See `DESKTOP_ACCESSIBILITY.md`.
 
 Generated screenshots and application data are local development artifacts and are not committed.
 
 ## Evidence boundary and remaining work
 
-This is Windows development evidence, not Desktop Beta certification. The picker plugin, its least-privilege capabilities, frontend calls, TypeScript types, Rust registration, and native executable startup are verified. The Orca computer-use runtime was unavailable (`runtime_unavailable`), so automated interaction with the native picker and accessibility tree could not be performed in this run; keyboard/screen-reader behavior still needs a live assistive-technology pass.
+This is Windows development evidence, not Desktop Beta certification. The picker plugin, its least-privilege capabilities, frontend calls, TypeScript types, Rust registration, native executable startup, installed classic Shell path, Chromium accessibility tree, skip navigation, equivalent 200% layout and media preferences are verified. The Orca computer-use runtime was unavailable (`runtime_unavailable`), so Windows Narrator speech and physical-monitor/high-DPI behavior still need a live assistive-technology pass.
 
-Remaining Phase 4 work includes a certified-pack download/install experience backed by the Phase 5 signature keyring, an optional Windows 11 modern top-level menu extension, macOS/Linux integration, RTL UI fixtures, a live screen-reader pass, signed installers, installed cold/hot context-menu UIA smoke, and the three-minute first-user study. The classic Explorer menu normally appears under **Show more options** on Windows 11.
+Remaining Phase 4 work includes a certified-pack download/install experience backed by the Phase 5 signature keyring, an optional Windows 11 modern top-level menu extension, macOS/Linux integration, a live Narrator/VoiceOver/Orca pass, signed installers, clean-VM and physical-monitor validation, and the three-minute first-user study. The classic Explorer menu normally appears under **Show more options** on Windows 11.

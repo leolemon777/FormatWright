@@ -1,7 +1,7 @@
 # Windows Packaging Evidence
 
 - Status: unsigned self-contained release candidate; clean-machine certification pending
-- Updated: 2026-08-12
+- Updated: 2026-08-13
 - Host: Windows x86-64
 
 ## Configuration
@@ -30,12 +30,12 @@ The checksum generator hashes files in 1 MiB chunks, rejects missing/non-file in
 
 ## Current recorded build
 
-The final 2026-08-12 local rebuild after the Explorer/single-instance slice produced:
+The final 2026-08-13 local rebuild after correcting and install-testing the Explorer quote contract produced:
 
 | Artifact | Bytes | SHA-256 | Signature |
 |---|---:|---|---|
-| `FormatWright_0.1.0_x64-setup.exe` | 279,369,285 | `9ff39c4dfc888e544c911c5cb3b4d3a334f7721cb786e17e881f1993fa8cb21b` | NotSigned |
-| `formatwright-desktop.exe` | 15,524,352 | `3e7211258f72b8d85bca2e490017bcef0734ec5d26ce48e0b6a87d35964fa3d7` | NotSigned |
+| `FormatWright_0.1.0_x64-setup.exe` | 279,373,840 | `f5e18960f7e3f30c12d4b5d1b7a0f29ced88f5b72262f97c3821b37f4d0ea961` | NotSigned |
+| `formatwright-desktop.exe` | 15,537,152 | `2468875d39e724abbfe31c101c9b4e6ca6e72eedb90e56fbab865bebf4b0016d` | NotSigned |
 
 The embedded resource directory contains bundle hash `21f46f92f63ae9fc31a059b3139b4edcf27d2fa9b7b6522fc34f13cb43c48823`, PDF manifest hash `e047b5e81f3f8abbc2329a91850ec570a718c7d0aed84c1016b9feefc88e894b`, and Media manifest hash `5bc2643953fc4f80ed7ad5abd5e74a20b0270e67ab9e04c8aa527e6e4ddebc73`.
 
@@ -52,10 +52,10 @@ The installed `uninstall.exe /S` returned exit code 0. After two seconds, the ex
 
 The current unpackaged Release candidate was then started with embedded resources. Startup installed both `formatwright-pdf` and `formatwright-media` into the versioned application-data store and wrote active registry records. Exact-pack local E2E passed PDF→PNG, PDF→JPEG, GIF, and built-in structured conversion. See `docs/testing/WINDOWS_STARTER.md`.
 
-The 2026-08-12 final source build completed Release linking and NSIS bundling with the Explorer hooks and pinned single-instance plugin. Registry installation, cold launch, hot-instance forwarding, and uninstall cleanup remain an isolated-VM manual test and are not inferred from a successful bundle build.
+The 2026-08-13 current-user installed harness found and prevented a false-positive build-only result: literal NSIS `$"` tokens were present in the first registry command. After correction and rebuild, exact native quoting, actual Windows Shell verb cold launch, hot-instance forwarding, UIA path observation, zero-job behavior, negative missing-path handling, owned-key cleanup, unrelated-key preservation and install-root removal all passed. Both authoritative application-state roots were isolated and restored byte-for-byte. A clean offline VM remains required for release certification.
 
 ## Release boundary
 
-This is not signed-release or clean-machine certification evidence. Both generated PE files remain unsigned. The embedded packs are pinned and hash-verified but are still `Unverified`: trusted pack signatures/keyring, transitive engine SBOMs, final license/source-offer review, revocation and upgrade/rollback are incomplete. The final NSIS artifact has not yet been installed and exercised in an isolated clean VM.
+This is not signed-release or clean-machine certification evidence. Both generated PE files remain unsigned. The embedded packs are pinned and hash-verified but are still `Unverified`: trusted pack signatures/keyring, transitive engine SBOMs, final license/source-offer review, revocation and upgrade/rollback are incomplete. The final NSIS artifact passed an isolated current-user host smoke but has not yet been exercised in a clean offline VM.
 
 Public Beta remains blocked until offline clean-machine installed conversions pass, an authorized code-signing identity and timestamp service are configured, signatures are verified after bundling, engine supply-chain and upgrade/rollback matrices pass, R-001–R-007 close, and equivalent claimed-platform artifacts are built and tested.

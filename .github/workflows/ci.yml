@@ -95,6 +95,11 @@ jobs:
           pnpm check
           pnpm test
           pnpm build
+      - name: Build accessibility-instrumented desktop
+        run: pnpm --filter @formatwright/desktop tauri build -- --debug --no-bundle --config src-tauri/tauri.accessibility.conf.json
+      - name: Native WebView accessibility smoke
+        shell: pwsh
+        run: ./scripts/test_desktop_accessibility.ps1
       - name: Toolchain
         run: rustup component add rustfmt clippy
       - name: Repository contracts

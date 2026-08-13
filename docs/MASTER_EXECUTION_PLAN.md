@@ -1,8 +1,8 @@
 # FormatWright 完成清单、待完成清单与总执行计划
 
 - 状态：持续维护的执行主表
-- 版本：0.6
-- 更新：2026-08-12
+- 版本：0.7
+- 更新：2026-08-13
 - 产品范围与发布门槛来源：[`SPEC_PLAN.md`](../SPEC_PLAN.md)
 - 逐需求证据来源：[`docs/specs/TRACEABILITY.md`](specs/TRACEABILITY.md)
 - 活跃缺陷与关闭证据：[`docs/DEFECT_REGISTER.md`](DEFECT_REGISTER.md)
@@ -52,6 +52,8 @@
 - [x] 真实强退恢复：在 `Running` 且 partial 已写入时定向终止进程树；recover 精确中断 1 项并清理 1 个 partial，resume 后完成、源 hash 不变、独立 ffprobe 通过。
 - [x] 10,000 mixed release gate：9,600 JSON→YAML + 200 PNG→WebP + 200 MKV→MP4；首窗口 86/85/85，批次首启差 1.791s，P50/P95 137.533/193.880s，49.762 jobs/s，控制面 RSS 70,877,184、WAL 峰值 48,092,792 bytes；20 个合法格式内容变化逐项确认为 `INPUT_CHANGED`，修复后全部完成，10,000 输出/报告、400 独立 probe、0 partial。
 - [x] Windows NSIS 安装钩子注册文件/目录经典 Explorer 菜单，卸载精确删除自有键；显式 `--shell-open` 只接受现存本地盘绝对路径，仅预填转换页。官方单实例插件先于其他插件注册，已打开应用接收新路径并聚焦，不会启动第二套恢复流程。
+- [x] 真实 current-user 安装烟测发现并修复 NSIS `$\"` 字面量引用缺陷；实际 Windows Shell verb 的 Unicode/空格文件冷启动和目录热转发、单 PID、零持久任务、缺失路径拒绝、卸载自有键/安装根清理及无关 sibling 保留全部通过，应用状态逐文件哈希恢复。
+- [x] Desktop 自动可访问性基线：真实 Tauri/WebView2 Accessibility Tree 为 198 节点、0 个无名称可聚焦控件；首 Tab 跳到主内容、导航/模式状态语义、200% 物理等效视口无页面横向溢出、RTL 路径隔离、reduced-motion/高对比/forced-colors、中英文 `lang` 与可访问名称切换全部通过。
 
 **计划完成（按 Gate 顺序，尚未勾选为完成）：**
 
@@ -65,7 +67,7 @@
 | 6 | Desktop 恢复横幅、批量取消/重试、实时队列读取 | Gate 1 / 2 | 已完成：启动恢复摘要、精确 partial 清理、SQLite 路径/状态/批次筛选、100 条硬边界/离屏渲染列表、实时读取/入队与稳定筛选批量动作 |
 | 7 | 版本化 migration、备份/恢复/完整性检查，形成 Windows 长期自用稳定版 | Gate 1 / 4 | SQLite + 应用状态整包及 Desktop 维护中心完成；干净机升级/回滚待完成 |
 | 8 | batch/selection、10k 混合负载、公平性/延迟/RSS/WAL；拆分 `runner.rs` | Gate 1 | batch/selection/bulk、公平窗口、多进程原子认领/强退恢复、10k mixed small-file、no-clobber commit 完成；高分辨率/PDF/Office 扩展与拆分待完成 |
-| 9 | Desktop Beta 闭环（文件夹、筛选/列表、进度、导出、shell 集成、无障碍） | Gate 2 | 文件夹、筛选/有界列表、真实阶段/调度等待、安全导出、Windows 经典 Explorer 入口和单实例转发完成；引擎专用速率、Windows 11 现代顶层菜单、macOS/Linux 集成和完整无障碍待完成 |
+| 9 | Desktop Beta 闭环（文件夹、筛选/列表、进度、导出、shell 集成、无障碍） | Gate 2 | 文件夹、筛选/有界列表、真实阶段/调度等待、安全导出、Windows 经典 Explorer 已安装冷/热入口、单实例转发和 WebView 自动无障碍基线完成；引擎专用速率、Windows 11 现代顶层菜单、macOS/Linux 集成、现场读屏与用户研究待完成 |
 | 10 | 引擎签名与格式认证、OS 强制隔离、跨平台、物理 10 GiB | Gate 3 | 未开始 / 部分 |
 | 11 | 正式签名包、升级回滚、干净机 | Gate 4 | 未开始 / 部分 |
 | 12 | Private/Public Beta 用户验证；之后才开始 API / MCP / 自托管 | Gate 5 / 6 | 未开始 |
@@ -80,7 +82,7 @@
 | Phase 1 架构 Spike | Windows 已完成；跨平台部分完成 | 安全子进程、10 GiB 稀疏文件、partial/原子提交、SQLite 恢复、10k WebView 投影、引擎 Manifest | 物理 10 GiB、macOS/Linux 真实进程树与引擎分发认证 |
 | Phase 2 Core + CLI Alpha | Windows 自包含候选完成；认证未完成 | Inspect/Plan/Convert/Batch/Doctor/Jobs/Engines；Starter PDF/Media；能力门控；12 条工作流均有开发环境实验路径 | R-008/R-009 干净机/供应链关闭证据、完整语料与跨平台工作流认证 |
 | Phase 3 队列/恢复/质量 | Windows 开发门槛完成；长期认证待补 | 10k 持久/同质/混合真实转换、P50/P95/RSS/WAL/staging、20 项可恢复失败、确定性资源调度、公平批次窗口、多进程原子认领与真实强退恢复、CLI/Desktop 已委托 `JobExecutionService` | 高分辨率/PDF/Office 10k 扩展、长时掉电 soak、跨平台恢复 |
-| Phase 4 Desktop Beta | 部分完成 | Tauri/React、双语普通/专家模式、原生选择器、单文件与文件夹 mapping preview/磁盘预算/原子入队、Plan/Jobs/Reports/Doctor/Maintenance、启动恢复横幅与精确/手动 partial 清理、SQLite 状态/路径/批次浏览、100 条硬边界和离屏渲染、真实阶段/调度等待（不伪造速率/ETA）、持久队列窗口、可恢复 immediate pause、单任务与稳定筛选批量 Resume/Retry/Cancel、Windows 经典 Explorer 右键入口/单实例转发、引擎导入、可编辑预设 | 引擎专用可验证速率、Windows 11 现代顶层菜单、Finder/Linux 集成、完整可访问性与可用性 |
+| Phase 4 Desktop Beta | 部分完成 | Tauri/React、双语普通/专家模式、原生选择器、单文件与文件夹 mapping preview/磁盘预算/原子入队、Plan/Jobs/Reports/Doctor/Maintenance、启动恢复横幅与精确/手动 partial 清理、SQLite 状态/路径/批次浏览、100 条硬边界和离屏渲染、真实阶段/调度等待（不伪造速率/ETA）、持久队列窗口、可恢复 immediate pause、单任务与稳定筛选批量 Resume/Retry/Cancel、Windows 经典 Explorer 已安装冷/热入口与单实例转发、真实 WebView 自动无障碍/200%/RTL/高对比基线、引擎导入、可编辑预设 | 引擎专用可验证速率、Windows 11 现代顶层菜单、Finder/Linux 集成、现场读屏/物理高 DPI 与用户研究 |
 | Phase 5 安全与发布 | 部分完成 | fuzz、依赖审计、cargo-deny、SPDX SBOM、零套接字观测、离线 NSIS 安装烟测 | 当前源码重打包、可信签名/吊销、引擎 SBOM、OS 强制隔离、升级回滚、macOS/Linux 包 |
 | Phase 6 API/MCP | 未开始 | 规格方向已确定 | Axum、OpenAPI、SSE、Webhook、Worker、目录授权、MCP tools |
 | Phase 7 浏览器/企业 | 未开始 | 范围原则已确定 | WASM 小任务、企业策略/SSO/审计/离线升级 |
@@ -214,9 +216,9 @@
 - [x] 启动恢复横幅：展示启动中断恢复数、精确 staging 清理数、各持久状态与可恢复总数；可直接进入按状态/批次筛选的任务页处理。
 - [ ] 密码/秘密专用提示，不写入 Plan、日志、SQLite、历史或报告。
 - [x] 文件夹批次按预计输出、并发 staging 和安全余量做磁盘空间预检与提交前硬阻断；目标根可重新选择。
-- [x] Windows Explorer 经典右键菜单：文件/目录、显式本机绝对路径、单实例转发、窗口聚焦、卸载键清理；安装包宏构建验证完成。
+- [x] Windows Explorer 经典右键菜单：文件/目录、显式本机绝对路径、单实例转发、窗口聚焦、卸载键清理；真实 current-user 安装、实际 Shell verb 冷/热启动、UIA 路径、单 PID、零自动任务、负路径和精确卸载均通过。
 - [ ] Windows 11 现代顶层菜单扩展；macOS Finder Quick Action；Linux file-manager action。
-- [ ] 全键盘工作流、Narrator/VoiceOver/Orca 屏幕阅读器、高 DPI、200% zoom、RTL 文件名、对比度和 reduced-motion 测试。
+- [ ] 可访问性认证：自动 WebView 树、首 Tab 跳转、200% 物理等效视口、RTL 路径、对比度/forced-colors/reduced-motion 与中英文语义已通过；仍需全工作流键盘人工遍历、Windows Narrator、macOS VoiceOver、Linux Orca、物理 200% 高 DPI 与真实用户验证。
 - [ ] 24 人 Beta 可用性计划；80% 三分钟首次成功、Plan/Warning 理解率和恢复任务目标。
 
 ### 4.4 P1：引擎和格式认证

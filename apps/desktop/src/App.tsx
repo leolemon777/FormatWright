@@ -1291,13 +1291,14 @@ export default function App() {
   const activeProgress = activeJobId ? jobProgress[activeJobId] : undefined;
 
   return (
-    <main className="shell">
+    <div className="shell">
+      <a className="skip-link" href="#main-content">{copy.skipToContent}</a>
       <header className="topbar">
         <button className="brandmark" type="button" onClick={() => setTab("convert")} aria-label={copy.product}>FW</button>
         <div className="brandcopy"><strong>{copy.product}</strong><span>{copy.tagline}</span></div>
-        <nav aria-label="Primary">
+        <nav aria-label={copy.primaryNavigation}>
           {tabs.map((item) => (
-            <button key={item} type="button" className={tab === item ? "nav-active" : ""} onClick={() => setTab(item)}>
+            <button key={item} type="button" className={tab === item ? "nav-active" : ""} aria-current={tab === item ? "page" : undefined} onClick={() => setTab(item)}>
               {copy[item]}
             </button>
           ))}
@@ -1305,6 +1306,7 @@ export default function App() {
         <span className="local-badge">● {copy.localOnly}</span>
       </header>
 
+      <main id="main-content" tabIndex={-1}>
       {error && (
         <section className="error-banner" role="alert">
           <strong>{error.code ?? copy.stageError}{error.stage ? ` · ${error.stage}` : ""}</strong>
@@ -1331,7 +1333,7 @@ export default function App() {
       {tab === "convert" && (
         <section className="workspace">
           <div className="workspace-main">
-            <div className="convert-mode" role="group" aria-label={copy.convertMode}><button type="button" className={convertMode === "file" ? "selected" : ""} onClick={() => setConvertMode("file")}>{copy.singleFile}</button><button type="button" className={convertMode === "folder" ? "selected" : ""} onClick={() => setConvertMode("folder")}>{copy.folderBatch}</button></div>
+            <div className="convert-mode" role="group" aria-label={copy.convertMode}><button type="button" className={convertMode === "file" ? "selected" : ""} aria-pressed={convertMode === "file"} onClick={() => setConvertMode("file")}>{copy.singleFile}</button><button type="button" className={convertMode === "folder" ? "selected" : ""} aria-pressed={convertMode === "folder"} onClick={() => setConvertMode("folder")}>{copy.folderBatch}</button></div>
             {convertMode === "file" && <div className={`drop-zone ${dragging ? "is-dragging" : ""}`}>
               <span className="drop-icon" aria-hidden="true">↓</span>
               <div><h1>{copy.dropTitle}</h1><p>{copy.dropBody}</p></div>
@@ -1340,10 +1342,10 @@ export default function App() {
             {convertMode === "folder" && <section className="folder-intro"><p className="section-label">BOUNDED BATCH</p><h1>{copy.folderBatch}</h1><p>{copy.folderBatchHint}</p></section>}
 
             <div className="form-grid">
-              {convertMode === "file" && <label className="wide">{copy.inputPath}<span className="path-control"><input value={inputPath} onChange={(event) => selectInput(event.target.value)} placeholder="C:\\…\\input.ext" /><button className="secondary" type="button" onClick={chooseInput}>{copy.chooseFile}</button></span></label>}
-              {convertMode === "file" && <label className="wide">{copy.outputPath}<span className="path-control"><input value={outputPath} onChange={(event) => { setOutputPath(event.target.value); setPreview(null); }} placeholder="C:\\…\\output.ext" /><button className="secondary" type="button" disabled={!inputPath} onClick={chooseOutput}>{copy.chooseOutput}</button></span></label>}
-              {convertMode === "folder" && <label className="wide">{copy.inputFolder}<span className="path-control"><input value={folderInputRoot} onChange={(event) => { setFolderInputRoot(event.target.value); setFolderPreview(null); }} placeholder="C:\\…\\source-folder" /><button className="secondary" type="button" onClick={() => chooseFolderRoot("input")}>{copy.chooseInputFolder}</button></span></label>}
-              {convertMode === "folder" && <label className="wide">{copy.outputFolder}<span className="path-control"><input value={folderOutputRoot} onChange={(event) => { setFolderOutputRoot(event.target.value); setFolderPreview(null); }} placeholder="C:\\…\\output-folder" /><button className="secondary" type="button" onClick={() => chooseFolderRoot("output")}>{copy.chooseOutputFolder}</button></span></label>}
+              {convertMode === "file" && <div className="form-field wide"><label htmlFor="input-path">{copy.inputPath}</label><span className="path-control"><input id="input-path" dir="auto" spellCheck={false} value={inputPath} onChange={(event) => selectInput(event.target.value)} placeholder="C:\\…\\input.ext" /><button className="secondary" type="button" onClick={chooseInput}>{copy.chooseFile}</button></span></div>}
+              {convertMode === "file" && <div className="form-field wide"><label htmlFor="output-path">{copy.outputPath}</label><span className="path-control"><input id="output-path" dir="auto" spellCheck={false} value={outputPath} onChange={(event) => { setOutputPath(event.target.value); setPreview(null); }} placeholder="C:\\…\\output.ext" /><button className="secondary" type="button" disabled={!inputPath} onClick={chooseOutput}>{copy.chooseOutput}</button></span></div>}
+              {convertMode === "folder" && <div className="form-field wide"><label htmlFor="input-folder">{copy.inputFolder}</label><span className="path-control"><input id="input-folder" dir="auto" spellCheck={false} value={folderInputRoot} onChange={(event) => { setFolderInputRoot(event.target.value); setFolderPreview(null); }} placeholder="C:\\…\\source-folder" /><button className="secondary" type="button" onClick={() => chooseFolderRoot("input")}>{copy.chooseInputFolder}</button></span></div>}
+              {convertMode === "folder" && <div className="form-field wide"><label htmlFor="output-folder">{copy.outputFolder}</label><span className="path-control"><input id="output-folder" dir="auto" spellCheck={false} value={folderOutputRoot} onChange={(event) => { setFolderOutputRoot(event.target.value); setFolderPreview(null); }} placeholder="C:\\…\\output-folder" /><button className="secondary" type="button" onClick={() => chooseFolderRoot("output")}>{copy.chooseOutputFolder}</button></span></div>}
               <label>{copy.target}<select value={target} onChange={(event) => changeTarget(event.target.value)} disabled={convertMode === "file" && capabilityBusy}>
                 {targetOptions.map((value) => <option key={value} disabled={convertMode === "file" && capabilities ? !capabilities.routes[value]?.available : false}>{value}{convertMode === "file" && capabilities && !capabilities.routes[value]?.available ? ` — ${copy.unavailable}` : ""}</option>)}
               </select></label>
@@ -1376,16 +1378,16 @@ export default function App() {
             {convertMode === "file" && busy === "run" && activeProgress && <p className="execution-progress" role="status"><span>{copy.stageLabel}: {activeProgress.state}</span><span>{copy.elapsedLabel}: {elapsedProgressSeconds(activeProgress, progressClock)}s</span><span>{copy.rateEtaUnavailable}</span></p>}
 
             {convertMode === "file" && preview && <PlanView preview={preview} expert={expert} copy={copy} />}
-            {convertMode === "folder" && folderPreview && <section className="folder-preview"><div className="plan-heading"><div><p className="section-label">MAPPING PREVIEW</p><h2>{folderPreview.planned.toLocaleString()} {copy.filesReady}</h2></div><span className={`loss ${folderPreview.disk_budget.sufficient ? "loss-safe" : "loss-lossy"}`}>{folderPreview.disk_budget.sufficient ? copy.diskReady : copy.diskInsufficient}</span></div><p>{copy.folderPreviewSummary}: {folderPreview.discovered.toLocaleString()} {copy.discovered} · {folderPreview.planned.toLocaleString()} {copy.planned} · {folderPreview.skipped.toLocaleString()} {copy.skipped} · {copy.diskRequired} {formatBytes(folderPreview.disk_budget.required_bytes)} / {copy.diskAvailable} {formatBytes(folderPreview.disk_budget.available_bytes)}</p><div className="mapping-list">{folderPreview.sample.map((entry) => <div key={entry.input_path}><span>{entry.relative_input_path}</span><strong>→</strong><span>{entry.output_path}</span></div>)}</div>{folderPreview.truncated && <p className="typed-note">{copy.mappingTruncated}</p>}<p className="typed-note">{copy.previewExpires}: {new Date(folderPreview.expires_unix_ms).toLocaleTimeString()}</p></section>}
+            {convertMode === "folder" && folderPreview && <section className="folder-preview"><div className="plan-heading"><div><p className="section-label">MAPPING PREVIEW</p><h2>{folderPreview.planned.toLocaleString()} {copy.filesReady}</h2></div><span className={`loss ${folderPreview.disk_budget.sufficient ? "loss-safe" : "loss-lossy"}`}>{folderPreview.disk_budget.sufficient ? copy.diskReady : copy.diskInsufficient}</span></div><p>{copy.folderPreviewSummary}: {folderPreview.discovered.toLocaleString()} {copy.discovered} · {folderPreview.planned.toLocaleString()} {copy.planned} · {folderPreview.skipped.toLocaleString()} {copy.skipped} · {copy.diskRequired} {formatBytes(folderPreview.disk_budget.required_bytes)} / {copy.diskAvailable} {formatBytes(folderPreview.disk_budget.available_bytes)}</p><div className="mapping-list">{folderPreview.sample.map((entry) => <div key={entry.input_path}><bdi>{entry.relative_input_path}</bdi><strong>→</strong><bdi>{entry.output_path}</bdi></div>)}</div>{folderPreview.truncated && <p className="typed-note">{copy.mappingTruncated}</p>}<p className="typed-note">{copy.previewExpires}: {new Date(folderPreview.expires_unix_ms).toLocaleTimeString()}</p></section>}
           </div>
 
           <aside className="side-panel">
             <div className="mode-switch" role="group" aria-label={copy.mode}>
-              <button type="button" className={!expert ? "selected" : ""} onClick={() => setExpert(false)}>{copy.basic}</button>
-              <button type="button" className={expert ? "selected" : ""} onClick={() => setExpert(true)}>{copy.expert}</button>
+              <button type="button" className={!expert ? "selected" : ""} aria-pressed={!expert} onClick={() => setExpert(false)}>{copy.basic}</button>
+              <button type="button" className={expert ? "selected" : ""} aria-pressed={expert} onClick={() => setExpert(true)}>{copy.expert}</button>
             </div>
             <p className="section-label">{copy.recommended}</p>
-            <div className="recommendations">{recommendations.map((value, index) => { const candidate = capabilities?.routes[value]; return <button type="button" key={value} disabled={capabilities ? !candidate?.available : false} title={candidate?.message} onClick={() => changeTarget(value)}><span>{index + 1}</span>{value.toUpperCase()}{candidate && !candidate.available ? ` · ${copy.unavailable}` : ""}</button>; })}</div>
+            <div className="recommendations">{recommendations.map((value, index) => { const candidate = capabilities?.routes[value]; return <button type="button" key={value} aria-pressed={target === value} disabled={capabilities ? !candidate?.available : false} title={candidate?.message} onClick={() => changeTarget(value)}><span>{index + 1}</span>{value.toUpperCase()}{candidate && !candidate.available ? ` · ${copy.unavailable}` : ""}</button>; })}</div>
             <div className="privacy-card"><strong>LOCAL</strong><p>{copy.privacy}</p></div>
           </aside>
         </section>
@@ -1400,7 +1402,7 @@ export default function App() {
             </p>
           )}
           <div className="state-summary" aria-label={copy.stateSummary}>
-            {jobStateOptions.map((state) => <button type="button" key={state} className={jobStateFilter === state ? "selected" : ""} onClick={() => setJobStateFilter(jobStateFilter === state ? "" : state)}>{state} <strong>{recoveryCounts[state] ?? 0}</strong></button>)}
+            {jobStateOptions.map((state) => <button type="button" key={state} className={jobStateFilter === state ? "selected" : ""} aria-pressed={jobStateFilter === state} onClick={() => setJobStateFilter(jobStateFilter === state ? "" : state)}>{state} <strong>{recoveryCounts[state] ?? 0}</strong></button>)}
           </div>
           <div className="bulk-toolbar">
             <div className="job-filters">
@@ -1430,8 +1432,8 @@ export default function App() {
                 return (
                   <article key={job.id} role="listitem" {...jobListAriaAttributes(jobOffset, index, jobTotal)}>
                     <div>
-                      <strong title={job.output_path}>{job.output_path}</strong>
-                      <small title={job.input_path}>{job.input_path}</small>
+                      <strong title={job.output_path}><bdi>{job.output_path}</bdi></strong>
+                      <small title={job.input_path}><bdi>{job.input_path}</bdi></small>
                       {liveProgress && <span className="job-progress"><span>{copy.stageLabel}: {liveState}</span>{waitReason && <span>{copy.waitingFor}: {waitReason}</span>}<span>{copy.elapsedLabel}: {elapsedProgressSeconds(liveProgress, progressClock)}s</span>{liveProgress.eta_milliseconds == null && <span>{copy.rateEtaUnavailable}</span>}</span>}
                     </div>
                     <span className={`status status-${liveState}`}>{liveState}</span>
@@ -1472,7 +1474,7 @@ export default function App() {
         <section className="page-card">
           <div className="page-heading"><div><p className="section-label">LOCAL INVENTORY</p><h1>{copy.doctor}</h1><p>{copy.doctorHint}</p></div><div className="heading-actions"><button className="secondary" type="button" disabled={engineBusy} onClick={importEnginePack}>{engineBusy ? copy.verifyingEnginePack : copy.importEnginePack}</button><button type="button" onClick={refreshEngines}>{copy.refresh}</button></div></div>
           {!doctor ? <p className="empty">{copy.importHint}</p> : <div className="engine-grid">{Object.entries(doctor.engines).map(([name, health]) => <article key={name}><strong>{name}</strong><span className={`status ${health.available ? "status-completed" : "status-failed"}`}>{health.available ? `✓ ${copy.available}` : `× ${copy.unavailable}`}</span><small>{health.identity?.version ?? health.message}</small></article>)}</div>}
-          <div className="pack-section"><p className="section-label">{copy.importedPacks}</p>{enginePacks.length === 0 ? <p className="empty">{copy.noImportedPacks}</p> : <div className="pack-list">{enginePacks.map((pack) => <article key={pack.manifest_sha256 ?? pack.manifest_path}><div><strong>{pack.engine_id ?? copy.invalidPack} {pack.version ?? ""}</strong><small>{pack.manifest_path}</small><small>{pack.executable_names.join(", ") || pack.message}</small></div><span className={`status ${pack.valid ? "status-warning" : "status-failed"}`}>{pack.valid ? (pack.signature_present ? copy.signaturePending : copy.unverified) : copy.invalidPack}</span></article>)}</div>}</div>
+          <div className="pack-section"><p className="section-label">{copy.importedPacks}</p>{enginePacks.length === 0 ? <p className="empty">{copy.noImportedPacks}</p> : <div className="pack-list">{enginePacks.map((pack) => <article key={pack.manifest_sha256 ?? pack.manifest_path}><div><strong>{pack.engine_id ?? copy.invalidPack} {pack.version ?? ""}</strong><small><bdi>{pack.manifest_path}</bdi></small><small>{pack.executable_names.join(", ") || pack.message}</small></div><span className={`status ${pack.valid ? "status-warning" : "status-failed"}`}>{pack.valid ? (pack.signature_present ? copy.signaturePending : copy.unverified) : copy.invalidPack}</span></article>)}</div>}</div>
         </section>
       )}
 
@@ -1513,7 +1515,8 @@ export default function App() {
           <p>{copy.privacy}</p><p>{copy.accessibility}</p>
         </section>
       )}
-    </main>
+      </main>
+    </div>
   );
 }
 
@@ -1528,7 +1531,7 @@ function ChangeList({ title, values, symbol }: { title: string; values: string[]
 function ReportView({ report, copy }: { report: ValidationReport; copy: (typeof messages)[Language] }) {
   const passed = report.checks.filter((check) => check.required && check.status === "pass").length;
   const required = report.checks.filter((check) => check.required).length;
-  return <div className="report-body"><div className="report-summary"><div><span>{copy.requiredChecks}</span><strong>{passed}/{required}</strong></div><div><span>{copy.openPathHint}</span><strong>{report.output.display_path ?? "—"}</strong></div></div><div className="check-list">{report.checks.map((check) => <article key={check.code}><span aria-hidden="true">{check.status === "pass" ? "✓" : check.status === "fail" ? "×" : "!"}</span><div><strong>{check.code}</strong><small>{check.message}</small></div><em>{check.status}</em></article>)}</div></div>;
+  return <div className="report-body"><div className="report-summary"><div><span>{copy.requiredChecks}</span><strong>{passed}/{required}</strong></div><div><span>{copy.openPathHint}</span><strong><bdi>{report.output.display_path ?? "—"}</bdi></strong></div></div><div className="check-list">{report.checks.map((check) => <article key={check.code}><span aria-hidden="true">{check.status === "pass" ? "✓" : check.status === "fail" ? "×" : "!"}</span><div><strong>{check.code}</strong><small>{check.message}</small></div><em>{check.status}</em></article>)}</div></div>;
 }
 
 function formatBytes(bytes: number) {
