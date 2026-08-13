@@ -13,13 +13,13 @@ use formatwright_core::{
     ApplicationSettings, ApplicationSettingsService, ApplicationStateLayout,
     ApplicationStateService, BatchRecord, BulkActionReport, BulkJobAction, BulkJobService,
     CapabilitySnapshot, CompactReport, ConversionPreset, ConversionService, DoctorReport,
-    EngineDiscoveryPolicy, EngineRegistryIdentity, IntegrityReport, JobExecutionService,
-    JobQueryPage, JobRecord, JobSelectionQuery, JobState, JobStateCount, MaintenanceService,
-    MaintenanceStatus, PRESET_SCHEMA_VERSION, Plan, PlanRequest, PresetLibrary, Probe,
-    QueueRunReport, QueueWindowControl, ReportService, SelectionSnapshot, SqliteJobStore,
-    StateBundleBackupReport, StateBundleOptions, StateBundlePreflightReport, ValidationReport,
-    VerifiedEnginePack, activate_engine_pack, capability_snapshot_for_input, cleanup_staged_output,
-    prepare_conversion,
+    EngineDiscoveryPolicy, EngineRegistryIdentity, FolderBatchService, FolderMappingEntry,
+    IntegrityReport, JobCreateRequest, JobExecutionService, JobQueryPage, JobRecord,
+    JobSelectionQuery, JobState, JobStateCount, MaintenanceService, MaintenanceStatus,
+    PRESET_SCHEMA_VERSION, Plan, PlanRequest, PresetLibrary, Probe, QueueRunReport,
+    QueueWindowControl, ReportService, SelectionSnapshot, SqliteJobStore, StateBundleBackupReport,
+    StateBundleOptions, StateBundlePreflightReport, ValidationReport, VerifiedEnginePack,
+    activate_engine_pack, capability_snapshot_for_input, cleanup_staged_output, prepare_conversion,
 };
 use queue_bridge::{DEFAULT_BATCH_JOBS, DEFAULT_BENCHMARK_JOBS, QueueBatchIter};
 use serde::{Deserialize, Serialize};
@@ -41,6 +41,7 @@ struct DesktopState {
     engine_store_directory: PathBuf,
     startup_recovery: DesktopStartupRecovery,
     operation_gate: Mutex<DesktopOperationGate>,
+    folder_previews: Mutex<HashMap<Uuid, DesktopFolderPreviewCache>>,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -85,6 +86,52 @@ struct DesktopPendingRestore {
 
 const DESKTOP_PENDING_RESTORE_SCHEMA_VERSION: u16 = 1;
 const DESKTOP_PENDING_RESTORE_FILE: &str = ".desktop-state-restore.json";
+const DESKTOP_FOLDER_PREVIEW_TTL: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+const DESKTOP_FOLDER_PREVIEW_LIMIT: usize = 32;
+const DESKTOP_FOLDER_PREVIEW_SAMPLE: usize = 100;
+const DESKTOP_FOLDER_PLAN_LIMIT: usize = 10_000;
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopFolderPreviewRequest {
+    input_root: PathBuf,
+    output_root: PathBuf,
+    target_format: String,
+    quality: Option<u8>,
+    width: Option<u32>,
+    dpi: Option<u16>,
+    color_mode: Option<String>,
+    preserve_all_streams: Option<bool>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct DesktopFolderPreview {
+    preview_id: Uuid,
+    created_unix_ms: i64,
+    expires_unix_ms: i64,
+    input_root: PathBuf,
+    output_root: PathBuf,
+    target_format: String,
+    discovered: usize,
+    planned: usize,
+    skipped: usize,
+    sample: Vec<FolderMappingEntry>,
+    truncated: bool,
+}
+
+#[derive(Debug)]
+struct DesktopFolderPreviewCache {
+    preview: DesktopFolderPreview,
+    requests: Vec<JobCreateRequest>,
+    output_directories: Vec<PathBuf>,
+    created: Instant,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct DesktopFolderQueueResult {
+    batch: BatchRecord,
+    queued: usize,
+}
 
 struct DesktopOperationLease<'a> {
     gate: &'a Mutex<DesktopOperationGate>,
@@ -439,6 +486,197 @@ async fn queue_desktop_conversion(
     };
     let _ = window.emit("formatwright://job-updated", &job);
     Ok(job)
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_lines)]
+async fn preview_desktop_folder_batch(
+    state: tauri::State<'_, DesktopState>,
+    request: DesktopFolderPreviewRequest,
+) -> Result<DesktopFolderPreview, String> {
+    let _operation = acquire_active_operation(&state.operation_gate)?;
+    let target = request.target_format.trim().to_ascii_lowercase();
+    let mapping = tokio::task::spawn_blocking({
+        let input_root = request.input_root.clone();
+        let output_root = request.output_root.clone();
+        let target = target.clone();
+        move || FolderBatchService::preview_mapping(input_root, output_root, &target)
+    })
+    .await
+    .map_err(|error| format!("folder-enumeration worker failed: {error}"))?
+    .map_err(serialize_error)?;
+    if mapping.mappings.len() > DESKTOP_FOLDER_PLAN_LIMIT {
+        return Err(serialize_error(formatwright_core::FormatWrightError::new(
+            formatwright_core::ErrorCode::ResourceExhausted,
+            formatwright_core::Stage::Plan,
+            "Desktop folder preview exceeds the 10,000-Plan limit",
+            "Split the source into smaller folders before previewing.",
+        )));
+    }
+
+    let (requests, skipped, output_directories) = async {
+        let mut requests = Vec::new();
+        let mut skipped = mapping.skipped;
+        let mut output_directories = HashSet::new();
+        for entry in &mapping.mappings {
+            let plan_request = PlanRequest {
+                target_format: target.clone(),
+                output_path: Some(entry.output_path.clone()),
+                preserve_all_streams: request.preserve_all_streams.unwrap_or(true),
+                quality: request.quality,
+                width: request.width,
+                dpi: request.dpi,
+                color_mode: request.color_mode.clone(),
+                ..PlanRequest::default()
+            };
+            match prepare_conversion(&entry.input_path, &plan_request).await {
+                Ok((probe, plan, _)) => {
+                    if entry.output_path.exists() {
+                        return Err(serialize_error(formatwright_core::FormatWrightError::new(
+                            formatwright_core::ErrorCode::OutputConflict,
+                            formatwright_core::Stage::Plan,
+                            format!(
+                                "Folder batch output already exists: {}",
+                                entry.output_path.display()
+                            ),
+                            "Choose an empty output root or move the existing output.",
+                        )));
+                    }
+                    if let Some(parent) = entry.output_path.parent() {
+                        output_directories.insert(parent.to_path_buf());
+                    }
+                    requests.push(JobCreateRequest {
+                        input_path: probe.artifact.canonical_path,
+                        output_path: entry.output_path.clone(),
+                        plan,
+                    });
+                }
+                Err(_) => skipped = skipped.saturating_add(1),
+            }
+        }
+        Ok::<_, String>((requests, skipped, output_directories))
+    }
+    .await?;
+    if requests.is_empty() {
+        return Err(serialize_error(formatwright_core::FormatWrightError::new(
+            formatwright_core::ErrorCode::Unsupported,
+            formatwright_core::Stage::Plan,
+            "No file in the selected folder can use this conversion route",
+            "Choose another target or a folder containing supported inputs.",
+        )));
+    }
+    let planned_outputs = requests
+        .iter()
+        .map(|candidate| candidate.output_path.clone())
+        .collect::<HashSet<_>>();
+    let sample = mapping
+        .mappings
+        .into_iter()
+        .filter(|entry| planned_outputs.contains(&entry.output_path))
+        .take(DESKTOP_FOLDER_PREVIEW_SAMPLE)
+        .collect::<Vec<_>>();
+    let now = unix_ms_now();
+    let preview = DesktopFolderPreview {
+        preview_id: Uuid::new_v4(),
+        created_unix_ms: now,
+        expires_unix_ms: now.saturating_add(
+            i64::try_from(DESKTOP_FOLDER_PREVIEW_TTL.as_millis()).unwrap_or(i64::MAX),
+        ),
+        input_root: mapping.input_root,
+        output_root: mapping.output_root,
+        target_format: target,
+        discovered: mapping.discovered,
+        planned: requests.len(),
+        skipped,
+        truncated: requests.len() > sample.len(),
+        sample,
+    };
+    let cache = DesktopFolderPreviewCache {
+        preview: preview.clone(),
+        requests,
+        output_directories: output_directories.into_iter().collect(),
+        created: Instant::now(),
+    };
+    let mut previews = lock(&state.folder_previews)?;
+    previews.retain(|_, value| value.created.elapsed() <= DESKTOP_FOLDER_PREVIEW_TTL);
+    if previews.len() >= DESKTOP_FOLDER_PREVIEW_LIMIT
+        && let Some(oldest) = previews
+            .iter()
+            .min_by_key(|(_, value)| value.created)
+            .map(|(id, _)| *id)
+    {
+        previews.remove(&oldest);
+    }
+    previews.insert(preview.preview_id, cache);
+    Ok(preview)
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+fn queue_desktop_folder_batch(
+    state: tauri::State<'_, DesktopState>,
+    preview_id: String,
+    batch_name: Option<String>,
+) -> Result<DesktopFolderQueueResult, String> {
+    let _operation = acquire_active_operation(&state.operation_gate)?;
+    let preview_id = Uuid::parse_str(&preview_id).map_err(|error| error.to_string())?;
+    let cache = lock(&state.folder_previews)?
+        .remove(&preview_id)
+        .ok_or_else(|| "folder preview is missing, expired, or already queued".to_owned())?;
+    if cache.created.elapsed() > DESKTOP_FOLDER_PREVIEW_TTL {
+        return Err("folder preview expired; preview the mapping again".to_owned());
+    }
+    for request in &cache.requests {
+        if request.output_path.exists() {
+            return Err(serialize_error(formatwright_core::FormatWrightError::new(
+                formatwright_core::ErrorCode::OutputConflict,
+                formatwright_core::Stage::Store,
+                format!(
+                    "Folder batch output appeared after preview: {}",
+                    request.output_path.display()
+                ),
+                "Preview the folder mapping again and resolve the output conflict.",
+            )));
+        }
+    }
+    let mut created_directories = Vec::new();
+    let mut directories = cache.output_directories;
+    directories.sort_by_key(|path| path.components().count());
+    for directory in directories {
+        if !directory.exists() {
+            std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+            created_directories.push(directory);
+        }
+    }
+    let default_name = format!(
+        "Folder: {} -> {}",
+        cache
+            .preview
+            .input_root
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("files"),
+        cache.preview.target_format
+    );
+    let result = lock(&state.store)?
+        .create_queued_batch(
+            batch_name.as_deref().unwrap_or(&default_name),
+            &cache.requests,
+        )
+        .map_err(serialize_error);
+    let batch = match result {
+        Ok(batch) => batch,
+        Err(error) => {
+            for directory in created_directories.into_iter().rev() {
+                let _ = std::fs::remove_dir(directory);
+            }
+            return Err(error);
+        }
+    };
+    Ok(DesktopFolderQueueResult {
+        batch,
+        queued: cache.requests.len(),
+    })
 }
 
 async fn run_queue_window_on_database<F>(
@@ -885,6 +1123,14 @@ fn lock<T>(mutex: &Mutex<T>) -> Result<std::sync::MutexGuard<'_, T>, String> {
     mutex
         .lock()
         .map_err(|_| "desktop state lock was poisoned".to_owned())
+}
+
+fn unix_ms_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|duration| i64::try_from(duration.as_millis()).ok())
+        .unwrap_or_default()
 }
 
 #[allow(clippy::needless_pass_by_value)]
@@ -1465,6 +1711,7 @@ pub fn run() {
                 engine_store_directory,
                 startup_recovery,
                 operation_gate: Mutex::new(DesktopOperationGate::default()),
+                folder_previews: Mutex::new(HashMap::new()),
             });
             Ok(())
         })
@@ -1477,6 +1724,8 @@ pub fn run() {
             preview_conversion,
             run_desktop_conversion,
             queue_desktop_conversion,
+            preview_desktop_folder_batch,
+            queue_desktop_folder_batch,
             run_desktop_queue_window,
             pause_desktop_queue_window,
             cancel_desktop_queue_window,

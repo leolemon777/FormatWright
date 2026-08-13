@@ -23,7 +23,8 @@ pub mod validation;
 mod workflow;
 
 pub use application::{
-    BulkJobService, ConversionRunResult, ConversionService, JobExecutionService, QueueRunReport,
+    BulkJobService, ConversionRunResult, ConversionService, FolderBatchService, FolderMappingEntry,
+    FolderMappingPlan, JobExecutionService, MAX_FOLDER_BATCH_FILES, QueueRunReport,
     QueueWindowControl, ReportService,
 };
 pub use application_state::{

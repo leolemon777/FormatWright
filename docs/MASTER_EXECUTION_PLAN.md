@@ -79,7 +79,7 @@
 | Phase 1 架构 Spike | Windows 已完成；跨平台部分完成 | 安全子进程、10 GiB 稀疏文件、partial/原子提交、SQLite 恢复、10k WebView 投影、引擎 Manifest | 物理 10 GiB、macOS/Linux 真实进程树与引擎分发认证 |
 | Phase 2 Core + CLI Alpha | Windows 自包含候选完成；认证未完成 | Inspect/Plan/Convert/Batch/Doctor/Jobs/Engines；Starter PDF/Media；能力门控；12 条工作流均有开发环境实验路径 | R-008/R-009 干净机/供应链关闭证据、完整语料与跨平台工作流认证 |
 | Phase 3 队列/恢复/质量 | Windows 开发门槛完成；长期认证待补 | 10k 持久/同质/混合真实转换、P50/P95/RSS/WAL/staging、20 项可恢复失败、确定性资源调度、公平批次窗口、多进程原子认领与真实强退恢复、CLI/Desktop 已委托 `JobExecutionService` | 高分辨率/PDF/Office 10k 扩展、长时掉电 soak、跨平台恢复 |
-| Phase 4 Desktop Beta | 部分完成 | Tauri/React、双语普通/专家模式、原生选择器、Plan/Jobs/Reports/Doctor、启动恢复横幅与精确 partial 清理、SQLite 状态/路径/批次浏览和分页、持久队列窗口、可恢复 immediate pause、单任务与稳定筛选批量 Resume/Retry/Cancel、引擎导入、可编辑预设 | 文件夹入口、长列表虚拟化、系统右键/Finder/Linux 集成、完整可访问性与可用性 |
+| Phase 4 Desktop Beta | 部分完成 | Tauri/React、双语普通/专家模式、原生选择器、单文件与文件夹 mapping preview/原子入队、Plan/Jobs/Reports/Doctor/Maintenance、启动恢复横幅与精确 partial 清理、SQLite 状态/路径/批次浏览和分页、持久队列窗口、可恢复 immediate pause、单任务与稳定筛选批量 Resume/Retry/Cancel、引擎导入、可编辑预设 | 磁盘空间预检、长列表虚拟化、系统右键/Finder/Linux 集成、完整可访问性与可用性 |
 | Phase 5 安全与发布 | 部分完成 | fuzz、依赖审计、cargo-deny、SPDX SBOM、零套接字观测、离线 NSIS 安装烟测 | 当前源码重打包、可信签名/吊销、引擎 SBOM、OS 强制隔离、升级回滚、macOS/Linux 包 |
 | Phase 6 API/MCP | 未开始 | 规格方向已确定 | Axum、OpenAPI、SSE、Webhook、Worker、目录授权、MCP tools |
 | Phase 7 浏览器/企业 | 未开始 | 范围原则已确定 | WASM 小任务、企业策略/SSO/审计/离线升级 |
@@ -570,7 +570,7 @@ API 不直接接受宿主任意路径。请求引用预先授权的 workspace/ro
 
 ### Gate 2：Desktop Beta 功能闭环（1–2 周）
 
-- [ ] 文件夹添加与 mapping preview；稳定 selection、SQLite 路径/状态/批次筛选和分页已完成，继续长列表虚拟化。
+- [x] 文件夹添加与 mapping preview：Core 有界递归枚举、不跟随链接、输入/输出根互斥、相对目录保留与确定性重名消歧；Desktop 最多生成 10,000 个不可变 Plan，只展示前 100 条映射，确认后原子提交批次/任务/预约/队列事件。
 - [ ] 阶段/速度/ETA/调度原因；启动恢复横幅与精确 partial cleanup 已完成。
 - [ ] 报告/配方导出、revalidate、打开输出；磁盘空间预检。
 - [ ] Windows Explorer 集成；macOS/Linux 入口只在对应平台通过后启用。
@@ -747,7 +747,7 @@ API 不直接接受宿主任意路径。请求引用预先授权的 workspace/ro
 | Runner/Commit | 拆分进程边界、adapter、validator、commit；目的路径竞态 | 平台 containment、磁盘/设备变化处理 | 特殊路径、磁盘满、removable、强退、原子目录提交 |
 | Validation/Report | 统一报告原子落盘顺序、revalidate、redacted export | visual diff 校准、报告 migration/索引 | 所有成功任务 100% 有报告；Required Unknown 不作 Pass |
 | Engine Distribution | 关闭 R-008/R-009；Starter pack、版本化 store、精确 locator、能力门控、许可证/SBOM | 多版本并存、离线更新、回滚和安全公告 | 无系统工具干净机真实转换；污染 PATH、篡改、撤销、降级、半升级负向测试 |
-| Desktop | 恢复横幅、retry/resume、SQLite 路径/状态/批次筛选和分页已完成；继续文件夹、虚拟化、实时进度 | shell integration、可访问性、稳定设置迁移 | 键盘/屏幕阅读器/高 DPI；关闭重启不丢任务 |
+| Desktop | 恢复横幅、retry/resume、文件夹 mapping preview/原子入队、SQLite 路径/状态/批次筛选和分页已完成；继续磁盘预检、虚拟化、实时进度 | shell integration、可访问性、稳定设置迁移 | 键盘/屏幕阅读器/高 DPI；关闭重启不丢任务 |
 | Packaging/Update | Windows 干净机、签名、升级前备份、回滚 | macOS/Linux 包、差分更新（有证据后） | 安装/升级/回滚/卸载矩阵和 release evidence bundle |
 | Diagnostics/Privacy | 本地有界日志、脱敏诊断包、显式导出 | 可选本地统计；遥测仍默认关闭 | 自动扫描诊断包不含文件内容、秘密和 metadata value |
 | Server/MCP | Public Beta 后才开始 | 授权根、auth、SSE/Webhook、无特权 Worker、MCP confirmation | 负向授权、目录越权、覆盖和 shell 注入测试 |
@@ -787,7 +787,7 @@ API 不直接接受宿主任意路径。请求引用预先授权的 workspace/ro
 ### 第 5–6 周：Desktop 长期自用闭环
 
 - [x] 恢复横幅、精确 partial 清理、批量 retry/resume/cancel、路径/状态/批次筛选、稳定 selection 与有界分页已完成；继续虚拟化和实时进度。
-- 文件夹 mapping preview、磁盘空间预检、打开输出/导出报告、partial cleanup。
+- [x] 文件夹 mapping preview 与原子批次入队；继续磁盘空间预检、打开输出/导出报告。
 - Windows Explorer 入口、键盘/UIA/高 DPI/RTL 回归。
 
 退出：日常高频流程无需 CLI 补救；关闭/重启/升级不丢任务。

@@ -1386,12 +1386,8 @@ async fn run_image_batch(
             .chars()
             .take(120)
             .collect::<String>();
-        let batch = store.create_batch(&batch_name, &requests)?;
+        let batch = store.create_queued_batch(&batch_name, &requests)?;
         let jobs = store.list_batch_jobs_page(batch.id, requests.len(), 0)?;
-        store.queue_jobs(
-            &jobs.iter().map(|job| job.id).collect::<Vec<_>>(),
-            "BATCH_QUEUED",
-        )?;
         (Some(batch.id), jobs)
     };
     let cancellation = CancellationToken::new();

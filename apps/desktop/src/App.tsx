@@ -148,6 +148,30 @@ type CompactReport = {
   integrity: IntegrityReport;
 };
 
+type FolderMappingEntry = {
+  input_path: string;
+  relative_input_path: string;
+  output_path: string;
+};
+
+type FolderPreview = {
+  preview_id: string;
+  expires_unix_ms: number;
+  input_root: string;
+  output_root: string;
+  target_format: string;
+  discovered: number;
+  planned: number;
+  skipped: number;
+  sample: FolderMappingEntry[];
+  truncated: boolean;
+};
+
+type FolderQueueResult = {
+  batch: BatchRecord;
+  queued: number;
+};
+
 type DoctorReport = {
   engines: Record<
     string,
@@ -267,6 +291,11 @@ export default function App() {
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [tab, setTab] = useState<Tab>("convert");
   const [inputPath, setInputPath] = useState("");
+  const [convertMode, setConvertMode] = useState<"file" | "folder">("file");
+  const [folderInputRoot, setFolderInputRoot] = useState("");
+  const [folderOutputRoot, setFolderOutputRoot] = useState("");
+  const [folderPreview, setFolderPreview] = useState<FolderPreview | null>(null);
+  const [folderBusy, setFolderBusy] = useState<"preview" | "queue" | null>(null);
   const [outputPath, setOutputPath] = useState("");
   const [target, setTarget] = useState("webp");
   const [quality, setQuality] = useState("85");
@@ -458,6 +487,7 @@ export default function App() {
     setTarget(next);
     setOutputPath(suggestedOutput(inputPath, next));
     setPreview(null);
+    setFolderPreview(null);
   }
 
   async function chooseInput() {
@@ -480,6 +510,67 @@ export default function App() {
       }
     } catch (reason) {
       setError(parseDesktopError(reason));
+    }
+  }
+
+  async function chooseFolderRoot(kind: "input" | "output") {
+    try {
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        title: kind === "input" ? copy.chooseInputFolder : copy.chooseOutputFolder,
+      });
+      if (typeof selected !== "string") return;
+      if (kind === "input") setFolderInputRoot(selected);
+      else setFolderOutputRoot(selected);
+      setFolderPreview(null);
+    } catch (reason) {
+      setError(parseDesktopError(reason));
+    }
+  }
+
+  async function previewFolderBatch() {
+    setFolderBusy("preview");
+    setFolderPreview(null);
+    setError(null);
+    try {
+      setFolderPreview(await invoke<FolderPreview>("preview_desktop_folder_batch", {
+        request: {
+          inputRoot: folderInputRoot,
+          outputRoot: folderOutputRoot,
+          targetFormat: target,
+          quality: target === "png" || !quality ? null : Number(quality),
+          width: width ? Number(width) : null,
+          dpi: target === "png" || target === "jpg" || target === "jpeg" ? Number(dpi) : null,
+          colorMode: target === "png" || target === "jpg" || target === "jpeg" ? colorMode : null,
+          preserveAllStreams,
+        },
+      }));
+    } catch (reason) {
+      setError(parseDesktopError(reason));
+    } finally {
+      setFolderBusy(null);
+    }
+  }
+
+  async function queueFolderBatch() {
+    if (!folderPreview) return;
+    setFolderBusy("queue");
+    setError(null);
+    try {
+      const result = await invoke<FolderQueueResult>("queue_desktop_folder_batch", {
+        previewId: folderPreview.preview_id,
+        batchName: null,
+      });
+      setFolderPreview(null);
+      setJobBatchId(result.batch.id);
+      setTab("jobs");
+      await Promise.all([refreshJobs(0), refreshJobBatches()]);
+    } catch (reason) {
+      setFolderPreview(null);
+      setError(parseDesktopError(reason));
+    } finally {
+      setFolderBusy(null);
     }
   }
 
@@ -1035,17 +1126,21 @@ export default function App() {
       {tab === "convert" && (
         <section className="workspace">
           <div className="workspace-main">
-            <div className={`drop-zone ${dragging ? "is-dragging" : ""}`}>
+            <div className="convert-mode" role="group" aria-label={copy.convertMode}><button type="button" className={convertMode === "file" ? "selected" : ""} onClick={() => setConvertMode("file")}>{copy.singleFile}</button><button type="button" className={convertMode === "folder" ? "selected" : ""} onClick={() => setConvertMode("folder")}>{copy.folderBatch}</button></div>
+            {convertMode === "file" && <div className={`drop-zone ${dragging ? "is-dragging" : ""}`}>
               <span className="drop-icon" aria-hidden="true">↓</span>
               <div><h1>{copy.dropTitle}</h1><p>{copy.dropBody}</p></div>
               <button className="secondary choose-file" type="button" onClick={chooseInput}>{copy.chooseFile}</button>
-            </div>
+            </div>}
+            {convertMode === "folder" && <section className="folder-intro"><p className="section-label">BOUNDED BATCH</p><h1>{copy.folderBatch}</h1><p>{copy.folderBatchHint}</p></section>}
 
             <div className="form-grid">
-              <label className="wide">{copy.inputPath}<span className="path-control"><input value={inputPath} onChange={(event) => selectInput(event.target.value)} placeholder="C:\\…\\input.ext" /><button className="secondary" type="button" onClick={chooseInput}>{copy.chooseFile}</button></span></label>
-              <label className="wide">{copy.outputPath}<span className="path-control"><input value={outputPath} onChange={(event) => { setOutputPath(event.target.value); setPreview(null); }} placeholder="C:\\…\\output.ext" /><button className="secondary" type="button" disabled={!inputPath} onClick={chooseOutput}>{copy.chooseOutput}</button></span></label>
-              <label>{copy.target}<select value={target} onChange={(event) => changeTarget(event.target.value)} disabled={capabilityBusy}>
-                {targetOptions.map((value) => <option key={value} disabled={capabilities ? !capabilities.routes[value]?.available : false}>{value}{capabilities && !capabilities.routes[value]?.available ? ` — ${copy.unavailable}` : ""}</option>)}
+              {convertMode === "file" && <label className="wide">{copy.inputPath}<span className="path-control"><input value={inputPath} onChange={(event) => selectInput(event.target.value)} placeholder="C:\\…\\input.ext" /><button className="secondary" type="button" onClick={chooseInput}>{copy.chooseFile}</button></span></label>}
+              {convertMode === "file" && <label className="wide">{copy.outputPath}<span className="path-control"><input value={outputPath} onChange={(event) => { setOutputPath(event.target.value); setPreview(null); }} placeholder="C:\\…\\output.ext" /><button className="secondary" type="button" disabled={!inputPath} onClick={chooseOutput}>{copy.chooseOutput}</button></span></label>}
+              {convertMode === "folder" && <label className="wide">{copy.inputFolder}<span className="path-control"><input value={folderInputRoot} onChange={(event) => { setFolderInputRoot(event.target.value); setFolderPreview(null); }} placeholder="C:\\…\\source-folder" /><button className="secondary" type="button" onClick={() => chooseFolderRoot("input")}>{copy.chooseInputFolder}</button></span></label>}
+              {convertMode === "folder" && <label className="wide">{copy.outputFolder}<span className="path-control"><input value={folderOutputRoot} onChange={(event) => { setFolderOutputRoot(event.target.value); setFolderPreview(null); }} placeholder="C:\\…\\output-folder" /><button className="secondary" type="button" onClick={() => chooseFolderRoot("output")}>{copy.chooseOutputFolder}</button></span></label>}
+              <label>{copy.target}<select value={target} onChange={(event) => changeTarget(event.target.value)} disabled={convertMode === "file" && capabilityBusy}>
+                {targetOptions.map((value) => <option key={value} disabled={convertMode === "file" && capabilities ? !capabilities.routes[value]?.available : false}>{value}{convertMode === "file" && capabilities && !capabilities.routes[value]?.available ? ` — ${copy.unavailable}` : ""}</option>)}
               </select></label>
               <label>{copy.quality}<input type="number" min="1" max="100" value={quality} onChange={(event) => { setQuality(event.target.value); setPreview(null); }} disabled={target === "png"} /></label>
               {expert && <label>{copy.width}<input type="number" min="1" max="16384" value={width} onChange={(event) => { setWidth(event.target.value); setPreview(null); }} /></label>}
@@ -1065,13 +1160,16 @@ export default function App() {
             </div>
 
             <div className="action-row">
-              <button className="secondary" type="button" disabled={!inputPath || !outputPath || busy !== null || capabilityBusy || !routeAvailable} onClick={previewPlan}>{busy === "plan" ? copy.planning : copy.inspectPlan}</button>
-              <button className="primary" type="button" disabled={!preview || busy !== null || !routeAvailable} onClick={runConversion}>{busy === "run" ? copy.running : copy.run}</button>
-              <button className="secondary" type="button" disabled={!preview || busy !== null || !routeAvailable} onClick={queueConversion}>{busy === "queue" ? copy.queueing : copy.queueOnly}</button>
-              {busy === "run" && <button className="danger" type="button" onClick={cancel}>{copy.cancel}</button>}
+              {convertMode === "file" && <button className="secondary" type="button" disabled={!inputPath || !outputPath || busy !== null || capabilityBusy || !routeAvailable} onClick={previewPlan}>{busy === "plan" ? copy.planning : copy.inspectPlan}</button>}
+              {convertMode === "file" && <button className="primary" type="button" disabled={!preview || busy !== null || !routeAvailable} onClick={runConversion}>{busy === "run" ? copy.running : copy.run}</button>}
+              {convertMode === "file" && <button className="secondary" type="button" disabled={!preview || busy !== null || !routeAvailable} onClick={queueConversion}>{busy === "queue" ? copy.queueing : copy.queueOnly}</button>}
+              {convertMode === "file" && busy === "run" && <button className="danger" type="button" onClick={cancel}>{copy.cancel}</button>}
+              {convertMode === "folder" && <button className="secondary" type="button" disabled={!folderInputRoot || !folderOutputRoot || folderBusy !== null} onClick={previewFolderBatch}>{folderBusy === "preview" ? copy.planningFolder : copy.previewFolderMapping}</button>}
+              {convertMode === "folder" && <button className="primary" type="button" disabled={!folderPreview || folderBusy !== null} onClick={queueFolderBatch}>{folderBusy === "queue" ? copy.queueingFolder : copy.queueFolderBatch}</button>}
             </div>
 
-            {preview && <PlanView preview={preview} expert={expert} copy={copy} />}
+            {convertMode === "file" && preview && <PlanView preview={preview} expert={expert} copy={copy} />}
+            {convertMode === "folder" && folderPreview && <section className="folder-preview"><div className="plan-heading"><div><p className="section-label">MAPPING PREVIEW</p><h2>{folderPreview.planned.toLocaleString()} {copy.filesReady}</h2></div><span className="loss loss-safe">{copy.expiresSoon}</span></div><p>{copy.folderPreviewSummary}: {folderPreview.discovered.toLocaleString()} {copy.discovered} · {folderPreview.planned.toLocaleString()} {copy.planned} · {folderPreview.skipped.toLocaleString()} {copy.skipped}</p><div className="mapping-list">{folderPreview.sample.map((entry) => <div key={entry.input_path}><span>{entry.relative_input_path}</span><strong>→</strong><span>{entry.output_path}</span></div>)}</div>{folderPreview.truncated && <p className="typed-note">{copy.mappingTruncated}</p>}</section>}
           </div>
 
           <aside className="side-panel">

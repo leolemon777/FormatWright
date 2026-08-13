@@ -6,10 +6,14 @@
 
 pub mod bulk_jobs;
 pub mod conversion_service;
+pub mod folder_batch;
 pub mod job_execution;
 pub mod report_service;
 
 pub use bulk_jobs::BulkJobService;
 pub use conversion_service::{ConversionRunResult, ConversionService};
+pub use folder_batch::{
+    FolderBatchService, FolderMappingEntry, FolderMappingPlan, MAX_FOLDER_BATCH_FILES,
+};
 pub use job_execution::{JobExecutionService, QueueRunReport, QueueWindowControl};
 pub use report_service::ReportService;

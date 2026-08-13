@@ -455,6 +455,29 @@ impl SqliteJobStore {
         name: &str,
         requests: &[JobCreateRequest],
     ) -> Result<BatchRecord> {
+        self.create_batch_inner(name, requests, false)
+    }
+
+    /// Creates and queues one persistent batch in a single transaction.
+    ///
+    /// # Errors
+    ///
+    /// Returns an input, output-conflict, serialization, or storage error
+    /// without leaving a partial batch or any planned-only members.
+    pub fn create_queued_batch(
+        &mut self,
+        name: &str,
+        requests: &[JobCreateRequest],
+    ) -> Result<BatchRecord> {
+        self.create_batch_inner(name, requests, true)
+    }
+
+    fn create_batch_inner(
+        &mut self,
+        name: &str,
+        requests: &[JobCreateRequest],
+        enqueue: bool,
+    ) -> Result<BatchRecord> {
         let name = validate_batch_name(name)?;
         if requests.is_empty() || requests.len() > 100_000 {
             return Err(FormatWrightError::new(
@@ -490,6 +513,27 @@ impl SqliteJobStore {
                     ],
                 )
                 .map_err(storage_error)?;
+        }
+        if enqueue {
+            for job in &jobs {
+                transaction
+                    .execute(
+                        "UPDATE jobs
+                         SET state = 'queued', sequence = 1, updated_unix_ms = ?1
+                         WHERE id = ?2 AND state = 'planned' AND sequence = 0",
+                        params![now, job.id.to_string()],
+                    )
+                    .map_err(storage_error)?;
+                transaction
+                    .execute(
+                        "INSERT INTO job_events(
+                            job_id, sequence, previous_state, next_state, code,
+                            timestamp_unix_ms
+                         ) VALUES (?1, 1, 'planned', 'queued', 'BATCH_QUEUED', ?2)",
+                        params![job.id.to_string(), now],
+                    )
+                    .map_err(storage_error)?;
+            }
         }
         transaction.commit().map_err(storage_error)?;
         Ok(BatchRecord {
@@ -2756,6 +2800,39 @@ mod tests {
             store.list_batches_page(10, 0).expect("list batches").len(),
             1
         );
+    }
+
+    #[test]
+    fn queued_batch_creation_commits_members_reservations_and_queue_events_atomically() {
+        let mut store = SqliteJobStore::open_in_memory().expect("in-memory store");
+        let requests = (0..3)
+            .map(|index| JobCreateRequest {
+                input_path: PathBuf::from(format!("queued-input-{index}.mkv")),
+                output_path: PathBuf::from(format!("queued-output-{index}.mp4")),
+                plan: durable_plan(),
+            })
+            .collect::<Vec<_>>();
+
+        let batch = store
+            .create_queued_batch("queued atomically", &requests)
+            .expect("create queued batch");
+        let jobs = store
+            .list_batch_jobs_page(batch.id, 10, 0)
+            .expect("batch jobs");
+
+        assert_eq!(jobs.len(), 3);
+        assert!(jobs.iter().all(|job| job.state == JobState::Queued));
+        assert!(jobs.iter().all(|job| job.sequence == 1));
+        for job in jobs {
+            let details = store
+                .get_job_details(job.id)
+                .expect("job details")
+                .expect("job exists");
+            assert_eq!(details.events.len(), 2);
+            assert_eq!(details.events[1].code, "BATCH_QUEUED");
+            assert_eq!(details.events[1].previous_state, Some(JobState::Planned));
+            assert_eq!(details.events[1].next_state, JobState::Queued);
+        }
     }
 
     #[test]

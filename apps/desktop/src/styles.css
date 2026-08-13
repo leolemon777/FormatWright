@@ -39,6 +39,11 @@ nav button:hover, nav .nav-active { color: #f4f7f1; background: #212620; }
 .workspace-main { padding: clamp(18px, 3vw, 34px); }
 .side-panel { padding: 18px; }
 .drop-zone { display: flex; align-items: center; gap: 20px; min-height: 122px; border: 1px dashed #465045; padding: 24px; background: linear-gradient(120deg, rgba(185, 255, 102, .07), transparent 55%); transition: border-color 120ms ease, background 120ms ease; }
+.convert-mode { display: inline-flex; gap: 3px; margin-bottom: 12px; border: 1px solid #333b31; padding: 3px; background: #0f120f; }
+.convert-mode button { border: 0; padding: 8px 12px; color: #8d978b; background: transparent; font-size: 11px; }
+.convert-mode .selected { color: #101410; background: #b9ff66; font-weight: 800; }
+.folder-intro { min-height: 122px; border: 1px dashed #465045; padding: 24px; background: linear-gradient(120deg, rgba(185, 255, 102, .07), transparent 55%); }
+.folder-intro p:last-child { margin: 0; color: #919b8f; line-height: 1.6; }
 .drop-zone > div { flex: 1; }
 .choose-file { border: 0; border-radius: 3px; padding: 11px 15px; font-weight: 750; white-space: nowrap; }
 .drop-zone.is-dragging { border-color: #b9ff66; background: rgba(185, 255, 102, .12); }
@@ -105,6 +110,12 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .steps code, .typed-note code { color: #a7c98d; overflow-wrap: anywhere; }
 .steps pre { grid-column: 1 / -1; margin: 0; overflow: auto; color: #8f9a8c; font-size: 11px; }
 .typed-note { color: #858f82; font-size: 11px; line-height: 1.6; }
+.folder-preview { margin-top: 22px; border-top: 1px solid #343b33; padding-top: 22px; }
+.folder-preview > p { color: #9aa394; }
+.mapping-list { display: grid; max-height: 360px; overflow: auto; border: 1px solid #30372f; }
+.mapping-list div { display: grid; grid-template-columns: minmax(0, 1fr) 24px minmax(0, 1.25fr); gap: 8px; border-bottom: 1px solid #293029; padding: 9px 11px; color: #8f998d; font: 11px/1.4 ui-monospace, monospace; }
+.mapping-list span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mapping-list strong { color: #b9ff66; text-align: center; }
 
 .page-card { margin-top: 18px; min-height: 580px; padding: clamp(20px, 3vw, 34px); }
 .page-heading { border-bottom: 1px solid #30362f; padding-bottom: 20px; }
@@ -201,6 +212,8 @@ button:disabled { cursor: not-allowed; opacity: .45; }
   .preset-editor .action-row { grid-column: 1; }
   .preset-fields { grid-template-columns: 1fr; }
   .steps li, .job-list article { grid-template-columns: 1fr; }
+  .mapping-list div { grid-template-columns: minmax(0, 1fr); }
+  .mapping-list strong { text-align: left; }
   .side-panel { display: block; }
 }
 
