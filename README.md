@@ -15,9 +15,9 @@ FormatWright is under active **Windows development Alpha**. The unsigned Windows
 **Latest engineering milestones (2026-08-12):**
 1. CLI durable-queue execution runs through shared `JobExecutionService` in Core.
 2. Desktop binds execution to the visible Plan hash, persists reports before terminal state, and supports recoverable immediate pause plus per-job Resume/Retry.
-3. Release resolves only activated exact pack paths; capability-driven UI and backend gates agree on which routes are runnable.
+3. Queue execution closes worker/process-tree failures, normalizes Windows output identity, leaves no cancellation-link tasks, and keeps live history/paging/enqueue available through a separate SQLite connection.
 
-The next engineering gate closes Windows path-identity and long-lived cancellation/concurrency defects, then adds maintenance, bulk recovery, and live queue access. Release certification still requires a clean offline Windows VM and the supply-chain work above.
+The next engineering gate adds maintenance/backup/integrity workflows, batch selection and bulk recovery, then completes the wider Desktop Beta surface. Release certification still requires a clean offline Windows VM and the supply-chain work above.
 
 ## Product promises
 

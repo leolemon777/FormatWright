@@ -21,7 +21,8 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 struct DesktopState {
-    store: Mutex<Option<SqliteJobStore>>,
+    store: Mutex<SqliteJobStore>,
+    job_database_path: PathBuf,
     cancellations: Mutex<HashMap<Uuid, CancellationToken>>,
     queue_control: Mutex<Option<QueueWindowControl>>,
     presets: Mutex<PresetLibrary>,
@@ -251,10 +252,9 @@ async fn run_desktop_conversion(
     let (probe, plan, validation_engine) = prepare_approved_desktop_conversion(&request).await?;
     let job = {
         let mut guard = lock(&state.store)?;
-        let store = require_store(&mut guard)?;
-        store
+        guard
             .create_job(&request.input_path, &request.output_path, &plan)
-            .and_then(|job| store.transition(job.id, JobState::Running, "DESKTOP_ENGINE_STARTED"))
+            .and_then(|job| guard.transition(job.id, JobState::Running, "DESKTOP_ENGINE_STARTED"))
             .map_err(serialize_error)?
     };
     let cancellation = CancellationToken::new();
@@ -270,8 +270,7 @@ async fn run_desktop_conversion(
         move |milestone| {
             if milestone == ExecutionMilestone::EngineFinished {
                 let mut guard = lock_core_store(&state_for_observer.store)?;
-                let store = require_store_core(&mut guard)?;
-                store.transition(job.id, JobState::Validating, "DESKTOP_VALIDATION_STARTED")?;
+                guard.transition(job.id, JobState::Validating, "DESKTOP_VALIDATION_STARTED")?;
             }
             Ok(())
         },
@@ -283,7 +282,7 @@ async fn run_desktop_conversion(
             let job = {
                 let mut guard = lock(&state.store)?;
                 persist_report_before_terminal(
-                    require_store(&mut guard)?,
+                    &mut guard,
                     &state.reports_directory,
                     job.id,
                     &result.report,
@@ -301,9 +300,7 @@ async fn run_desktop_conversion(
             } else {
                 JobState::Failed
             };
-            if let Ok(mut guard) = state.store.lock()
-                && let Some(store) = guard.as_mut()
-            {
+            if let Ok(mut store) = state.store.lock() {
                 let _ = store.transition(job.id, final_state, "DESKTOP_CONVERSION_FAILED");
             }
             Err(serialize_error(error))
@@ -319,8 +316,7 @@ async fn queue_desktop_conversion(
 ) -> Result<JobRecord, String> {
     let (probe, plan, _) = prepare_approved_desktop_conversion(&request).await?;
     let job = {
-        let mut guard = lock(&state.store)?;
-        let store = require_store(&mut guard)?;
+        let mut store = lock(&state.store)?;
         store
             .create_job(&probe.artifact.canonical_path, &request.output_path, &plan)
             .and_then(|job| store.transition(job.id, JobState::Queued, "JOB_ENQUEUED"))
@@ -328,6 +324,21 @@ async fn queue_desktop_conversion(
     };
     let _ = window.emit("formatwright://job-updated", &job);
     Ok(job)
+}
+
+async fn run_queue_window_on_database<F>(
+    database_path: &Path,
+    limit: usize,
+    parallel: usize,
+    control: QueueWindowControl,
+    on_report: F,
+) -> formatwright_core::Result<QueueRunReport>
+where
+    F: FnMut(Uuid, &ValidationReport) -> formatwright_core::Result<()>,
+{
+    let mut queue_store = SqliteJobStore::open(database_path)?;
+    JobExecutionService::run_window_observed(&mut queue_store, limit, parallel, control, on_report)
+        .await
 }
 
 #[tauri::command]
@@ -339,28 +350,11 @@ async fn run_desktop_queue_window(
 ) -> Result<QueueRunReport, String> {
     let limit = limit.unwrap_or(100).clamp(1, 256);
     let parallel = parallel.unwrap_or(4).clamp(1, 16);
-    let control = QueueWindowControl::new();
-    {
-        let mut queue_control = lock(&state.queue_control)?;
-        if queue_control.is_some() {
-            return Err("a durable queue window is already running".to_owned());
-        }
-        *queue_control = Some(control.clone());
-    }
-    let mut store = {
-        let mut guard = lock(&state.store)?;
-        if let Some(store) = guard.take() {
-            store
-        } else {
-            *lock(&state.queue_control)? = None;
-            return Err(
-                "job store is busy; stop the durable queue or wait for it to finish".to_owned(),
-            );
-        }
-    };
+    let (control, _lease) = acquire_queue_window(&state.queue_control)?;
     let reports_directory = state.reports_directory.clone();
-    let report = JobExecutionService::run_window_observed(
-        &mut store,
+    let database_path = state.job_database_path.clone();
+    let report = run_queue_window_on_database(
+        &database_path,
         limit,
         parallel,
         control,
@@ -377,11 +371,6 @@ async fn run_desktop_queue_window(
         },
     )
     .await;
-    {
-        let mut guard = lock(&state.store)?;
-        *guard = Some(store);
-    }
-    *lock(&state.queue_control)? = None;
     let report = report.map_err(serialize_error)?;
     let _ = window.emit("formatwright://queue-window-finished", &report);
     Ok(report)
@@ -392,6 +381,31 @@ async fn run_desktop_queue_window(
 enum DesktopQueuePauseMode {
     FinishCurrent,
     Immediate,
+}
+
+struct DesktopQueueWindowLease<'a> {
+    slot: &'a Mutex<Option<QueueWindowControl>>,
+}
+
+impl Drop for DesktopQueueWindowLease<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut slot) = self.slot.lock() {
+            *slot = None;
+        }
+    }
+}
+
+fn acquire_queue_window(
+    slot: &Mutex<Option<QueueWindowControl>>,
+) -> Result<(QueueWindowControl, DesktopQueueWindowLease<'_>), String> {
+    let control = QueueWindowControl::new();
+    let mut current = lock(slot)?;
+    if current.is_some() {
+        return Err("a durable queue window is already running".to_owned());
+    }
+    *current = Some(control.clone());
+    drop(current);
+    Ok((control, DesktopQueueWindowLease { slot }))
 }
 
 #[tauri::command]
@@ -464,8 +478,8 @@ fn requeue_desktop_job(
     job_id: String,
 ) -> Result<JobRecord, String> {
     let job_id = Uuid::parse_str(&job_id).map_err(|error| error.to_string())?;
-    let mut guard = lock(&state.store)?;
-    requeue_job(require_store(&mut guard)?, job_id).map_err(serialize_error)
+    let mut store = lock(&state.store)?;
+    requeue_job(&mut store, job_id).map_err(serialize_error)
 }
 
 #[tauri::command]
@@ -474,8 +488,7 @@ fn list_desktop_jobs(
     state: tauri::State<'_, DesktopState>,
     limit: Option<usize>,
 ) -> Result<Vec<JobRecord>, String> {
-    let mut guard = lock(&state.store)?;
-    require_store(&mut guard)?
+    lock(&state.store)?
         .list_jobs(limit.unwrap_or(100).clamp(1, 500))
         .map_err(serialize_error)
 }
@@ -574,36 +587,15 @@ fn lock<T>(mutex: &Mutex<T>) -> Result<std::sync::MutexGuard<'_, T>, String> {
         .map_err(|_| "desktop state lock was poisoned".to_owned())
 }
 
-fn require_store<'a>(
-    guard: &'a mut std::sync::MutexGuard<'_, Option<SqliteJobStore>>,
-) -> Result<&'a mut SqliteJobStore, String> {
-    guard.as_mut().ok_or_else(|| {
-        "durable queue window is running; wait for it to finish or stop it first".to_owned()
-    })
-}
-
 fn lock_core_store(
-    mutex: &Mutex<Option<SqliteJobStore>>,
-) -> formatwright_core::Result<std::sync::MutexGuard<'_, Option<SqliteJobStore>>> {
+    mutex: &Mutex<SqliteJobStore>,
+) -> formatwright_core::Result<std::sync::MutexGuard<'_, SqliteJobStore>> {
     mutex.lock().map_err(|_| {
         formatwright_core::FormatWrightError::new(
             formatwright_core::ErrorCode::Internal,
             formatwright_core::Stage::Store,
             "Desktop state lock was poisoned",
             "Restart FormatWright and retry.",
-        )
-    })
-}
-
-fn require_store_core<'a>(
-    guard: &'a mut std::sync::MutexGuard<'_, Option<SqliteJobStore>>,
-) -> formatwright_core::Result<&'a mut SqliteJobStore> {
-    guard.as_mut().ok_or_else(|| {
-        formatwright_core::FormatWrightError::new(
-            formatwright_core::ErrorCode::StorageFailed,
-            formatwright_core::Stage::Store,
-            "Job store is unavailable while the durable queue window runs",
-            "Wait for the queue window to finish or stop it, then retry.",
         )
     })
 }
@@ -989,7 +981,8 @@ pub fn run() {
             {
                 let _ = activate_engine_pack(manifest_path);
             }
-            let mut store = SqliteJobStore::open(data_directory.join("jobs.sqlite3"))
+            let job_database_path = data_directory.join("jobs.sqlite3");
+            let mut store = SqliteJobStore::open(&job_database_path)
                 .map_err(|error| Box::<dyn std::error::Error>::from(error.to_string()))?;
             store
                 .interrupt_active_jobs()
@@ -997,7 +990,8 @@ pub fn run() {
             let presets =
                 load_preset_library(&presets_path).map_err(Box::<dyn std::error::Error>::from)?;
             app.manage(DesktopState {
-                store: Mutex::new(Some(store)),
+                store: Mutex::new(store),
+                job_database_path,
                 cancellations: Mutex::new(HashMap::new()),
                 queue_control: Mutex::new(None),
                 presets: Mutex::new(presets),
@@ -1038,21 +1032,23 @@ pub fn run() {
 mod tests {
     use std::fs;
     use std::path::PathBuf;
+    use std::sync::mpsc;
+    use std::time::Duration;
 
     use tempfile::tempdir;
 
     use formatwright_core::{
         ArtifactSummary, ChangeSet, ConversionPreset, JobState, NetworkPolicy,
-        PRESET_SCHEMA_VERSION, Plan, PresetLibrary, ReportRedaction, SqliteJobStore,
-        ValidationReport, ValidationStatus,
+        PRESET_SCHEMA_VERSION, Plan, PlanRequest, PresetLibrary, QueueWindowControl,
+        ReportRedaction, SqliteJobStore, ValidationReport, ValidationStatus,
     };
     use uuid::Uuid;
 
     use super::{
-        DesktopConversionRequest, DesktopEngineRegistryEntry, backup_path, bundled_manifest_paths,
-        load_preset_library, persist_preset_library, persist_report_before_terminal,
-        prepare_approved_desktop_conversion, read_report, registered_manifest_paths, requeue_job,
-        save_report,
+        DesktopConversionRequest, DesktopEngineRegistryEntry, acquire_queue_window, backup_path,
+        bundled_manifest_paths, load_preset_library, persist_preset_library,
+        persist_report_before_terminal, prepare_approved_desktop_conversion, read_report,
+        registered_manifest_paths, requeue_job, run_queue_window_on_database, save_report,
     };
 
     fn plan(output_path: PathBuf) -> Plan {
@@ -1321,6 +1317,124 @@ mod tests {
                 .state,
             JobState::Completed
         );
+    }
+
+    #[test]
+    fn queue_window_keeps_live_reads_paging_and_enqueue_available() {
+        let suite = tempdir().expect("suite");
+        let database_path = suite.path().join("jobs.sqlite3");
+        let first_input = suite.path().join("first.json");
+        let first_output = suite.path().join("first.yaml");
+        let second_input = suite.path().join("second.json");
+        let second_output = suite.path().join("second.yaml");
+        fs::write(&first_input, r#"[{"id":1}]"#).expect("write first input");
+        fs::write(&second_input, r#"[{"id":2}]"#).expect("write second input");
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("planning runtime");
+        let first_plan = runtime
+            .block_on(formatwright_core::prepare_conversion(
+                &first_input,
+                &PlanRequest {
+                    target_format: "yaml".to_owned(),
+                    output_path: Some(first_output.clone()),
+                    ..PlanRequest::default()
+                },
+            ))
+            .expect("prepare first")
+            .1;
+        let second_plan = runtime
+            .block_on(formatwright_core::prepare_conversion(
+                &second_input,
+                &PlanRequest {
+                    target_format: "yaml".to_owned(),
+                    output_path: Some(second_output.clone()),
+                    ..PlanRequest::default()
+                },
+            ))
+            .expect("prepare second")
+            .1;
+        drop(runtime);
+
+        let mut ui_store = SqliteJobStore::open(&database_path).expect("UI store");
+        let first = ui_store
+            .create_job(&first_input, &first_output, &first_plan)
+            .and_then(|job| ui_store.transition(job.id, JobState::Queued, "JOB_ENQUEUED"))
+            .expect("queue first");
+        let (callback_entered_tx, callback_entered_rx) = mpsc::sync_channel(0);
+        let (release_tx, release_rx) = mpsc::sync_channel(0);
+        let queue_database = database_path.clone();
+        let queue_thread = std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("queue runtime");
+            runtime.block_on(run_queue_window_on_database(
+                &queue_database,
+                8,
+                1,
+                QueueWindowControl::new(),
+                move |_, _| {
+                    callback_entered_tx.send(()).expect("signal callback");
+                    release_rx.recv().expect("release callback");
+                    Ok(())
+                },
+            ))
+        });
+        callback_entered_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("queue reached report callback");
+
+        let visible = ui_store.list_jobs(100).expect("live job list");
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].id, first.id);
+        let second = ui_store
+            .create_job(&second_input, &second_output, &second_plan)
+            .and_then(|job| ui_store.transition(job.id, JobState::Queued, "JOB_ENQUEUED"))
+            .expect("enqueue while queue window runs");
+        assert_eq!(ui_store.count_jobs().expect("live count"), 2);
+        assert_eq!(ui_store.list_jobs_page(1, 0).expect("first page").len(), 1);
+        assert_eq!(ui_store.list_jobs_page(1, 1).expect("second page").len(), 1);
+
+        release_tx.send(()).expect("release queue callback");
+        let report = queue_thread
+            .join()
+            .expect("join queue thread")
+            .expect("queue window");
+        assert_eq!(report.selected, 1);
+        assert_eq!(report.completed, 1);
+        assert_eq!(
+            ui_store
+                .get_job(first.id)
+                .expect("read first")
+                .expect("first")
+                .state,
+            JobState::Completed
+        );
+        assert_eq!(
+            ui_store
+                .get_job(second.id)
+                .expect("read second")
+                .expect("second")
+                .state,
+            JobState::Queued
+        );
+    }
+
+    #[test]
+    fn queue_window_lease_clears_exclusivity_on_every_drop_path() {
+        let slot = std::sync::Mutex::new(None);
+        let (_, lease) = acquire_queue_window(&slot).expect("acquire first window");
+        assert!(slot.lock().expect("read slot").is_some());
+        let error = acquire_queue_window(&slot)
+            .err()
+            .expect("parallel queue window must be rejected");
+        assert!(error.contains("already running"));
+        drop(lease);
+        assert!(slot.lock().expect("read cleared slot").is_none());
+        let (_, replacement) = acquire_queue_window(&slot).expect("acquire after cleanup");
+        drop(replacement);
     }
 
     #[tokio::test]

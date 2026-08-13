@@ -49,10 +49,11 @@ Post-extraction Windows reruns (pwsh):
 As of 2026-08-11 the Tauri surface also calls `JobExecutionService`:
 
 - `queue_desktop_conversion` → Planned → Queued
-- `run_desktop_queue_window` → exclusive store take + `run_window_observed` (persists `reports/{job_id}.json` before terminal transition)
+- `run_desktop_queue_window` → dedicated SQLite WAL connection + `run_window_observed` (persists `reports/{job_id}.json` before terminal transition); the UI retains its short-transaction connection for live list/paging/enqueue
 - `pause_desktop_queue_window` with `finish-current` or `immediate` via `QueueWindowControl`
 - `cancel_desktop_queue_window` → alias for immediate pause
 - `requeue_desktop_job` → Resume for `Interrupted`/`Blocked`, Retry for `Failed`/`Cancelled`; other states are rejected
+- A RAII queue-window lease keeps exactly one Desktop runner active and clears the control slot if the command succeeds, errors, panics, or its future is dropped
 
 Known gaps: recovery banner and bulk retry UI are not implemented.
 
@@ -65,7 +66,7 @@ Known gaps: recovery banner and bulk retry UI are not implemented.
 
 ## Remaining work
 
-- Desktop recovery banner and bulk retry (single-job Resume/Retry is implemented)
+- Desktop recovery banner and bulk retry (single-job Resume/Retry and live enqueue are implemented)
 - ConversionService extraction / remove CLI duplicate `prepare_conversion`
 - Multi-connection reservation races and 10k mixed workload certification
 - Cross-platform release certification of real adapter process trees (the Windows unit fixture and existing FFmpeg sandbox are development evidence)

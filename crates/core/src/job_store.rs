@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::{Connection, ErrorCode as SqliteErrorCode, OptionalExtension, Transaction, params};
@@ -69,6 +70,9 @@ impl SqliteJobStore {
     /// Returns a storage error when the database cannot open or migrate the file.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let connection = Connection::open(path).map_err(storage_error)?;
+        connection
+            .busy_timeout(Duration::from_secs(5))
+            .map_err(storage_error)?;
         let mut store = Self { connection };
         store.migrate()?;
         Ok(store)
@@ -81,6 +85,9 @@ impl SqliteJobStore {
     /// Returns a storage error when database initialization fails.
     pub fn open_in_memory() -> Result<Self> {
         let connection = Connection::open_in_memory().map_err(storage_error)?;
+        connection
+            .busy_timeout(Duration::from_secs(5))
+            .map_err(storage_error)?;
         let mut store = Self { connection };
         store.migrate()?;
         Ok(store)
