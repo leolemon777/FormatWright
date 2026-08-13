@@ -18,7 +18,7 @@
 - **未开始**：只有规格或方向，没有可运行实现。
 - **发布阻断**：不完成就不能发布 Public Beta；不是一般优化项。
 
-当前产品结论：**FormatWright 已具备 Windows 自包含开发候选：Release 内嵌并首次启动安装 PDF/Media Starter，生产只解析激活 pack 的精确路径，UI 与后端共同按 capability snapshot 门控；真实 PDF→PNG/JPG、GIF 与结构化链路已在本机通过；R-001 至 R-007 与 R-010 已关闭；SQLite MaintenanceService、可校验应用状态整包、v4 持久批次/幂等键/稳定 Selection/Bulk Action 审计、共享 ConversionService/ReportService，以及 CLI/Desktop 批量入口已完成；四进程原子认领、公平批次窗口、真实强退恢复，以及 10,000 项结构化/图片/媒体混合公平性/P50/P95/RSS/WAL 门禁已通过。** 但这仍不是 Public Beta：R-008/R-009 尚缺离线干净虚拟机、完整引擎 SBOM/许可证与源码义务、可信签名/吊销、升级回滚和正式代码签名证据；Gate 1 尚缺高分辨率/PDF/Office 扩展、长时掉电与跨平台认证，Gate 2–5 仍未完成。不得用于唯一副本或不可替代数据，也不得宣称“已认证”或“正式发布”。
+当前产品结论：**FormatWright 已具备 Windows 自包含开发候选：Release 内嵌并首次启动安装 PDF/Media Starter，生产只解析激活 pack 的精确路径，UI 与后端共同按 capability snapshot 门控；真实 PDF→PNG/JPG、GIF 与结构化链路已在本机通过；R-001 至 R-007 与 R-010 已关闭；SQLite MaintenanceService、可校验应用状态整包、v4 持久批次/幂等键/稳定 Selection/Bulk Action 审计、共享 ConversionService/ReportService，以及 CLI/Desktop 批量入口已完成；Desktop 已具备启动恢复摘要、精确 partial 清理、SQLite 状态/路径/批次筛选和有界分页；四进程原子认领、公平批次窗口、真实强退恢复，以及 10,000 项结构化/图片/媒体混合公平性/P50/P95/RSS/WAL 门禁已通过。** 但这仍不是 Public Beta：R-008/R-009 尚缺离线干净虚拟机、完整引擎 SBOM/许可证与源码义务、可信签名/吊销、升级回滚和正式代码签名证据；Gate 1 尚缺高分辨率/PDF/Office 扩展、长时掉电与跨平台认证，Gate 2–5 仍未完成。不得用于唯一副本或不可替代数据，也不得宣称“已认证”或“正式发布”。
 
 ### 1.1 近期进度快照（2026-08-12）
 
@@ -61,7 +61,7 @@
 | 3 | 关闭审查 P1：worker 失败收口、Plan hash 批准、报告/终态顺序、immediate pause 可恢复 | Gate 1 | R-001/R-002/R-003/R-004 已关闭 |
 | 4 | 补 Windows 路径预约规范化、运行中 pause/failure-injection 测试、取消桥接任务生命周期 | Gate 1 | R-005/R-006 已关闭 |
 | 5 | 抽取完整 `ConversionService` 和 `ReportService`；删除入口层重复编排 | Gate 1 | 核心生命周期完成；revalidate/export 归 Gate 2 |
-| 6 | Desktop 恢复横幅、批量取消/重试、实时队列读取 | Gate 1 / 2 | 实时读取/分页/入队与稳定筛选批量动作完成；恢复横幅待完成 |
+| 6 | Desktop 恢复横幅、批量取消/重试、实时队列读取 | Gate 1 / 2 | 启动恢复摘要、精确 partial 清理、SQLite 路径/状态/批次筛选、有界分页、实时读取/入队与稳定筛选批量动作完成；长列表虚拟化待完成 |
 | 7 | 版本化 migration、备份/恢复/完整性检查，形成 Windows 长期自用稳定版 | Gate 1 / 4 | SQLite + 应用状态整包完成；Desktop 维护 UI、干净机升级/回滚待完成 |
 | 8 | batch/selection、10k 混合负载、公平性/延迟/RSS/WAL；拆分 `runner.rs` | Gate 1 | batch/selection/bulk、公平窗口、多进程原子认领/强退恢复、10k mixed small-file、no-clobber commit 完成；高分辨率/PDF/Office 扩展与拆分待完成 |
 | 9 | Desktop Beta 闭环（文件夹、筛选虚拟化、进度、导出、shell 集成、无障碍） | Gate 2 | 未开始 / 部分 |
@@ -79,7 +79,7 @@
 | Phase 1 架构 Spike | Windows 已完成；跨平台部分完成 | 安全子进程、10 GiB 稀疏文件、partial/原子提交、SQLite 恢复、10k WebView 投影、引擎 Manifest | 物理 10 GiB、macOS/Linux 真实进程树与引擎分发认证 |
 | Phase 2 Core + CLI Alpha | Windows 自包含候选完成；认证未完成 | Inspect/Plan/Convert/Batch/Doctor/Jobs/Engines；Starter PDF/Media；能力门控；12 条工作流均有开发环境实验路径 | R-008/R-009 干净机/供应链关闭证据、完整语料与跨平台工作流认证 |
 | Phase 3 队列/恢复/质量 | Windows 开发门槛完成；长期认证待补 | 10k 持久/同质/混合真实转换、P50/P95/RSS/WAL/staging、20 项可恢复失败、确定性资源调度、公平批次窗口、多进程原子认领与真实强退恢复、CLI/Desktop 已委托 `JobExecutionService` | 高分辨率/PDF/Office 10k 扩展、长时掉电 soak、跨平台恢复 |
-| Phase 4 Desktop Beta | 部分完成 | Tauri/React、双语普通/专家模式、原生选择器、Plan/Jobs/Reports/Doctor、持久队列窗口、可恢复 immediate pause、单任务与稳定筛选批量 Resume/Retry/Cancel、引擎导入、可编辑预设 | 恢复横幅、批次浏览/文件夹入口、虚拟化、系统右键/Finder/Linux 集成、完整可访问性与可用性 |
+| Phase 4 Desktop Beta | 部分完成 | Tauri/React、双语普通/专家模式、原生选择器、Plan/Jobs/Reports/Doctor、启动恢复横幅与精确 partial 清理、SQLite 状态/路径/批次浏览和分页、持久队列窗口、可恢复 immediate pause、单任务与稳定筛选批量 Resume/Retry/Cancel、引擎导入、可编辑预设 | 文件夹入口、长列表虚拟化、系统右键/Finder/Linux 集成、完整可访问性与可用性 |
 | Phase 5 安全与发布 | 部分完成 | fuzz、依赖审计、cargo-deny、SPDX SBOM、零套接字观测、离线 NSIS 安装烟测 | 当前源码重打包、可信签名/吊销、引擎 SBOM、OS 强制隔离、升级回滚、macOS/Linux 包 |
 | Phase 6 API/MCP | 未开始 | 规格方向已确定 | Axum、OpenAPI、SSE、Webhook、Worker、目录授权、MCP tools |
 | Phase 7 浏览器/企业 | 未开始 | 范围原则已确定 | WASM 小任务、企业策略/SSO/审计/离线升级 |
@@ -123,7 +123,7 @@
 - [x] 递归图像批处理保留目录、拒绝目录链接、冲突预约、暂停后跨进程恢复并重检输入/引擎。
 - [x] 九任务结构化/图片/视频混合队列观测到两个真实 FFmpeg 进程并发，记录父进程/进程树 RSS 和 WAL 峰值。
 - [x] Ctrl+C 停止新任务准入并取消活跃进程树；`Validating → Cancelled` 有回归测试。
-- [x] 共享 `JobExecutionService::run_window`：CLI `jobs run` 与 Desktop `run_desktop_queue_window` 已委托；两种 pause 控制、失败收口与单任务 Resume/Retry UI 已接入；恢复横幅待完成。
+- [x] 共享 `JobExecutionService::run_window`：CLI `jobs run` 与 Desktop `run_desktop_queue_window` 已委托；两种 pause 控制、失败收口、启动恢复摘要与单任务 Resume/Retry UI 已接入。
 - [x] 共享 `MaintenanceService`：SQLite status、完整性、在线备份、恢复预检/显式恢复、compact、migration 前快照与五份保留；`ApplicationStateService` 负责分散状态整包与 journal 回滚，Desktop 可取消维护入口待完成。
 - [x] 所有 SQLite mutation 用 immediate transaction 串行化 writer；独立连接 reservation/transition race 有直接回归；所有输出族使用同一 no-clobber publish primitive。
 - [x] 持久 Batch/ordinal membership、任务幂等键、稳定 Selection Snapshot 与 Bulk Action/per-job outcome；CLI/Desktop 共用 `BulkJobService`，图片 batch 写入真实 batch ID。
@@ -203,11 +203,11 @@
 ### 4.3 P1：Desktop Beta
 
 - [ ] 文件夹作为一等输入，展示枚举/跳过/目录映射预览。
-- [x] 桌面真正执行持久队列：队列级开始、finish-current pause、可恢复 immediate pause，以及单任务和筛选后的批量 Resume/Retry/Cancel 已落地；恢复横幅仍缺。
-- [ ] 状态筛选、搜索、分页/虚拟化、稳定选择、批量重试失败项、跳过完成项：路径搜索、稳定选择和批量动作已完成；状态控件、批次浏览、分页/虚拟化仍待完成。
+- [x] 桌面真正执行持久队列：队列级开始、finish-current pause、可恢复 immediate pause、启动恢复摘要，以及单任务和筛选后的批量 Resume/Retry/Cancel 已落地。
+- [ ] 状态筛选、搜索、分页/虚拟化、稳定选择、批量重试失败项、跳过完成项：SQLite 路径/状态/批次筛选、有界分页、稳定选择和批量动作已完成；只剩超长列表虚拟化。
 - [ ] “仅重新验证”、导出 Plan/任务配方/ValidationReport、打开输出目录、partial 清理入口。
 - [ ] 逐阶段进度、速度、ETA 置信度和调度原因；不伪造引擎无法提供的百分比。
-- [ ] 启动恢复横幅：区分 interrupted、blocked、cleanup-needed 和 validation-only。
+- [x] 启动恢复横幅：展示启动中断恢复数、精确 staging 清理数、各持久状态与可恢复总数；可直接进入按状态/批次筛选的任务页处理。
 - [ ] 密码/秘密专用提示，不写入 Plan、日志、SQLite、历史或报告。
 - [ ] 临时空间/输出空间预检与硬阻断；支持更换目标路径。
 - [ ] Windows Explorer 右键菜单；macOS Finder Quick Action；Linux file-manager action。
@@ -558,7 +558,7 @@ API 不直接接受宿主任意路径。请求引用预先授权的 workspace/ro
 - [x] 依次关闭 R-001 至 R-006：六项均已按顺序关闭，每项有失败注入、运行中或并发回归证据。
 - [x] 关闭 R-007：Desktop 队列窗口不再占走唯一 Store，运行中实时 list/paging/queue-only 与 lease 清理回归通过。
 - [x] 引入 `MaintenanceService` 与 `ApplicationStateService`：一致性检查、在线安全备份、恢复临时副本、migration 前快照、全状态 bundle、恢复 journal 与 safety bundle；Desktop 可取消入口待后续。
-- [ ] Desktop 恢复横幅；批量取消/恢复/重试已完成。
+- [x] Desktop 启动恢复横幅、精确 staging 清理、批量取消/恢复/重试已完成。
 - [x] 多连接 reservation/transition/claim race 与提交前 destination race：独立连接、四 CLI 进程 exact-once、真实进程树强退恢复和统一 no-clobber 文件/目录 publish 回归通过；长时掉电 soak 留作 release evidence。
 - [x] 加入 batch/selection model、稳定分页与批量动作事件；保留策略/审计浏览器归 Gate 2。
 - [x] 10k 混合 structured/image/media small-file workload、公平性/延迟/资源/DB 基线；高分辨率/PDF/Office/document 扩展归后续认证。
@@ -570,8 +570,8 @@ API 不直接接受宿主任意路径。请求引用预先授权的 workspace/ro
 
 ### Gate 2：Desktop Beta 功能闭环（1–2 周）
 
-- [ ] 文件夹添加与 mapping preview；稳定 selection 与路径筛选已完成，继续批次浏览、状态控件和虚拟化。
-- [ ] 阶段/速度/ETA/调度原因；恢复横幅；partial cleanup。
+- [ ] 文件夹添加与 mapping preview；稳定 selection、SQLite 路径/状态/批次筛选和分页已完成，继续长列表虚拟化。
+- [ ] 阶段/速度/ETA/调度原因；启动恢复横幅与精确 partial cleanup 已完成。
 - [ ] 报告/配方导出、revalidate、打开输出；磁盘空间预检。
 - [ ] Windows Explorer 集成；macOS/Linux 入口只在对应平台通过后启用。
 - [ ] secret prompt 与全链路 redaction。
@@ -747,7 +747,7 @@ API 不直接接受宿主任意路径。请求引用预先授权的 workspace/ro
 | Runner/Commit | 拆分进程边界、adapter、validator、commit；目的路径竞态 | 平台 containment、磁盘/设备变化处理 | 特殊路径、磁盘满、removable、强退、原子目录提交 |
 | Validation/Report | 统一报告原子落盘顺序、revalidate、redacted export | visual diff 校准、报告 migration/索引 | 所有成功任务 100% 有报告；Required Unknown 不作 Pass |
 | Engine Distribution | 关闭 R-008/R-009；Starter pack、版本化 store、精确 locator、能力门控、许可证/SBOM | 多版本并存、离线更新、回滚和安全公告 | 无系统工具干净机真实转换；污染 PATH、篡改、撤销、降级、半升级负向测试 |
-| Desktop | 恢复横幅、retry/resume、文件夹、筛选/虚拟化、实时进度 | shell integration、可访问性、稳定设置迁移 | 键盘/屏幕阅读器/高 DPI；关闭重启不丢任务 |
+| Desktop | 恢复横幅、retry/resume、SQLite 路径/状态/批次筛选和分页已完成；继续文件夹、虚拟化、实时进度 | shell integration、可访问性、稳定设置迁移 | 键盘/屏幕阅读器/高 DPI；关闭重启不丢任务 |
 | Packaging/Update | Windows 干净机、签名、升级前备份、回滚 | macOS/Linux 包、差分更新（有证据后） | 安装/升级/回滚/卸载矩阵和 release evidence bundle |
 | Diagnostics/Privacy | 本地有界日志、脱敏诊断包、显式导出 | 可选本地统计；遥测仍默认关闭 | 自动扫描诊断包不含文件内容、秘密和 metadata value |
 | Server/MCP | Public Beta 后才开始 | 授权根、auth、SSE/Webhook、无特权 Worker、MCP confirmation | 负向授权、目录越权、覆盖和 shell 注入测试 |
@@ -786,7 +786,7 @@ API 不直接接受宿主任意路径。请求引用预先授权的 workspace/ro
 
 ### 第 5–6 周：Desktop 长期自用闭环
 
-- 恢复横幅；批量 retry/resume/cancel 与路径筛选/稳定 selection 已完成，继续状态控件、批次浏览、虚拟化和实时进度。
+- [x] 恢复横幅、精确 partial 清理、批量 retry/resume/cancel、路径/状态/批次筛选、稳定 selection 与有界分页已完成；继续虚拟化和实时进度。
 - 文件夹 mapping preview、磁盘空间预检、打开输出/导出报告、partial cleanup。
 - Windows Explorer 入口、键盘/UIA/高 DPI/RTL 回归。
 

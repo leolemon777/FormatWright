@@ -75,6 +75,28 @@ type JobRecord = {
   updated_unix_ms: number;
 };
 
+type JobQueryPage = {
+  jobs: JobRecord[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
+type BatchRecord = {
+  id: string;
+  name: string;
+  job_count: number;
+  updated_unix_ms: number;
+};
+
+type JobStateCount = { state: string; count: number };
+
+type RecoverySummary = {
+  recovered_after_restart: number;
+  removed_staged_outputs: number;
+  state_counts: JobStateCount[];
+};
+
 type DoctorReport = {
   engines: Record<
     string,
@@ -170,6 +192,22 @@ const emptySnapshot: QueueSnapshot = {
   visibleJobs: [],
 };
 
+const jobStateOptions = [
+  "queued",
+  "inspecting",
+  "planned",
+  "blocked",
+  "running",
+  "validating",
+  "completed",
+  "warning",
+  "failed",
+  "cancelled",
+  "interrupted",
+] as const;
+
+const JOB_PAGE_SIZE = 100;
+
 export default function App() {
   const [language, setLanguage] = useState<Language>(() =>
     navigator.language.toLowerCase().startsWith("zh") ? "zh-CN" : "en",
@@ -209,11 +247,26 @@ export default function App() {
   const [presetBusy, setPresetBusy] = useState(false);
   const [jobActionBusy, setJobActionBusy] = useState<string | null>(null);
   const [jobSearch, setJobSearch] = useState("");
+  const [jobStateFilter, setJobStateFilter] = useState("");
+  const [jobBatchId, setJobBatchId] = useState("");
+  const [jobOffset, setJobOffset] = useState(0);
+  const [jobTotal, setJobTotal] = useState(0);
+  const [jobBatches, setJobBatches] = useState<BatchRecord[]>([]);
+  const [recovery, setRecovery] = useState<RecoverySummary | null>(null);
+  const [recoveryDismissed, setRecoveryDismissed] = useState(false);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkReport, setBulkReport] = useState<BulkActionReport | null>(null);
   const queueSubmission = useRef<{ intent: string; key: string } | null>(null);
+  const jobQuery = useRef({ batchId: "", state: "", search: "", offset: 0 });
+  const jobRefreshSequence = useRef(0);
   const mounted = useRef(true);
   const copy = messages[language];
+  jobQuery.current = {
+    batchId: jobBatchId,
+    state: jobStateFilter,
+    search: jobSearch,
+    offset: jobOffset,
+  };
 
   useEffect(() => {
     document.documentElement.lang = language;
@@ -281,6 +334,8 @@ export default function App() {
         .then((dispose) => disposers.push(dispose));
     }
     void refreshJobs();
+    void refreshJobBatches();
+    void refreshRecovery();
     void refreshEngines();
     void refreshPresets();
     return () => {
@@ -288,6 +343,12 @@ export default function App() {
       for (const dispose of disposers) dispose();
     };
   }, [projection]);
+
+  useEffect(() => {
+    if (!("__TAURI_INTERNALS__" in window)) return;
+    const timer = window.setTimeout(() => void refreshJobs(0), 200);
+    return () => window.clearTimeout(timer);
+  }, [jobBatchId, jobSearch, jobStateFilter]);
 
   useEffect(() => {
     if (!inputPath || !("__TAURI_INTERNALS__" in window)) {
@@ -480,9 +541,43 @@ export default function App() {
     }
   }
 
-  async function refreshJobs() {
+  async function refreshJobs(nextOffset = jobQuery.current.offset) {
+    const sequence = ++jobRefreshSequence.current;
+    const query = jobQuery.current;
     try {
-      setJobs(await invoke<JobRecord[]>("list_desktop_jobs", { limit: 100 }));
+      const page = await invoke<JobQueryPage>("query_desktop_jobs", {
+        batchId: query.batchId || null,
+        states: query.state ? [query.state] : [],
+        search: query.search.trim() || null,
+        limit: JOB_PAGE_SIZE,
+        offset: nextOffset,
+      });
+      if (sequence !== jobRefreshSequence.current || !mounted.current) return;
+      setJobs(page.jobs);
+      setJobTotal(page.total);
+      setJobOffset(page.offset);
+      void refreshRecovery();
+    } catch {
+      // Browser-only development and first setup can render without an IPC backend.
+    }
+  }
+
+  async function refreshJobBatches() {
+    try {
+      const batches = await invoke<BatchRecord[]>("list_desktop_batches", {
+        limit: 500,
+        offset: 0,
+      });
+      if (mounted.current) setJobBatches(batches);
+    } catch {
+      // Browser-only development and first setup can render without an IPC backend.
+    }
+  }
+
+  async function refreshRecovery() {
+    try {
+      const summary = await invoke<RecoverySummary>("get_desktop_recovery_summary");
+      if (mounted.current) setRecovery(summary);
     } catch {
       // Browser-only development and first setup can render without an IPC backend.
     }
@@ -511,7 +606,7 @@ export default function App() {
     setError(null);
     try {
       const selection = await invoke<SelectionSnapshot>("capture_desktop_job_selection", {
-        batchId: null,
+        batchId: jobBatchId || null,
         states,
         search: jobSearch.trim() || null,
       });
@@ -723,12 +818,17 @@ export default function App() {
   const routeAvailable = !capabilities || route?.available === true;
   const targetOptions = Array.from(new Set([...recommendations, "jpg", "png", "webp", "avif", "mp4", "mp3", "m4a", "wav", "gif", "pdf", "docx", "json", "csv", "yaml", "xml"]));
   const tabs: Tab[] = ["convert", "jobs", "presets", "engines", "reports", "settings"];
-  const normalizedJobSearch = jobSearch.trim().toLocaleLowerCase();
-  const visibleJobs = normalizedJobSearch
-    ? jobs.filter((job) =>
-        `${job.input_path}\n${job.output_path}`.toLocaleLowerCase().includes(normalizedJobSearch),
-      )
-    : jobs;
+  const recoveryCounts = Object.fromEntries(
+    (recovery?.state_counts ?? []).map((entry) => [entry.state, entry.count]),
+  );
+  const recoverableCount = ["blocked", "interrupted", "failed", "cancelled"].reduce(
+    (total, state) => total + (recoveryCounts[state] ?? 0),
+    0,
+  );
+  const showRecovery = !recoveryDismissed && recovery != null &&
+    (recovery.recovered_after_restart > 0 || recoverableCount > 0);
+  const pageStart = jobTotal === 0 ? 0 : jobOffset + 1;
+  const pageEnd = Math.min(jobOffset + jobs.length, jobTotal);
 
   return (
     <main className="shell">
@@ -750,6 +850,19 @@ export default function App() {
           <strong>{error.code ?? copy.stageError}{error.stage ? ` · ${error.stage}` : ""}</strong>
           <span>{error.message}</span>
           {error.recovery && <small>{error.recovery}</small>}
+        </section>
+      )}
+
+      {showRecovery && (
+        <section className="recovery-banner" role="status" aria-live="polite">
+          <div>
+            <strong>{copy.recoveryTitle}</strong>
+            <span>{copy.recoveryBody}: {recovery.recovered_after_restart} {copy.recoveredOnStartup} · {recovery.removed_staged_outputs} {copy.partialsCleaned} · {recoverableCount} {copy.recoverableJobs}</span>
+          </div>
+          <span className="heading-actions">
+            <button className="primary" type="button" onClick={() => setTab("jobs")}>{copy.reviewRecovery}</button>
+            <button type="button" onClick={() => setRecoveryDismissed(true)}>{copy.dismiss}</button>
+          </span>
         </section>
       )}
 
@@ -809,14 +922,21 @@ export default function App() {
 
       {tab === "jobs" && (
         <section className="page-card">
-          <div className="page-heading"><div><p className="section-label">SQLITE</p><h1>{copy.jobs}</h1><p>{copy.queueHint}</p></div><div className="heading-actions"><button className="primary" type="button" disabled={busy !== null} onClick={runQueueWindow}>{busy === "queue-run" ? copy.runningQueue : copy.runQueue}</button>{busy === "queue-run" && <button className="secondary" type="button" onClick={pauseQueueFinishCurrent}>{copy.pauseFinishCurrent}</button>}{busy === "queue-run" && <button className="danger" type="button" onClick={stopQueueWindow}>{copy.stopQueue}</button>}<button type="button" onClick={refreshJobs}>{copy.refresh}</button></div></div>
+          <div className="page-heading"><div><p className="section-label">SQLITE</p><h1>{copy.jobs}</h1><p>{copy.queueHint}</p></div><div className="heading-actions"><button className="primary" type="button" disabled={busy !== null} onClick={runQueueWindow}>{busy === "queue-run" ? copy.runningQueue : copy.runQueue}</button>{busy === "queue-run" && <button className="secondary" type="button" onClick={pauseQueueFinishCurrent}>{copy.pauseFinishCurrent}</button>}{busy === "queue-run" && <button className="danger" type="button" onClick={stopQueueWindow}>{copy.stopQueue}</button>}<button type="button" onClick={() => void refreshJobs()}>{copy.refresh}</button></div></div>
           {queueReport && (
             <p className="success-notice" role="status" aria-live="polite">
-              {copy.queueReport}: selected {queueReport.selected} · completed {queueReport.completed} · warning {queueReport.warning} · blocked {queueReport.blocked} · failed {queueReport.failed} · cancelled {queueReport.cancelled} · peak {queueReport.peak_active}/{queueReport.parallelism}{queueReport.stopped ? " · stopped" : ""}
+              {copy.queueReport}: selected {queueReport.selected} · completed {queueReport.completed} · warning {queueReport.warning} · blocked {queueReport.blocked} · failed {queueReport.failed} · cancelled {queueReport.cancelled} · contended {queueReport.contended} · peak {queueReport.peak_active}/{queueReport.parallelism}{queueReport.stopped ? " · stopped" : ""}
             </p>
           )}
+          <div className="state-summary" aria-label={copy.stateSummary}>
+            {jobStateOptions.map((state) => <button type="button" key={state} className={jobStateFilter === state ? "selected" : ""} onClick={() => setJobStateFilter(jobStateFilter === state ? "" : state)}>{state} <strong>{recoveryCounts[state] ?? 0}</strong></button>)}
+          </div>
           <div className="bulk-toolbar">
-            <label>{copy.filterJobs}<input value={jobSearch} maxLength={200} onChange={(event) => setJobSearch(event.target.value)} placeholder={copy.filterJobsHint} /></label>
+            <div className="job-filters">
+              <label>{copy.filterJobs}<input value={jobSearch} maxLength={200} onChange={(event) => setJobSearch(event.target.value)} placeholder={copy.filterJobsHint} /></label>
+              <label>{copy.stateFilter}<select value={jobStateFilter} onChange={(event) => setJobStateFilter(event.target.value)}><option value="">{copy.allStates}</option>{jobStateOptions.map((state) => <option key={state} value={state}>{state}</option>)}</select></label>
+              <label>{copy.batchFilter}<select value={jobBatchId} onChange={(event) => setJobBatchId(event.target.value)}><option value="">{copy.allBatches}</option>{jobBatches.map((batch) => <option key={batch.id} value={batch.id}>{batch.name} ({batch.job_count})</option>)}</select></label>
+            </div>
             <div className="heading-actions">
               <button className="primary" type="button" disabled={bulkBusy || busy === "queue-run"} onClick={() => runBulkAction("retry", ["failed", "cancelled", "interrupted"])}>{copy.retryMatching}</button>
               <button type="button" disabled={bulkBusy || busy === "queue-run"} onClick={() => runBulkAction("resume", ["blocked", "interrupted"])}>{copy.resumeMatching}</button>
@@ -824,7 +944,12 @@ export default function App() {
             </div>
           </div>
           {bulkReport && <p className="success-notice" role="status" aria-live="polite">{copy.bulkReport}: {bulkReport.transitioned} / {bulkReport.matched} · {copy.skippedState} {bulkReport.skipped_state} · {copy.skippedConflict} {bulkReport.skipped_conflict}</p>}
-          <div className="job-list">{visibleJobs.length === 0 ? <p className="empty">{copy.historyEmpty}</p> : visibleJobs.map((job) => { const resumable = job.state === "interrupted" || job.state === "blocked"; const retryable = job.state === "failed" || job.state === "cancelled"; return <article key={job.id}><div><strong>{job.output_path}</strong><small>{job.input_path}</small></div><span className={`status status-${job.state}`}>{job.state}</span><span className="job-actions">{(resumable || retryable) && <button className="primary" type="button" disabled={jobActionBusy !== null || busy === "queue-run" || bulkBusy} onClick={() => requeueJob(job)}>{jobActionBusy === job.id ? (resumable ? copy.resumingJob : copy.retryingJob) : (resumable ? copy.resumeJob : copy.retryJob)}</button>}<button type="button" onClick={() => loadReport(job.id)}>{copy.selectJob}</button></span></article>; })}</div>
+          <div className="job-list">{jobs.length === 0 ? <p className="empty">{copy.historyEmpty}</p> : jobs.map((job) => { const resumable = job.state === "interrupted" || job.state === "blocked"; const retryable = job.state === "failed" || job.state === "cancelled"; return <article key={job.id}><div><strong>{job.output_path}</strong><small>{job.input_path}</small></div><span className={`status status-${job.state}`}>{job.state}</span><span className="job-actions">{(resumable || retryable) && <button className="primary" type="button" disabled={jobActionBusy !== null || busy === "queue-run" || bulkBusy} onClick={() => requeueJob(job)}>{jobActionBusy === job.id ? (resumable ? copy.resumingJob : copy.retryingJob) : (resumable ? copy.resumeJob : copy.retryJob)}</button>}<button type="button" onClick={() => loadReport(job.id)}>{copy.selectJob}</button></span></article>; })}</div>
+          <nav className="job-pagination" aria-label={copy.pagination}>
+            <button type="button" disabled={jobOffset === 0} onClick={() => void refreshJobs(Math.max(0, jobOffset - JOB_PAGE_SIZE))}>{copy.previousPage}</button>
+            <span>{pageStart.toLocaleString()}–{pageEnd.toLocaleString()} / {jobTotal.toLocaleString()}</span>
+            <button type="button" disabled={jobOffset + jobs.length >= jobTotal} onClick={() => void refreshJobs(jobOffset + JOB_PAGE_SIZE)}>{copy.nextPage}</button>
+          </nav>
           <details className="benchmark"><summary>{copy.benchmark}</summary><button type="button" onClick={runBenchmark}>{copy.benchmark}</button>{benchmark && <p>{benchmark.total_jobs.toLocaleString()} / {benchmark.emitted_batches} batches / {benchmark.elapsed_milliseconds} ms</p>}<p>{queueSnapshot.totalJobs.toLocaleString()} projected · {queueSnapshot.completed.toLocaleString()} completed</p></details>
         </section>
       )}

@@ -27,6 +27,11 @@ nav button:hover, nav .nav-active { color: #f4f7f1; background: #212620; }
 .error-banner strong { color: #ffaaa0; font: 700 11px/1.3 ui-monospace, monospace; }
 .error-banner span { color: #f4d7d3; }
 .error-banner small { color: #caa8a3; }
+.recovery-banner { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 16px; border: 1px solid #5d6633; border-left: 4px solid #ffc36b; padding: 14px 16px; color: #e9e5ca; background: #292817; }
+.recovery-banner > div { display: grid; gap: 4px; }
+.recovery-banner strong { color: #ffe4a8; }
+.recovery-banner span { font-size: 12px; line-height: 1.5; }
+.recovery-banner button, .state-summary button, .job-pagination button { border: 0; border-radius: 3px; padding: 9px 12px; color: #e5eae2; background: #30372e; font-weight: 750; }
 
 .workspace { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 16px; margin-top: 18px; }
 .workspace-main, .side-panel, .page-card { border: 1px solid #30362f; background: rgba(20, 24, 20, .88); }
@@ -78,8 +83,13 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .plan-heading, .page-heading { display: flex; align-items: start; justify-content: space-between; gap: 18px; }
 .heading-actions { display: flex; gap: 8px; }
 .bulk-toolbar { display: flex; align-items: end; justify-content: space-between; gap: 16px; margin-top: 16px; border: 1px solid #293129; padding: 14px; background: #111711; }
-.bulk-toolbar label { flex: 1; max-width: 560px; }
-.bulk-toolbar input { width: 100%; margin-top: 7px; }
+.job-filters { display: grid; grid-template-columns: minmax(220px, 1.5fr) minmax(130px, .7fr) minmax(180px, 1fr); gap: 10px; flex: 1; }
+.bulk-toolbar input { width: 100%; }
+.state-summary { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 16px; }
+.state-summary button { border: 1px solid #333b31; padding: 7px 9px; color: #aeb8aa; background: #141914; font: 700 10px ui-monospace, monospace; text-transform: uppercase; }
+.state-summary button strong { margin-left: 5px; color: #e8eee3; }
+.state-summary button.selected { border-color: #b9ff66; color: #101410; background: #b9ff66; }
+.state-summary button.selected strong { color: #101410; }
 .loss { border: 1px solid #465044; border-radius: 999px; padding: 7px 10px; font: 700 10px/1 ui-monospace, monospace; text-transform: uppercase; }
 .loss-lossy { color: #ffc36b; border-color: #6f5733; }
 .loss-safe { color: #b9ff66; }
@@ -104,6 +114,7 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .job-actions .primary { color: #101410; background: #b9ff66; }
 .job-list strong, .job-list small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .job-list small { margin-top: 4px; color: #788175; }
+.job-pagination { display: flex; align-items: center; justify-content: flex-end; gap: 12px; margin-top: 16px; color: #8d978b; font-size: 12px; }
 .status { font: 700 10px ui-monospace, monospace; text-transform: uppercase; }
 .status-completed, .status-pass { color: #b9ff66; }
 .status-running, .status-validating { color: #7ecbff; }
@@ -166,6 +177,8 @@ button:disabled { cursor: not-allowed; opacity: .45; }
   .drop-zone { align-items: flex-start; flex-wrap: wrap; }
   .page-heading { flex-direction: column; }
   .heading-actions { width: 100%; flex-wrap: wrap; }
+  .recovery-banner, .bulk-toolbar { align-items: stretch; flex-direction: column; }
+  .job-filters { grid-template-columns: 1fr; }
   .choose-file { margin-left: 62px; }
   .path-control { grid-template-columns: 1fr; }
   .path-control button { padding: 11px 14px; }

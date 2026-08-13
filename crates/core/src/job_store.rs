@@ -79,6 +79,20 @@ pub struct JobSelectionQuery {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct JobQueryPage {
+    pub jobs: Vec<JobRecord>,
+    pub total: u64,
+    pub limit: usize,
+    pub offset: usize,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct JobStateCount {
+    pub state: JobState,
+    pub count: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct SelectionSnapshot {
     pub id: Uuid,
     pub query: JobSelectionQuery,
@@ -947,6 +961,83 @@ impl SqliteJobStore {
             .collect()
     }
 
+    /// Queries one bounded, reverse-update-ordered page using the same batch,
+    /// state, and path predicates as stable selection capture.
+    ///
+    /// # Errors
+    ///
+    /// Returns an input or storage error when the query is invalid or cannot
+    /// be read.
+    pub fn query_jobs_page(
+        &self,
+        query: &JobSelectionQuery,
+        limit: usize,
+        offset: usize,
+    ) -> Result<JobQueryPage> {
+        let query = normalize_selection_query(query)?;
+        let limit = limit.clamp(1, 500);
+        let mut values = Vec::<Value>::new();
+        let from_where = job_query_from_where(&query, &mut values)?;
+        let total = self
+            .connection
+            .query_row(
+                &format!("SELECT COUNT(DISTINCT jobs.id) {from_where}"),
+                params_from_iter(values.iter()),
+                |row| row.get::<_, u64>(0),
+            )
+            .map_err(storage_error)?;
+        let mut page_values = values;
+        page_values.push(Value::Integer(i64::try_from(limit).unwrap_or(500)));
+        page_values.push(Value::Integer(i64::try_from(offset).unwrap_or(i64::MAX)));
+        let mut statement = self
+            .connection
+            .prepare(&format!(
+                "SELECT jobs.id, jobs.state, jobs.input_path, jobs.output_path,
+                        jobs.plan_hash, jobs.sequence, jobs.created_unix_ms,
+                        jobs.updated_unix_ms
+                 {from_where}
+                 ORDER BY jobs.updated_unix_ms DESC, jobs.id ASC
+                 LIMIT ? OFFSET ?"
+            ))
+            .map_err(storage_error)?;
+        let jobs = statement
+            .query_map(params_from_iter(page_values.iter()), stored_job_row)
+            .map_err(storage_error)?
+            .map(|row| job_record_from_row(row.map_err(storage_error)?))
+            .collect::<Result<Vec<_>>>()?;
+        Ok(JobQueryPage {
+            jobs,
+            total,
+            limit,
+            offset,
+        })
+    }
+
+    /// Returns durable counts for every state currently present in `SQLite`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a storage error when the aggregate cannot be read or decoded.
+    pub fn count_jobs_by_state(&self) -> Result<Vec<JobStateCount>> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT state, COUNT(*) FROM jobs GROUP BY state ORDER BY state ASC")
+            .map_err(storage_error)?;
+        statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, u64>(1)?))
+            })
+            .map_err(storage_error)?
+            .map(|row| {
+                let (state, count) = row.map_err(storage_error)?;
+                Ok(JobStateCount {
+                    state: parse_state(&state)?,
+                    count,
+                })
+            })
+            .collect()
+    }
+
     /// Lists a bounded FIFO scheduling window for one durable state.
     ///
     /// # Errors
@@ -1560,8 +1651,29 @@ fn selection_member_ids(
     transaction: &Transaction<'_>,
     query: &JobSelectionQuery,
 ) -> Result<Vec<String>> {
-    let mut sql = String::from("SELECT jobs.id FROM jobs");
     let mut values = Vec::<Value>::new();
+    let mut sql = format!(
+        "SELECT jobs.id {}",
+        job_query_from_where(query, &mut values)?
+    );
+    if query.batch_id.is_some() {
+        sql.push_str(" ORDER BY batch_members.ordinal ASC, jobs.id ASC");
+    } else {
+        sql.push_str(" ORDER BY jobs.created_unix_ms ASC, jobs.id ASC");
+    }
+    sql.push_str(" LIMIT 100001");
+    let mut statement = transaction.prepare(&sql).map_err(storage_error)?;
+    statement
+        .query_map(params_from_iter(values.iter()), |row| {
+            row.get::<_, String>(0)
+        })
+        .map_err(storage_error)?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(storage_error)
+}
+
+fn job_query_from_where(query: &JobSelectionQuery, values: &mut Vec<Value>) -> Result<String> {
+    let mut sql = String::from("FROM jobs");
     if let Some(batch_id) = query.batch_id {
         sql.push_str(" JOIN batch_members ON batch_members.job_id = jobs.id");
         sql.push_str(" WHERE batch_members.batch_id = ?");
@@ -1602,20 +1714,7 @@ fn selection_member_ids(
         values.push(Value::Text(pattern.clone()));
         values.push(Value::Text(pattern));
     }
-    if query.batch_id.is_some() {
-        sql.push_str(" ORDER BY batch_members.ordinal ASC, jobs.id ASC");
-    } else {
-        sql.push_str(" ORDER BY jobs.created_unix_ms ASC, jobs.id ASC");
-    }
-    sql.push_str(" LIMIT 100001");
-    let mut statement = transaction.prepare(&sql).map_err(storage_error)?;
-    statement
-        .query_map(params_from_iter(values.iter()), |row| {
-            row.get::<_, String>(0)
-        })
-        .map_err(storage_error)?
-        .collect::<std::result::Result<Vec<_>, _>>()
-        .map_err(storage_error)
+    Ok(sql)
 }
 
 #[allow(clippy::too_many_lines)]
@@ -2872,6 +2971,64 @@ mod tests {
         );
         assert_eq!(members[0].state, JobState::Queued);
         assert_eq!(members[1].state, JobState::Failed);
+    }
+
+    #[test]
+    fn query_page_filters_by_batch_state_and_escaped_path_search() {
+        let mut store = SqliteJobStore::open_in_memory().expect("in-memory store");
+        let requests = ["alpha%one", "alpha_two", "beta"]
+            .into_iter()
+            .map(|name| JobCreateRequest {
+                input_path: PathBuf::from(format!("source/{name}.json")),
+                output_path: PathBuf::from(format!("target/{name}.yaml")),
+                plan: durable_plan(),
+            })
+            .collect::<Vec<_>>();
+        let batch = store
+            .create_batch("query batch", &requests)
+            .expect("create batch");
+        let jobs = store
+            .list_batch_jobs_page(batch.id, 10, 0)
+            .expect("batch jobs");
+        store
+            .transition(jobs[0].id, JobState::Queued, "TEST_QUEUED")
+            .expect("queue first");
+        store
+            .transition(jobs[1].id, JobState::Cancelled, "TEST_CANCELLED")
+            .expect("cancel second");
+
+        let page = store
+            .query_jobs_page(
+                &JobSelectionQuery {
+                    batch_id: Some(batch.id),
+                    states: vec![JobState::Queued],
+                    search: Some("%one".to_owned()),
+                },
+                25,
+                0,
+            )
+            .expect("filtered page");
+
+        assert_eq!(page.total, 1);
+        assert_eq!(page.jobs.len(), 1);
+        assert_eq!(page.jobs[0].id, jobs[0].id);
+        assert_eq!(page.limit, 25);
+        assert_eq!(page.offset, 0);
+        let counts = store.count_jobs_by_state().expect("state counts");
+        assert_eq!(
+            counts
+                .iter()
+                .find(|entry| entry.state == JobState::Queued)
+                .map(|entry| entry.count),
+            Some(1)
+        );
+        assert_eq!(
+            counts
+                .iter()
+                .find(|entry| entry.state == JobState::Cancelled)
+                .map(|entry| entry.count),
+            Some(1)
+        );
     }
 
     #[test]

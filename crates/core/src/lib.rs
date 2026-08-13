@@ -58,8 +58,8 @@ pub use formatwright_engine_sdk::{
 pub use inspect::inspect_media;
 pub use job_store::{
     BatchRecord, BulkActionReport, BulkJobAction, IdempotentJobResult, JobCreateRequest,
-    JobDetails, JobEventRecord, JobProgress, JobRecord, JobSelectionQuery, SelectionSnapshot,
-    SqliteJobStore,
+    JobDetails, JobEventRecord, JobProgress, JobQueryPage, JobRecord, JobSelectionQuery,
+    JobStateCount, SelectionSnapshot, SqliteJobStore,
 };
 pub use maintenance::{
     BackupReport, CompactReport, IntegrityReport, MaintenanceService, MaintenanceStatus,

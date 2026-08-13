@@ -11,10 +11,11 @@ use formatwright_core::{
     ApplicationSettings, ApplicationSettingsService, ApplicationStateLayout,
     ApplicationStateService, BatchRecord, BulkActionReport, BulkJobAction, BulkJobService,
     CapabilitySnapshot, ConversionPreset, ConversionService, DoctorReport, EngineDiscoveryPolicy,
-    EngineRegistryIdentity, JobExecutionService, JobRecord, JobSelectionQuery, JobState,
-    PRESET_SCHEMA_VERSION, Plan, PlanRequest, PresetLibrary, Probe, QueueRunReport,
-    QueueWindowControl, ReportService, SelectionSnapshot, SqliteJobStore, ValidationReport,
-    VerifiedEnginePack, activate_engine_pack, capability_snapshot_for_input, prepare_conversion,
+    EngineRegistryIdentity, JobExecutionService, JobQueryPage, JobRecord, JobSelectionQuery,
+    JobState, JobStateCount, PRESET_SCHEMA_VERSION, Plan, PlanRequest, PresetLibrary, Probe,
+    QueueRunReport, QueueWindowControl, ReportService, SelectionSnapshot, SqliteJobStore,
+    ValidationReport, VerifiedEnginePack, activate_engine_pack, capability_snapshot_for_input,
+    cleanup_staged_output, prepare_conversion,
 };
 use queue_bridge::{DEFAULT_BATCH_JOBS, DEFAULT_BENCHMARK_JOBS, QueueBatchIter};
 use serde::{Deserialize, Serialize};
@@ -34,6 +35,20 @@ struct DesktopState {
     reports_directory: PathBuf,
     engine_registry_directory: PathBuf,
     engine_store_directory: PathBuf,
+    startup_recovery: DesktopStartupRecovery,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+struct DesktopStartupRecovery {
+    recovered_after_restart: usize,
+    removed_staged_outputs: usize,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct DesktopRecoverySummary {
+    recovered_after_restart: usize,
+    removed_staged_outputs: usize,
+    state_counts: Vec<JobStateCount>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -503,6 +518,46 @@ fn list_desktop_jobs(
 
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)]
+fn query_desktop_jobs(
+    state: tauri::State<'_, DesktopState>,
+    batch_id: Option<String>,
+    states: Vec<JobState>,
+    search: Option<String>,
+    limit: Option<usize>,
+    offset: Option<usize>,
+) -> Result<JobQueryPage, String> {
+    let batch_id = batch_id
+        .map(|value| Uuid::parse_str(&value).map_err(|error| error.to_string()))
+        .transpose()?;
+    lock(&state.store)?
+        .query_jobs_page(
+            &JobSelectionQuery {
+                batch_id,
+                states,
+                search,
+            },
+            limit.unwrap_or(100),
+            offset.unwrap_or_default(),
+        )
+        .map_err(serialize_error)
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+fn get_desktop_recovery_summary(
+    state: tauri::State<'_, DesktopState>,
+) -> Result<DesktopRecoverySummary, String> {
+    Ok(DesktopRecoverySummary {
+        recovered_after_restart: state.startup_recovery.recovered_after_restart,
+        removed_staged_outputs: state.startup_recovery.removed_staged_outputs,
+        state_counts: lock(&state.store)?
+            .count_jobs_by_state()
+            .map_err(serialize_error)?,
+    })
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
 fn list_desktop_batches(
     state: tauri::State<'_, DesktopState>,
     limit: Option<usize>,
@@ -892,6 +947,22 @@ fn install_bundled_engine_packs(
     Ok(installed)
 }
 
+fn recover_desktop_jobs(
+    store: &mut SqliteJobStore,
+) -> formatwright_core::Result<DesktopStartupRecovery> {
+    let interrupted = store.interrupt_active_jobs()?;
+    let mut removed_staged_outputs = 0;
+    for job in &interrupted {
+        if cleanup_staged_output(&job.output_path, job.id)? {
+            removed_staged_outputs += 1;
+        }
+    }
+    Ok(DesktopStartupRecovery {
+        recovered_after_restart: interrupted.len(),
+        removed_staged_outputs,
+    })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 /// Starts the bundled local desktop application.
 ///
@@ -931,8 +1002,7 @@ pub fn run() {
             }
             let mut store = SqliteJobStore::open(&job_database_path)
                 .map_err(|error| Box::<dyn std::error::Error>::from(error.to_string()))?;
-            store
-                .interrupt_active_jobs()
+            let startup_recovery = recover_desktop_jobs(&mut store)
                 .map_err(|error| Box::<dyn std::error::Error>::from(error.to_string()))?;
             let presets =
                 load_preset_library(&presets_path).map_err(Box::<dyn std::error::Error>::from)?;
@@ -951,6 +1021,7 @@ pub fn run() {
                 reports_directory,
                 engine_registry_directory,
                 engine_store_directory,
+                startup_recovery,
             });
             Ok(())
         })
@@ -969,6 +1040,8 @@ pub fn run() {
             cancel_desktop_job,
             requeue_desktop_job,
             list_desktop_jobs,
+            query_desktop_jobs,
+            get_desktop_recovery_summary,
             list_desktop_batches,
             capture_desktop_job_selection,
             run_desktop_bulk_action,
@@ -1004,8 +1077,8 @@ mod tests {
     use super::{
         DesktopConversionRequest, DesktopEngineRegistryEntry, acquire_queue_window, backup_path,
         bundled_manifest_paths, load_preset_library, persist_preset_library,
-        prepare_approved_desktop_conversion, registered_manifest_paths, requeue_job,
-        run_queue_window_on_database,
+        prepare_approved_desktop_conversion, recover_desktop_jobs, registered_manifest_paths,
+        requeue_job, run_queue_window_on_database,
     };
 
     fn plan(output_path: PathBuf) -> Plan {
@@ -1284,6 +1357,40 @@ mod tests {
                 .expect("exists")
                 .state,
             JobState::Completed
+        );
+    }
+
+    #[test]
+    fn desktop_startup_interrupts_active_jobs_and_removes_exact_staging_artifacts() {
+        let suite = tempdir().expect("suite");
+        let mut store = SqliteJobStore::open(suite.path().join("jobs.sqlite3")).expect("store");
+        let output = suite.path().join("recovered.yaml");
+        let job = store
+            .create_job(
+                suite.path().join("recovered.json"),
+                &output,
+                &plan(output.clone()),
+            )
+            .expect("create job");
+        store
+            .transition(job.id, JobState::Running, "TEST_STARTED")
+            .expect("start job");
+        let staged = formatwright_core::staged_output_path(&output, job.id).expect("staged path");
+        fs::write(&staged, b"incomplete").expect("write staged output");
+
+        let recovery = recover_desktop_jobs(&mut store).expect("recover desktop jobs");
+
+        assert_eq!(recovery.recovered_after_restart, 1);
+        assert_eq!(recovery.removed_staged_outputs, 1);
+        assert!(!staged.exists());
+        let details = store
+            .get_job_details(job.id)
+            .expect("read details")
+            .expect("job details");
+        assert_eq!(details.job.state, JobState::Interrupted);
+        assert_eq!(
+            details.events.last().expect("recovery event").code,
+            "RECOVERED_AFTER_RESTART"
         );
     }
 
