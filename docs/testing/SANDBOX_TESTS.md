@@ -1,7 +1,7 @@
 # Sandbox Test Harness
 
 - Status: Normative test procedure
-- Updated: 2026-08-10
+- Updated: 2026-08-12
 
 ## Purpose
 
@@ -45,6 +45,8 @@ Generated `.artifacts` content is intentionally ignored by Git. Release CI must 
 ## Additional workflow suites
 
 The same isolation and evidence rules apply to the focused audio, GIF, image, HEIC, structured-data, metadata, recursive-batch, document, PDF, and Office scripts listed in the repository README. In particular, `scripts/test_pdf_sandbox.ps1` creates only synthetic PDFs, renders into a unique case directory, independently checks every output page, and records its exact Poppler/ffprobe evidence boundary in `docs/testing/PDF_SANDBOX.md`. `scripts/test_office_sandbox.ps1` creates synthetic DOCX/PPTX/XLSX packages, converts them with an isolated LibreOffice profile, independently renders and decodes every PDF page, and records its boundary in `docs/testing/OFFICE_SANDBOX.md`. `scripts/test_heic_sandbox.ps1` reconstructs a fixed-hash upstream libheif corpus fixture only inside the ignored case directory and records its decoder boundary in `docs/testing/HEIC_SANDBOX.md`.
+
+`scripts/test_multi_process_queue.ps1` uses separate CLI processes and isolated SQLite files to test process-level idempotency plus exact-once queue ownership. `scripts/test_queue_crash_recovery.ps1` targets only the newly launched, path-verified test runner process tree and only after observing its Job in Running with its deterministic partial. Their assertions and recorded cases are in `docs/testing/MULTI_PROCESS_QUEUE.md`.
 
 The opt-in Rust release gate in `docs/testing/TEN_THOUSAND_CONVERSIONS.md` uses an OS temporary directory, creates 10,000 different inputs and outputs, and removes the complete fixture when the test process exits normally. It remains distinct from the smaller per-workflow scripts and is not part of ordinary CI.
 

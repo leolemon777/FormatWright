@@ -29,6 +29,7 @@ pub struct QueueRunReport {
     pub blocked: usize,
     pub failed: usize,
     pub cancelled: usize,
+    pub contended: usize,
     pub stopped: bool,
     pub parallelism: usize,
     pub peak_active: usize,
@@ -164,7 +165,7 @@ impl JobExecutionService {
                 "Use --limit 256 or less and run another bounded window afterward.",
             ));
         }
-        let jobs = store.list_jobs_by_state(JobState::Queued, limit)?;
+        let jobs = store.list_queued_jobs_fair(limit)?;
         let mut pending = VecDeque::with_capacity(jobs.len());
         for job in &jobs {
             let details = store.get_job_details(job.id)?.ok_or_else(|| {
@@ -185,6 +186,7 @@ impl JobExecutionService {
         let mut blocked = 0_usize;
         let mut failed = 0_usize;
         let mut cancelled = 0_usize;
+        let mut contended = 0_usize;
         let policy = SchedulerPolicy::bounded(parallel);
         let mut scheduler = ResourceScheduler::new(policy);
         let mut workers = tokio::task::JoinSet::new();
@@ -251,6 +253,11 @@ impl JobExecutionService {
                         }
                         QueuePreparation::Failed => {
                             failed = failed.saturating_add(1);
+                            scheduler.release(job_id);
+                            active_jobs.remove(&job_id);
+                        }
+                        QueuePreparation::Contended => {
+                            contended = contended.saturating_add(1);
                             scheduler.release(job_id);
                             active_jobs.remove(&job_id);
                         }
@@ -362,7 +369,8 @@ impl JobExecutionService {
             .saturating_add(warning)
             .saturating_add(blocked)
             .saturating_add(failed)
-            .saturating_add(cancelled);
+            .saturating_add(cancelled)
+            .saturating_add(contended);
         Ok(QueueRunReport {
             schema_version: 1,
             selected: jobs.len(),
@@ -371,6 +379,7 @@ impl JobExecutionService {
             blocked,
             failed,
             cancelled,
+            contended,
             stopped: control.admission_cancelled() || terminal < jobs.len(),
             parallelism: policy.max_processes,
             peak_active,
@@ -449,6 +458,7 @@ enum QueuePreparation {
     Ready(Box<PreparedQueueJob>),
     Blocked,
     Failed,
+    Contended,
 }
 
 struct QueueWorkerOutcome {
@@ -461,6 +471,12 @@ async fn prepare_queued_job(
     details: JobDetails,
 ) -> Result<QueuePreparation> {
     let job_id = details.job.id;
+    if store
+        .claim_queued_job(job_id, "QUEUE_REINSPECTING")?
+        .is_none()
+    {
+        return Ok(QueuePreparation::Contended);
+    }
     if let Err(error) = store.validate_output_reservation(job_id) {
         if matches!(
             error.code,
@@ -471,7 +487,6 @@ async fn prepare_queued_job(
         }
         return Err(error);
     }
-    store.transition(job_id, JobState::Inspecting, "QUEUE_REINSPECTING")?;
     let Some(stored_engine) = details.plan.steps.first().map(|step| step.engine.clone()) else {
         store.transition(job_id, JobState::Failed, "PLAN_INVALID")?;
         return Ok(QueuePreparation::Failed);
@@ -729,6 +744,7 @@ mod tests {
                 blocked: 0,
                 failed: 0,
                 cancelled: 0,
+                contended: 0,
                 stopped: false,
                 parallelism: 2,
                 peak_active: 1,

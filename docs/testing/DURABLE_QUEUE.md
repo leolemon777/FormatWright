@@ -47,9 +47,11 @@ The mixed scheduler run `mixed-scheduler-suite-402efe46745d4aeaa1a1319ea1f0d304`
 
 The opt-in release gate in `TEN_THOUSAND_CONVERSIONS.md` now proves 10,000 distinct structured inputs are planned, atomically queued, reopened, executed in windows of 128, semantically validated, and committed to 10,000 distinct outputs. The recorded Windows release run completed planning in 48.638 seconds and execution in 88.111 seconds. A new atomic `queue_jobs` transition removes the prior per-job transaction bottleneck and rolls the complete enqueue operation back on any invalid ID or state.
 
+The multi-process gate in `MULTI_PROCESS_QUEUE.md` now proves atomic `Queued → Inspecting` ownership across four independent CLI processes, process-level idempotent replay, round-robin batch-window selection, and a real force-kill/recover/resume cycle.
+
 ## Remaining certification work
 
 - Run and retry a mixed successful/failed media/document distribution across the full 10,000-job corpus; the nine-job mixed and homogeneous 10,000-job gates now pass separately.
 - Extend RSS and WAL measurements from the nine-job mixed scheduler gate to the full 10,000-job corpus.
-- Extend the existing independent-connection reservation/transition regressions into a multi-process soak with kill/restart injection.
+- Extend the verified four-process and force-kill cases into a long-duration reboot/power-loss campaign.
 - Repeat on macOS and Linux filesystems.

@@ -1,7 +1,7 @@
 # Shared JobExecutionService Evidence
 
 - Status: Gate 1 shared execution and R-001 failure-unwind evidence
-- Updated: 2026-08-11
+- Updated: 2026-08-12
 - Platform observed: Windows 11 x64 (development)
 
 ## Claim under test
@@ -16,7 +16,9 @@ The durable queue scheduling loop that previously lived only in the CLI now exec
 - Queued jobs recheck engine identity and input fingerprint before Running
 - Cancellation stops new admissions; active workers receive the same token
 - Central control plane persists `QUEUE_REINSPECTING`, `ENGINE_FINISHED`, `VALIDATION_FINISHED`, `QUEUE_CANCELLED`, and related events
-- `QueueRunReport` schema_version 1 fields are unchanged for CLI JSON output
+- `QueueRunReport` schema_version 1 keeps the existing fields and adds the backward-compatible `contended` count for rows selected by this process but atomically claimed by another
+- Queue windows take a deterministic round-robin rank from each persistent batch lane; unbatched Jobs share one interactive lane
+- `Queued → Inspecting` is an immediate-transaction claim, so independent processes cannot execute the same Job
 - Any prepare, milestone, report callback, terminal transition, or worker-join failure first stops admission, cancels the shared worker token, drains the complete `JoinSet`, releases scheduler resources, and persists unfinished active jobs as recoverable `Interrupted / CONTROL_PLANE_FAILED` before returning the original error
 - A cleanup persistence failure is attached to the original diagnostic after worker drain; the control plane does not hide the initiating failure
 
@@ -36,6 +38,7 @@ The durable queue scheduling loop that previously lived only in the CLI now exec
 - A plan with no steps transitions to `Failed` via `PLAN_INVALID`
 - An injected report-storage callback failure with two admitted workers cancels and drains the peer, marks both jobs `Interrupted / CONTROL_PLANE_FAILED`, leaves no staged output, permits requeue, and releases reservations after terminal cleanup
 - An injected worker panic with an admitted delayed peer returns `Internal` only after peer drain and leaves both jobs recoverable rather than silently aborting the `JoinSet`
+- Two barrier-synchronized SQLite connections claim one queued Job exactly once, and two durable batches are selected A1/B1/A2/B2 instead of one batch monopolizing the window
 
 ## Sandbox continuity
 
@@ -64,8 +67,12 @@ Stable-selection bulk retry/resume/cancel is now implemented. Recovery banner re
 
 `run_window` bridges a CLI/external cancellation token with structured `tokio::select!`, not a detached task. When cancellation wins, it signals immediate pause and then continues polling the same window future until every admitted worker has terminated, scheduler resources are released, and SQLite state is updated.
 
+## Multi-process continuity
+
+The four-runner exact-once gate and real force-kill/recovery gate are recorded in `MULTI_PROCESS_QUEUE.md`. The queue report treats a lost atomic claim as normal contention, not task failure.
+
 ## Remaining work
 
 - Desktop recovery banner, batch browser, and virtualized query view
-- Multi-process soak and 10k mixed workload certification (independent-connection reservation/transition races already pass)
+- Long-duration power-loss soak and full 10k mixed workload certification
 - Cross-platform release certification of real adapter process trees (the Windows unit fixture and existing FFmpeg sandbox are development evidence)

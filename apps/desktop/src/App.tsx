@@ -121,6 +121,7 @@ type QueueRunReport = {
   blocked: number;
   failed: number;
   cancelled: number;
+  contended: number;
   stopped: boolean;
   parallelism: number;
   peak_active: number;

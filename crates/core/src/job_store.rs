@@ -1000,6 +1000,133 @@ impl SqliteJobStore {
             .collect()
     }
 
+    /// Lists a bounded queued window with round-robin fairness across durable
+    /// batches. Jobs outside a batch share one FIFO interactive lane.
+    ///
+    /// # Errors
+    ///
+    /// Returns a storage error when rows cannot be read or decoded.
+    pub fn list_queued_jobs_fair(&self, limit: usize) -> Result<Vec<JobRecord>> {
+        let limit = limit.clamp(1, 10_000);
+        let mut statement = self
+            .connection
+            .prepare(
+                "WITH eligible AS (
+                     SELECT jobs.id, jobs.state, jobs.input_path, jobs.output_path,
+                            jobs.plan_hash, jobs.sequence, jobs.created_unix_ms,
+                            jobs.updated_unix_ms,
+                            COALESCE(batch_members.batch_id, '__interactive__') AS lane_id,
+                            COALESCE(batch_members.ordinal, jobs.created_unix_ms)
+                                AS lane_ordinal,
+                            COALESCE(batches.created_unix_ms,
+                                     (SELECT MIN(created_unix_ms) FROM jobs
+                                      WHERE state = 'queued'))
+                                AS lane_created_unix_ms
+                     FROM jobs
+                     LEFT JOIN batch_members ON batch_members.job_id = jobs.id
+                     LEFT JOIN batches ON batches.id = batch_members.batch_id
+                     WHERE jobs.state = 'queued'
+                 ), ranked AS (
+                     SELECT *, ROW_NUMBER() OVER (
+                         PARTITION BY lane_id
+                         ORDER BY lane_ordinal ASC, created_unix_ms ASC, id ASC
+                     ) AS lane_rank
+                     FROM eligible
+                 )
+                 SELECT id, state, input_path, output_path, plan_hash, sequence,
+                        created_unix_ms, updated_unix_ms
+                 FROM ranked
+                 ORDER BY lane_rank ASC, lane_created_unix_ms ASC, lane_id ASC,
+                          lane_ordinal ASC, id ASC
+                 LIMIT ?1",
+            )
+            .map_err(storage_error)?;
+        statement
+            .query_map([i64::try_from(limit).unwrap_or(10_000)], stored_job_row)
+            .map_err(storage_error)?
+            .map(|row| job_record_from_row(row.map_err(storage_error)?))
+            .collect()
+    }
+
+    /// Atomically claims a queued job for one scheduler process. A competing
+    /// process that already claimed the same Job yields `None` without error.
+    ///
+    /// # Errors
+    ///
+    /// Returns a storage error for a missing Job or failed transaction.
+    #[allow(clippy::too_many_lines)]
+    pub fn claim_queued_job(&mut self, job_id: Uuid, code: &str) -> Result<Option<JobRecord>> {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(storage_error)?;
+        let row = transaction
+            .query_row(
+                "SELECT state, input_path, output_path, plan_hash, sequence,
+                        created_unix_ms, updated_unix_ms
+                 FROM jobs WHERE id = ?1",
+                [job_id.to_string()],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, u64>(4)?,
+                        row.get::<_, i64>(5)?,
+                        row.get::<_, i64>(6)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(storage_error)?
+            .ok_or_else(|| {
+                FormatWrightError::new(
+                    ErrorCode::StorageFailed,
+                    Stage::Store,
+                    format!("Job does not exist: {job_id}"),
+                    "Refresh the job list.",
+                )
+            })?;
+        if parse_state(&row.0)? != JobState::Queued {
+            transaction.commit().map_err(storage_error)?;
+            return Ok(None);
+        }
+        let now = now_unix_ms();
+        let sequence = row.4.saturating_add(1);
+        let updated = transaction
+            .execute(
+                "UPDATE jobs
+                 SET state = 'inspecting', sequence = ?1, updated_unix_ms = ?2
+                 WHERE id = ?3 AND state = 'queued' AND sequence = ?4",
+                params![sequence, now, job_id.to_string(), row.4],
+            )
+            .map_err(storage_error)?;
+        if updated != 1 {
+            transaction.commit().map_err(storage_error)?;
+            return Ok(None);
+        }
+        transaction
+            .execute(
+                "INSERT INTO job_events(
+                    job_id, sequence, previous_state, next_state, code, timestamp_unix_ms
+                 ) VALUES (?1, ?2, 'queued', 'inspecting', ?3, ?4)",
+                params![job_id.to_string(), sequence, code, now],
+            )
+            .map_err(storage_error)?;
+        transaction.commit().map_err(storage_error)?;
+        Ok(Some(JobRecord {
+            id: job_id,
+            state: JobState::Inspecting,
+            input_path: PathBuf::from(row.1),
+            output_path: PathBuf::from(row.2),
+            plan_hash: row.3,
+            sequence,
+            created_unix_ms: row.5,
+            updated_unix_ms: now,
+        }))
+    }
+
     /// Returns the durable number of jobs without hydrating job objects.
     ///
     /// # Errors
@@ -2605,6 +2732,98 @@ mod tests {
             .expect("job");
         assert_eq!(details.events.len(), 2);
         assert_eq!(details.events[1].code, "JOB_ENQUEUED");
+    }
+
+    #[test]
+    fn fair_queued_window_round_robins_batch_lanes() {
+        let mut store = SqliteJobStore::open_in_memory().expect("store");
+        let batch_plan = durable_plan();
+        let make_requests = |prefix: &str, count: usize| {
+            (0..count)
+                .map(|index| JobCreateRequest {
+                    input_path: PathBuf::from(format!("{prefix}-{index}.json")),
+                    output_path: PathBuf::from(format!("{prefix}-{index}.yaml")),
+                    plan: batch_plan.clone(),
+                })
+                .collect::<Vec<_>>()
+        };
+        let first = store
+            .create_batch("first", &make_requests("first", 5))
+            .expect("first batch");
+        let first_jobs = store
+            .list_batch_jobs_page(first.id, 10, 0)
+            .expect("first jobs");
+        store
+            .queue_jobs(
+                &first_jobs.iter().map(|job| job.id).collect::<Vec<_>>(),
+                "TEST_QUEUED",
+            )
+            .expect("queue first");
+        let second = store
+            .create_batch("second", &make_requests("second", 2))
+            .expect("second batch");
+        let second_jobs = store
+            .list_batch_jobs_page(second.id, 10, 0)
+            .expect("second jobs");
+        store
+            .queue_jobs(
+                &second_jobs.iter().map(|job| job.id).collect::<Vec<_>>(),
+                "TEST_QUEUED",
+            )
+            .expect("queue second");
+
+        let selected = store.list_queued_jobs_fair(4).expect("fair window");
+
+        assert_eq!(
+            selected.iter().map(|job| job.id).collect::<Vec<_>>(),
+            vec![
+                first_jobs[0].id,
+                second_jobs[0].id,
+                first_jobs[1].id,
+                second_jobs[1].id,
+            ]
+        );
+    }
+
+    #[test]
+    fn concurrent_connections_claim_one_queued_job_exactly_once() {
+        let directory = tempdir().expect("claim suite");
+        let database = directory.path().join("jobs.sqlite3");
+        let mut seed = SqliteJobStore::open(&database).expect("seed");
+        let job = seed
+            .create_job("input.json", "output.yaml", &durable_plan())
+            .and_then(|job| seed.transition(job.id, JobState::Queued, "TEST_QUEUED"))
+            .expect("queued job");
+        drop(seed);
+        let barrier = Arc::new(Barrier::new(2));
+        let handles = (0..2)
+            .map(|_| {
+                let database = database.clone();
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    let mut store = SqliteJobStore::open(database).expect("claim store");
+                    barrier.wait();
+                    store
+                        .claim_queued_job(job.id, "TEST_CLAIMED")
+                        .expect("claim")
+                        .is_some()
+                })
+            })
+            .collect::<Vec<_>>();
+        let claims = handles
+            .into_iter()
+            .map(|handle| handle.join().expect("claim thread"))
+            .filter(|claimed| *claimed)
+            .count();
+
+        assert_eq!(claims, 1);
+        let details = SqliteJobStore::open(&database)
+            .expect("verify store")
+            .get_job_details(job.id)
+            .expect("details")
+            .expect("job");
+        assert_eq!(details.job.state, JobState::Inspecting);
+        assert_eq!(details.events.last().expect("event").code, "TEST_CLAIMED");
     }
 
     #[test]

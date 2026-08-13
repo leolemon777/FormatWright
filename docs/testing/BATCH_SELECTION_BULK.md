@@ -42,9 +42,11 @@ schema_version=4 integrity_ok=true output_exists=false
 
 A second disk-backed CLI E2E under `.artifacts/cli-idempotency-e2e-20260812-2145` submitted the same `--queue-only --idempotency-key e2e:queue:1` request twice. Both responses returned Job `8178614f-835d-4656-8af2-1289d0562ae5`; the database contained exactly one Queued Job at sequence 1. The create/key/Planned→Queued event sequence is one immediate transaction, so a failed enqueue cannot strand a key-bound Planned submission.
 
+Queue execution now consumes persisted batch membership as round-robin scheduling lanes, and independent processes must win an atomic queue claim before reinspection. The exact-once process gate is in `MULTI_PROCESS_QUEUE.md`.
+
 ## Remaining work
 
 - Desktop batch browser and folder mapping preview.
 - Paginated/virtualized query view beyond the current 100-row Desktop projection.
 - Selection/action retention and historical audit viewer.
-- Multi-process soak/kill injection and full 10,000 mixed-format fairness/latency evidence.
+- Full 10,000 mixed-format fairness/latency/RSS/WAL evidence and longer-duration power-loss soak.

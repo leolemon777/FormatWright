@@ -1,6 +1,6 @@
 # SQLite Concurrency and No-Clobber Commit Evidence
 
-- Status: Gate 1 multi-connection slice verified on Windows
+- Status: Gate 1 multi-connection and multi-process execution slice verified on Windows
 - Updated: 2026-08-12
 - Platform observed: Windows 11 x64 (development)
 
@@ -18,7 +18,7 @@ Two barrier-synchronized disk-backed tests open independent SQLite connections:
 - `concurrent_connections_cannot_reserve_the_same_output`: exactly one connection creates the job; the loser receives `OUTPUT_CONFLICT`; one job remains and the full maintenance integrity check passes.
 - `concurrent_transitions_commit_only_one_event_sequence`: two writers race `Planned → Running`; exactly one succeeds, and the durable job has sequence 1 with exactly one `CONCURRENT_START` event.
 
-SQLite's file locks also coordinate independent processes, but a repeated multi-process CLI stress campaign remains a release-evidence item.
+The process-level extension starts four gated CLI runners against the same WAL database. Every process deliberately selects the same 24 rows, yet the immediate-transaction queue claim produces 24 winners, 72 reported contentions, exactly 24 engine starts/outputs/reports, and zero failures or partials. Concurrent process-level idempotency replay also resolves to one Job. See `MULTI_PROCESS_QUEUE.md`.
 
 ## Destination publish contract
 
@@ -38,6 +38,6 @@ Schema v4 batch creation, selection capture, and bulk actions follow the same im
 
 ## Remaining work
 
-- Multi-process CLI reservation/transition soak with kill/restart injection.
+- Longer power-loss/reboot soak beyond the verified process-tree force-kill/restart case.
 - A real worker hook that creates the destination precisely between validation and publish, in addition to the direct publish primitive tests.
 - 10k mixed-format concurrency, latency, WAL, RSS, and fairness evidence.

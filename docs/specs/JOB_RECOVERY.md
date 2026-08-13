@@ -2,7 +2,7 @@
 
 - Status: Normative for v0.1
 - Version: 0.1
-- Updated: 2026-08-10
+- Updated: 2026-08-12
 - Related requirements: FW-FR-020 through FW-FR-034
 
 ## 1. Resume terminology
@@ -143,6 +143,13 @@ A cross-volume move is not called atomic. If a future workflow requires it, Form
 - UI queries are paginated.
 - Events may be coalesced for display but durable state transitions are never dropped.
 
+## 9.1 Multi-process ownership
+
+- Queue selection is advisory; execution ownership begins only after an immediate-transaction `Queued → Inspecting` claim.
+- A competing process that loses the claim performs no input/engine inspection and creates no process, partial, report, or failure transition.
+- Startup recovery treats a process lost in Inspecting/Running/Validating as interrupted and removes only that Job ID's deterministic staging path.
+- Multi-process correctness does not imply a distributed lease or remote-worker protocol; v0.1 remains local SQLite on one machine.
+
 ## 10. Symlinks and links
 
 - Directory symlinks are not traversed by default.
@@ -159,3 +166,5 @@ The test suite must terminate the application at every numbered commit step and 
 - A recognizable partial remains and recovery gives an actionable state.
 
 No crash point may produce a false completed state.
+
+The Windows process gate force-terminates an identified runner tree only after observing durable Running plus a non-empty partial, then requires one recovery, one partial removal, one resumed completion, an unchanged input hash, and a successful independent probe. See `docs/testing/MULTI_PROCESS_QUEUE.md`.

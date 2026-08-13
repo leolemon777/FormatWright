@@ -2,7 +2,7 @@
 
 - Status: Normative for Phase 1/3
 - Version: 0.1
-- Updated: 2026-08-10
+- Updated: 2026-08-12
 
 ## 1. Goals
 
@@ -68,8 +68,11 @@ The scheduler rechecks free space before commit.
 
 - Interactive single-file jobs may receive a bounded priority boost.
 - Batch jobs use round-robin fairness across batches.
+- The persisted batch ID is the lane; members retain durable ordinal order. Unbatched jobs share one interactive lane ordered by creation time.
+- A bounded selection takes the first queued member of every lane before the second member of any lane, with stable creation/ID tie breakers.
 - A large batch cannot permanently starve a later interactive job.
 - Priority never bypasses disk, security, or engine exclusivity limits.
+- Before inspection, a process atomically claims `Queued → Inspecting`; a stale selection that loses ownership is counted as contention and performs no engine work.
 
 ## 8. Pause and cancellation
 
@@ -116,6 +119,7 @@ Phase 3 durable-queue gates:
 - `docs/testing/DURABLE_QUEUE.md` owns the reproducible evidence and remaining scheduler certification work.
 - `batch-images --pause-after N` and `jobs run --limit N --parallel P` exercise a bounded scheduling window: pause stops admitting queued jobs, resume rechecks engine identity and input fingerprint, and SQLite remains authoritative. `P` is restricted to 1–16 while the deterministic policy independently caps process classes, a 2 GiB reservation budget, GPU slots, and engine exclusivity. `docs/testing/BATCH_SANDBOX.md` and `docs/testing/MIXED_SCHEDULER.md` own the Windows development evidence.
 - The opt-in 10,000-real-conversion gate atomically creates and queues 10,000 distinct structured jobs, reopens the database, and executes with no more than 128 hydrated jobs. The Windows release run completed all semantic validations and commits in 88.111 seconds after 48.638 seconds of planning. `docs/testing/TEN_THOUSAND_CONVERSIONS.md` owns the exact evidence and its homogeneous-workload boundary.
+- Four independent gated queue processes must reconcile to one engine start/output/report per Job; a real process-tree kill during Running must recover its exact partial and complete after resume. `docs/testing/MULTI_PROCESS_QUEUE.md` owns this Windows evidence.
 
 ## 10. Adaptive behavior
 

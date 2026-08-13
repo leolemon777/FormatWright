@@ -91,9 +91,11 @@ pwsh -File scripts/test_batch_sandbox.ps1
 pwsh -File scripts/test_document_sandbox.ps1
 pwsh -File scripts/test_pdf_sandbox.ps1
 pwsh -File scripts/test_office_sandbox.ps1
+pwsh -File scripts/test_multi_process_queue.ps1
+pwsh -File scripts/test_queue_crash_recovery.ps1
 ~~~
 
-The sandbox suites generate synthetic fixtures in an isolated `.artifacts` directory and verify media, audio, GIF, image/HEIC, structured-data, document, PDF-rendering, and Office-to-PDF paths plus conflict protection, cancellation, and crash recovery. See `docs/testing/` for each suite's exact evidence boundary.
+The sandbox suites generate synthetic fixtures in an isolated `.artifacts` directory and verify media, audio, GIF, image/HEIC, structured-data, document, PDF-rendering, and Office-to-PDF paths plus conflict protection, cancellation, multi-process exact-once ownership, and crash recovery. See `docs/testing/` for each suite's exact evidence boundary.
 
 Start with [the user guide](docs/USER_GUIDE.md), use [troubleshooting](docs/TROUBLESHOOTING.md) for typed recovery actions, and read [the privacy statement](PRIVACY.md) before sharing reports. `scripts/generate_sbom.py` writes the application dependency inventory to ignored `dist/sbom.spdx.json`; third-party conversion-engine SBOMs remain separate pack artifacts.
 

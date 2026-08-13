@@ -318,7 +318,7 @@ enum JobsCommand {
         #[arg(value_name = "JOB_ID")]
         job_id: Uuid,
     },
-    /// Run a bounded FIFO window of queued jobs; Ctrl+C stops further scheduling.
+    /// Run a bounded fair window of queued jobs; Ctrl+C stops further scheduling.
     Run {
         #[arg(long, default_value_t = 100)]
         limit: usize,
@@ -329,6 +329,14 @@ enum JobsCommand {
             help = "Maximum runnable processes; resource-class limits may reduce it"
         )]
         parallel: usize,
+
+        #[arg(
+            long,
+            value_name = "PATH",
+            hide = true,
+            help = "Test-only: wait until PATH exists before selecting the queue window"
+        )]
+        start_gate: Option<PathBuf>,
     },
 }
 
@@ -892,7 +900,14 @@ async fn run(cli: Cli) -> Result<(), FormatWrightError> {
                     )?;
                     print_job_action(&job, cli.json)
                 }
-                JobsCommand::Run { limit, parallel } => {
+                JobsCommand::Run {
+                    limit,
+                    parallel,
+                    start_gate,
+                } => {
+                    if let Some(path) = start_gate.as_deref() {
+                        wait_for_start_gate(path).await?;
+                    }
                     let control = QueueWindowControl::new();
                     let signal = control.clone();
                     tokio::spawn(async move {
@@ -918,6 +933,7 @@ async fn run(cli: Cli) -> Result<(), FormatWrightError> {
                         println!("blocked: {}", report.blocked);
                         println!("failed: {}", report.failed);
                         println!("cancelled: {}", report.cancelled);
+                        println!("contended: {}", report.contended);
                         println!("stopped: {}", report.stopped);
                         println!("parallelism: {}", report.parallelism);
                         println!("peak active: {}", report.peak_active);
@@ -1634,6 +1650,22 @@ fn is_document_path(path: &Path) -> bool {
                 "md" | "markdown" | "html" | "htm" | "docx"
             )
         })
+}
+
+async fn wait_for_start_gate(path: &Path) -> Result<(), FormatWrightError> {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+    while !path.is_file() {
+        if tokio::time::Instant::now() >= deadline {
+            return Err(FormatWrightError::new(
+                ErrorCode::ResourceExhausted,
+                formatwright_core::Stage::Store,
+                "Timed out waiting for the queue start gate",
+                "Create the test gate file or run jobs run without --start-gate.",
+            ));
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    Ok(())
 }
 
 fn open_job_store(database_path: &Path) -> Result<SqliteJobStore, FormatWrightError> {
