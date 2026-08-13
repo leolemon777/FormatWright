@@ -5,7 +5,9 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
+  JOB_PAGE_SIZE,
   isDirectoryOutput,
+  jobListAriaAttributes,
   parseDesktopError,
   recommendedTargets,
   suggestedOutput,
@@ -294,8 +296,6 @@ const jobStateOptions = [
   "cancelled",
   "interrupted",
 ] as const;
-
-const JOB_PAGE_SIZE = 100;
 
 export default function App() {
   const [language, setLanguage] = useState<Language>(() =>
@@ -1334,7 +1334,30 @@ export default function App() {
           </div>
           {bulkReport && <p className="success-notice" role="status" aria-live="polite">{copy.bulkReport}: {bulkReport.transitioned} / {bulkReport.matched} · {copy.skippedState} {bulkReport.skipped_state} · {copy.skippedConflict} {bulkReport.skipped_conflict}</p>}
           {jobActionNotice && <p className={pendingCleanupId ? "typed-note" : "success-notice"} role="status" aria-live="polite">{jobActionNotice}</p>}
-          <div className="job-list">{jobs.length === 0 ? <p className="empty">{copy.historyEmpty}</p> : jobs.map((job) => { const resumable = job.state === "interrupted" || job.state === "blocked"; const retryable = job.state === "failed" || job.state === "cancelled"; const cleanupAllowed = ["blocked", "failed", "cancelled", "interrupted"].includes(job.state); return <article key={job.id}><div><strong>{job.output_path}</strong><small>{job.input_path}</small></div><span className={`status status-${job.state}`}>{job.state}</span><span className="job-actions">{(resumable || retryable) && <button className="primary" type="button" disabled={jobActionBusy !== null || jobCleanupBusy !== null || busy === "queue-run" || bulkBusy} onClick={() => requeueJob(job)}>{jobActionBusy === job.id ? (resumable ? copy.resumingJob : copy.retryingJob) : (resumable ? copy.resumeJob : copy.retryJob)}</button>}{cleanupAllowed && <button className={pendingCleanupId === job.id ? "danger" : "secondary"} type="button" disabled={jobActionBusy !== null || jobCleanupBusy !== null || busy === "queue-run" || bulkBusy} onClick={() => cleanupJobStaging(job)}>{jobCleanupBusy === job.id ? copy.cleaningStaging : pendingCleanupId === job.id ? copy.confirmCleanStaging : copy.cleanStaging}</button>}<button type="button" onClick={() => loadReport(job.id)}>{copy.selectJob}</button></span></article>; })}</div>
+          {jobs.length === 0 ? <p className="empty">{copy.historyEmpty}</p> : (
+            <div className="job-list" role="list" aria-label={copy.jobListLabel}>
+              {jobs.map((job, index) => {
+                const resumable = job.state === "interrupted" || job.state === "blocked";
+                const retryable = job.state === "failed" || job.state === "cancelled";
+                const cleanupAllowed = ["blocked", "failed", "cancelled", "interrupted"].includes(job.state);
+                return (
+                  <article key={job.id} role="listitem" {...jobListAriaAttributes(jobOffset, index, jobTotal)}>
+                    <div>
+                      <strong title={job.output_path}>{job.output_path}</strong>
+                      <small title={job.input_path}>{job.input_path}</small>
+                    </div>
+                    <span className={`status status-${job.state}`}>{job.state}</span>
+                    <span className="job-actions">
+                      {(resumable || retryable) && <button className="primary" type="button" aria-label={`${resumable ? copy.resumeJob : copy.retryJob}: ${job.id}`} disabled={jobActionBusy !== null || jobCleanupBusy !== null || busy === "queue-run" || bulkBusy} onClick={() => requeueJob(job)}>{jobActionBusy === job.id ? (resumable ? copy.resumingJob : copy.retryingJob) : (resumable ? copy.resumeJob : copy.retryJob)}</button>}
+                      {cleanupAllowed && <button className={pendingCleanupId === job.id ? "danger" : "secondary"} type="button" aria-label={`${pendingCleanupId === job.id ? copy.confirmCleanStaging : copy.cleanStaging}: ${job.id}`} disabled={jobActionBusy !== null || jobCleanupBusy !== null || busy === "queue-run" || bulkBusy} onClick={() => cleanupJobStaging(job)}>{jobCleanupBusy === job.id ? copy.cleaningStaging : pendingCleanupId === job.id ? copy.confirmCleanStaging : copy.cleanStaging}</button>}
+                      <button type="button" aria-label={`${copy.selectJob}: ${job.id}`} onClick={() => loadReport(job.id)}>{copy.selectJob}</button>
+                    </span>
+                  </article>
+                );
+              })}
+            </div>
+          )}
+          <p className="typed-note">{copy.boundedJobListHint}</p>
           <nav className="job-pagination" aria-label={copy.pagination}>
             <button type="button" disabled={jobOffset === 0} onClick={() => void refreshJobs(Math.max(0, jobOffset - JOB_PAGE_SIZE))}>{copy.previousPage}</button>
             <span>{pageStart.toLocaleString()}–{pageEnd.toLocaleString()} / {jobTotal.toLocaleString()}</span>

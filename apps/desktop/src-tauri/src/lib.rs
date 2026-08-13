@@ -93,6 +93,7 @@ const DESKTOP_FOLDER_PREVIEW_TTL: std::time::Duration = std::time::Duration::fro
 const DESKTOP_FOLDER_PREVIEW_LIMIT: usize = 32;
 const DESKTOP_FOLDER_PREVIEW_SAMPLE: usize = 100;
 const DESKTOP_FOLDER_PLAN_LIMIT: usize = 10_000;
+const DESKTOP_JOB_PAGE_LIMIT: usize = 100;
 const DESKTOP_EXPORT_SCHEMA_VERSION: u16 = 1;
 const MAX_DESKTOP_EXPORT_BYTES: usize = 16 * 1024 * 1024;
 
@@ -913,7 +914,7 @@ fn list_desktop_jobs(
     limit: Option<usize>,
 ) -> Result<Vec<JobRecord>, String> {
     lock(&state.store)?
-        .list_jobs(limit.unwrap_or(100).clamp(1, 500))
+        .list_jobs(desktop_job_page_limit(limit))
         .map_err(serialize_error)
 }
 
@@ -937,10 +938,16 @@ fn query_desktop_jobs(
                 states,
                 search,
             },
-            limit.unwrap_or(100),
+            desktop_job_page_limit(limit),
             offset.unwrap_or_default(),
         )
         .map_err(serialize_error)
+}
+
+fn desktop_job_page_limit(requested: Option<usize>) -> usize {
+    requested
+        .unwrap_or(DESKTOP_JOB_PAGE_LIMIT)
+        .clamp(1, DESKTOP_JOB_PAGE_LIMIT)
 }
 
 #[tauri::command]
@@ -2174,12 +2181,13 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        DesktopConversionRequest, DesktopEngineRegistryEntry, DesktopOperationGate,
-        acquire_active_operation, acquire_maintenance_operation, acquire_queue_window,
-        apply_pending_restore, backup_path, bundled_manifest_paths, load_preset_library,
-        pending_restore_path, persist_preset_library, prepare_approved_desktop_conversion,
-        recover_desktop_jobs, registered_manifest_paths, report_for_export, requeue_job,
-        run_queue_window_on_database, stage_pending_restore, write_desktop_export_noclobber,
+        DESKTOP_JOB_PAGE_LIMIT, DesktopConversionRequest, DesktopEngineRegistryEntry,
+        DesktopOperationGate, acquire_active_operation, acquire_maintenance_operation,
+        acquire_queue_window, apply_pending_restore, backup_path, bundled_manifest_paths,
+        desktop_job_page_limit, load_preset_library, pending_restore_path, persist_preset_library,
+        prepare_approved_desktop_conversion, recover_desktop_jobs, registered_manifest_paths,
+        report_for_export, requeue_job, run_queue_window_on_database, stage_pending_restore,
+        write_desktop_export_noclobber,
     };
 
     fn plan(output_path: PathBuf) -> Plan {
@@ -2583,6 +2591,17 @@ mod tests {
         drop(maintenance);
 
         assert!(acquire_active_operation(&gate).is_ok());
+    }
+
+    #[test]
+    fn desktop_job_pages_are_hard_bounded() {
+        assert_eq!(desktop_job_page_limit(None), DESKTOP_JOB_PAGE_LIMIT);
+        assert_eq!(desktop_job_page_limit(Some(0)), 1);
+        assert_eq!(desktop_job_page_limit(Some(25)), 25);
+        assert_eq!(
+            desktop_job_page_limit(Some(usize::MAX)),
+            DESKTOP_JOB_PAGE_LIMIT
+        );
     }
 
     #[test]

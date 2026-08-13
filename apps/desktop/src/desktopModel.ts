@@ -5,6 +5,16 @@ export type DesktopError = {
   recovery?: string;
 };
 
+export const JOB_PAGE_SIZE = 100;
+
+export function jobListAriaAttributes(offset: number, index: number, total: number) {
+  const position = Math.max(1, Math.trunc(offset) + Math.trunc(index) + 1);
+  return {
+    "aria-posinset": position,
+    "aria-setsize": Math.max(position, Math.trunc(total)),
+  } as const;
+}
+
 export function recommendedTargets(path: string): string[] {
   const extension = path.split(/[\\/]/).pop()?.split(".").pop()?.toLowerCase() ?? "";
   if (["heic", "heif"].includes(extension)) return ["jpg", "png"];

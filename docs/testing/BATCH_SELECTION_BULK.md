@@ -46,7 +46,5 @@ Queue execution now consumes persisted batch membership as round-robin schedulin
 
 ## Remaining work
 
-- Desktop batch browser and folder mapping preview.
-- Paginated/virtualized query view beyond the current 100-row Desktop projection.
 - Selection/action retention and historical audit viewer.
 - PDF/Office/document expansion of the verified 10,000 structured/image/media fairness/latency/RSS/WAL gate, plus longer-duration power-loss soak.

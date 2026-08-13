@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  JOB_PAGE_SIZE,
   isDirectoryOutput,
+  jobListAriaAttributes,
   parseDesktopError,
   recommendedTargets,
   suggestedOutput,
@@ -32,5 +34,13 @@ describe("desktop workflow model", () => {
     expect(
       parseDesktopError('{"code":"OUTPUT_CONFLICT","stage":"commit","message":"Exists"}'),
     ).toMatchObject({ code: "OUTPUT_CONFLICT", stage: "commit", message: "Exists" });
+  });
+
+  it("keeps large job histories bounded while exposing global list positions", () => {
+    expect(JOB_PAGE_SIZE).toBe(100);
+    expect(jobListAriaAttributes(9_900, 99, 10_000)).toEqual({
+      "aria-posinset": 10_000,
+      "aria-setsize": 10_000,
+    });
   });
 });

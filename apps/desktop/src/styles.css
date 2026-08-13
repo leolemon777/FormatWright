@@ -119,8 +119,8 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 
 .page-card { margin-top: 18px; min-height: 580px; padding: clamp(20px, 3vw, 34px); }
 .page-heading { border-bottom: 1px solid #30362f; padding-bottom: 20px; }
-.job-list { display: grid; margin-top: 10px; }
-.job-list article { display: grid; grid-template-columns: 1fr 120px auto; align-items: center; gap: 14px; border-bottom: 1px solid #292f28; padding: 13px 0; }
+.job-list { display: grid; margin-top: 10px; contain: layout style; }
+.job-list article { display: grid; grid-template-columns: 1fr 120px auto; align-items: center; gap: 14px; border-bottom: 1px solid #292f28; padding: 13px 0; content-visibility: auto; contain-intrinsic-size: auto 64px; }
 .job-list article > div { display: flex; min-width: 0; flex-direction: column; }
 .job-actions { display: flex; justify-content: flex-end; gap: 7px; }
 .job-actions .primary { color: #101410; background: #b9ff66; }
