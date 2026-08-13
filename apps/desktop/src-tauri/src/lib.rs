@@ -8,12 +8,13 @@ use std::sync::Mutex;
 use std::time::Instant;
 
 use formatwright_core::{
-    BatchRecord, BulkActionReport, BulkJobAction, BulkJobService, CapabilitySnapshot,
-    ConversionPreset, ConversionService, DoctorReport, EngineDiscoveryPolicy, JobExecutionService,
-    JobRecord, JobSelectionQuery, JobState, PRESET_SCHEMA_VERSION, Plan, PlanRequest,
-    PresetLibrary, Probe, QueueRunReport, QueueWindowControl, ReportService, SelectionSnapshot,
-    SqliteJobStore, ValidationReport, VerifiedEnginePack, activate_engine_pack,
-    capability_snapshot_for_input, prepare_conversion,
+    ApplicationSettings, ApplicationSettingsService, ApplicationStateLayout,
+    ApplicationStateService, BatchRecord, BulkActionReport, BulkJobAction, BulkJobService,
+    CapabilitySnapshot, ConversionPreset, ConversionService, DoctorReport, EngineDiscoveryPolicy,
+    EngineRegistryIdentity, JobExecutionService, JobRecord, JobSelectionQuery, JobState,
+    PRESET_SCHEMA_VERSION, Plan, PlanRequest, PresetLibrary, Probe, QueueRunReport,
+    QueueWindowControl, ReportService, SelectionSnapshot, SqliteJobStore, ValidationReport,
+    VerifiedEnginePack, activate_engine_pack, capability_snapshot_for_input, prepare_conversion,
 };
 use queue_bridge::{DEFAULT_BATCH_JOBS, DEFAULT_BENCHMARK_JOBS, QueueBatchIter};
 use serde::{Deserialize, Serialize};
@@ -28,6 +29,8 @@ struct DesktopState {
     queue_control: Mutex<Option<QueueWindowControl>>,
     presets: Mutex<PresetLibrary>,
     presets_path: PathBuf,
+    settings: Mutex<Option<ApplicationSettings>>,
+    settings_path: PathBuf,
     reports_directory: PathBuf,
     engine_registry_directory: PathBuf,
     engine_store_directory: PathBuf,
@@ -66,6 +69,28 @@ impl DesktopPresetRequest {
 struct DesktopPresetImportResult {
     imported: usize,
     total: usize,
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+fn get_desktop_settings(
+    state: tauri::State<'_, DesktopState>,
+) -> Result<Option<ApplicationSettings>, String> {
+    Ok(lock(&state.settings)?.clone())
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+fn save_desktop_settings(
+    state: tauri::State<'_, DesktopState>,
+    settings: ApplicationSettings,
+) -> Result<ApplicationSettings, String> {
+    let mut current = lock(&state.settings)?;
+    ApplicationSettingsService::new(&state.settings_path)
+        .save(&settings)
+        .map_err(serialize_error)?;
+    *current = Some(settings.clone());
+    Ok(settings)
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -110,12 +135,7 @@ struct DesktopRunResult {
     report: ValidationReport,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
-struct DesktopEngineRegistryEntry {
-    #[serde(default)]
-    engine_id: Option<String>,
-    manifest_path: PathBuf,
-}
+type DesktopEngineRegistryEntry = EngineRegistryIdentity;
 
 #[derive(Clone, Debug, Deserialize)]
 struct DesktopEngineBundle {
@@ -884,10 +904,17 @@ pub fn run() {
         .setup(|app| {
             let data_directory = app.path().app_data_dir()?;
             let resource_directory = app.path().resource_dir()?;
-            let reports_directory = data_directory.join("reports");
-            let engine_registry_directory = data_directory.join("engine-registry");
+            let job_database_path = data_directory.join("jobs.sqlite3");
+            let state_layout = ApplicationStateLayout::from_database(&job_database_path)
+                .map_err(|error| Box::<dyn std::error::Error>::from(error.to_string()))?;
+            ApplicationStateService::new(state_layout.clone())
+                .recover_interrupted_restore()
+                .map_err(|error| Box::<dyn std::error::Error>::from(error.to_string()))?;
+            let reports_directory = state_layout.reports_directory;
+            let engine_registry_directory = state_layout.engine_registry_directory;
             let engine_store_directory = data_directory.join("engines");
-            let presets_path = data_directory.join("presets.json");
+            let presets_path = state_layout.presets_path;
+            let settings_path = state_layout.settings_path;
             std::fs::create_dir_all(&reports_directory)?;
             std::fs::create_dir_all(&engine_registry_directory)?;
             std::fs::create_dir_all(&engine_store_directory)?;
@@ -902,7 +929,6 @@ pub fn run() {
             {
                 let _ = activate_engine_pack(manifest_path);
             }
-            let job_database_path = data_directory.join("jobs.sqlite3");
             let mut store = SqliteJobStore::open(&job_database_path)
                 .map_err(|error| Box::<dyn std::error::Error>::from(error.to_string()))?;
             store
@@ -910,6 +936,9 @@ pub fn run() {
                 .map_err(|error| Box::<dyn std::error::Error>::from(error.to_string()))?;
             let presets =
                 load_preset_library(&presets_path).map_err(Box::<dyn std::error::Error>::from)?;
+            let settings = ApplicationSettingsService::new(&settings_path)
+                .read()
+                .map_err(|error| Box::<dyn std::error::Error>::from(error.to_string()))?;
             app.manage(DesktopState {
                 store: Mutex::new(store),
                 job_database_path,
@@ -917,6 +946,8 @@ pub fn run() {
                 queue_control: Mutex::new(None),
                 presets: Mutex::new(presets),
                 presets_path,
+                settings: Mutex::new(settings),
+                settings_path,
                 reports_directory,
                 engine_registry_directory,
                 engine_store_directory,
@@ -947,6 +978,8 @@ pub fn run() {
             delete_desktop_preset,
             import_desktop_presets,
             export_desktop_presets,
+            get_desktop_settings,
+            save_desktop_settings,
         ])
         .run(tauri::generate_context!())
         .expect("error while running FormatWright desktop");

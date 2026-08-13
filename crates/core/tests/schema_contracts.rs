@@ -2,11 +2,12 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use formatwright_core::{
-    ArtifactIdentity, ArtifactSummary, Certification, ChangeSet, ConversionPreset, EngineIdentity,
-    FormatDescriptor, FormatKind, JobEventRecord, JobProgress, JobState, MetadataEntry,
-    NetworkPolicy, Operation, PRESET_SCHEMA_VERSION, Plan, PlanStep, PresetLibrary, Probe,
-    ProbeEvidence, ReportRedaction, StreamKind, StreamProbe, ValidationCheck, ValidationReport,
-    ValidationStatus,
+    APPLICATION_STATE_BUNDLE_SCHEMA_VERSION, ApplicationSettings, ArtifactIdentity,
+    ArtifactSummary, Certification, ChangeSet, ConversionPreset, EngineIdentity, FormatDescriptor,
+    FormatKind, JobEventRecord, JobProgress, JobState, MetadataEntry, NetworkPolicy, Operation,
+    PRESET_SCHEMA_VERSION, Plan, PlanStep, PresetLibrary, Probe, ProbeEvidence, ReportRedaction,
+    StateBundleComponent, StateBundleComponents, StateBundleEntry, StateBundleManifest, StreamKind,
+    StreamProbe, ValidationCheck, ValidationReport, ValidationStatus,
 };
 use formatwright_engine_sdk::LossClass;
 use formatwright_engine_sdk::{
@@ -25,6 +26,10 @@ const VALIDATION_REPORT_SCHEMA: &str =
 const ENGINE_MANIFEST_SCHEMA: &str =
     include_str!("../../../schemas/engine-manifest/v1.schema.json");
 const PRESET_LIBRARY_SCHEMA: &str = include_str!("../../../schemas/preset-library/v1.schema.json");
+const APPLICATION_STATE_MANIFEST_SCHEMA: &str =
+    include_str!("../../../schemas/application-state-manifest/v1.schema.json");
+const APPLICATION_SETTINGS_SCHEMA: &str =
+    include_str!("../../../schemas/application-settings/v1.schema.json");
 
 fn engine() -> EngineIdentity {
     EngineIdentity {
@@ -235,6 +240,48 @@ fn preset_library() -> PresetLibrary {
     }
 }
 
+fn application_state_manifest() -> StateBundleManifest {
+    StateBundleManifest {
+        schema_version: APPLICATION_STATE_BUNDLE_SCHEMA_VERSION,
+        bundle_id: Uuid::new_v4(),
+        created_unix_seconds: 1_786_349_600_u64,
+        application_version: "0.1.0".to_owned(),
+        components: StateBundleComponents {
+            database: true,
+            presets: true,
+            settings: true,
+            engine_registry: true,
+            reports: false,
+        },
+        entries: vec![
+            StateBundleEntry {
+                path: "database/jobs.sqlite3".to_owned(),
+                component: StateBundleComponent::Database,
+                size_bytes: 4096,
+                sha256: "ab".repeat(32),
+            },
+            StateBundleEntry {
+                path: "presets/presets.json".to_owned(),
+                component: StateBundleComponent::Presets,
+                size_bytes: 128,
+                sha256: "cd".repeat(32),
+            },
+            StateBundleEntry {
+                path: "settings/settings.json".to_owned(),
+                component: StateBundleComponent::Settings,
+                size_bytes: 64,
+                sha256: "ef".repeat(32),
+            },
+            StateBundleEntry {
+                path: "engine-registry/media.json".to_owned(),
+                component: StateBundleComponent::EngineRegistry,
+                size_bytes: 96,
+                sha256: "01".repeat(32),
+            },
+        ],
+    }
+}
+
 fn assert_contract<T: Serialize>(schema_source: &str, instance: &T) {
     let schema: Value = serde_json::from_str(schema_source).expect("schema is JSON");
     jsonschema::draft202012::meta::validate(&schema).expect("schema satisfies meta-schema");
@@ -273,6 +320,26 @@ fn rust_engine_manifest_matches_public_schema() {
 #[test]
 fn rust_preset_library_matches_public_schema() {
     assert_contract(PRESET_LIBRARY_SCHEMA, &preset_library());
+}
+
+#[test]
+fn rust_application_state_manifest_matches_public_schema() {
+    assert_contract(
+        APPLICATION_STATE_MANIFEST_SCHEMA,
+        &application_state_manifest(),
+    );
+}
+
+#[test]
+fn rust_application_settings_match_public_schema() {
+    assert_contract(
+        APPLICATION_SETTINGS_SCHEMA,
+        &ApplicationSettings {
+            schema_version: 1,
+            language: "zh-CN".to_owned(),
+            expert_mode: true,
+        },
+    );
 }
 
 #[test]

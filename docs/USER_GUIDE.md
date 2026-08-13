@@ -46,8 +46,11 @@ formatwright jobs run --limit 100
 formatwright engines verify PACK/manifest.json
 formatwright --state-db PATH maintenance status
 formatwright --state-db PATH maintenance backup BACKUP.sqlite3
+formatwright --state-db PATH maintenance bundle-backup BACKUP.fwstate --include-reports
 formatwright --state-db PATH maintenance integrity-check
 formatwright --state-db PATH maintenance restore BACKUP.sqlite3
+formatwright --state-db PATH maintenance bundle-restore BACKUP.fwstate
+formatwright --state-db PATH maintenance bundle-restore BACKUP.fwstate --yes
 formatwright --state-db PATH maintenance compact
 ~~~
 
@@ -59,7 +62,9 @@ Automation may add `convert ... --queue-only --idempotency-key KEY`. Repeating t
 
 Every successful immediate conversion, `jobs run` item, and image-batch item stores `reports/JOB_ID.json` beside the selected SQLite state database before recording its terminal state. Desktop uses its application-data Reports directory. A missing or invalid report is a recovery problem, not a successful conversion claim.
 
-`maintenance restore BACKUP` validates and migrates a temporary copy only. Stop queue execution, close other FormatWright processes, review that preflight, and rerun with `--yes` to replace the live database transactionally. Confirmed restore and compact create automatic safety snapshots under the state database's `backups` directory; the five newest automatic snapshots are retained. Manual backup never overwrites an existing destination. This Alpha slice covers SQLite; presets, settings, engine registry identity, and optional reports are not yet packaged into one application-state backup.
+`maintenance restore BACKUP` is the SQLite-only path. `maintenance bundle-backup BACKUP.fwstate` packages a consistent SQLite copy, presets, persisted UI settings, and engine-registry identities; `--include-reports` also includes bounded report JSON. Third-party engine binaries are intentionally excluded, so missing paths must be re-imported on another machine.
+
+`maintenance bundle-restore BACKUP.fwstate` is preflight-only: it rejects unsafe/undeclared paths, links, duplicate members, size violations, SHA-256 mismatches, invalid component JSON, and an incompatible SQLite copy before live state changes. Stop queue execution and close other FormatWright processes, review the warnings, then rerun with `--yes`. Confirmed restore retains a full pre-restore safety bundle under `backups` and uses a recovery journal; CLI/Desktop startup rolls back an interrupted multi-component switch before opening the queue. Bundle and manual database backup destinations are never overwritten.
 
 ## Supported development workflows
 

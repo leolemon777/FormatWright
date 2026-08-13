@@ -154,6 +154,11 @@ type ConversionPreset = {
 };
 
 type PresetImportResult = { imported: number; total: number };
+type ApplicationSettings = {
+  schema_version: number;
+  language: Language;
+  expert_mode: boolean;
+};
 
 const emptySnapshot: QueueSnapshot = {
   totalJobs: 0,
@@ -168,7 +173,8 @@ export default function App() {
   const [language, setLanguage] = useState<Language>(() =>
     navigator.language.toLowerCase().startsWith("zh") ? "zh-CN" : "en",
   );
-  const [expert, setExpert] = useState(() => localStorage.getItem("fw-expert") === "true");
+  const [expert, setExpert] = useState(false);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [tab, setTab] = useState<Tab>("convert");
   const [inputPath, setInputPath] = useState("");
   const [outputPath, setOutputPath] = useState("");
@@ -210,12 +216,11 @@ export default function App() {
 
   useEffect(() => {
     document.documentElement.lang = language;
-    localStorage.setItem("fw-language", language);
-  }, [language]);
-
-  useEffect(() => {
-    localStorage.setItem("fw-expert", String(expert));
-  }, [expert]);
+    if (!settingsLoaded || !("__TAURI_INTERNALS__" in window)) return;
+    void invoke<ApplicationSettings>("save_desktop_settings", {
+      settings: { schema_version: 1, language, expert_mode: expert },
+    }).catch((reason) => setError(parseDesktopError(reason)));
+  }, [expert, language, settingsLoaded]);
 
   useEffect(() => {
     mounted.current = true;
@@ -234,6 +239,34 @@ export default function App() {
       void refreshJobs();
     }).then((dispose) => disposers.push(dispose));
     if ("__TAURI_INTERNALS__" in window) {
+      void invoke<ApplicationSettings | null>("get_desktop_settings")
+        .then(async (settings) => {
+          if (!mounted.current) return;
+          const migrated: ApplicationSettings = settings ?? {
+            schema_version: 1,
+            language: localStorage.getItem("fw-language") === "zh-CN"
+              ? "zh-CN"
+              : localStorage.getItem("fw-language") === "en"
+                ? "en"
+                : navigator.language.toLowerCase().startsWith("zh") ? "zh-CN" : "en",
+            expert_mode: localStorage.getItem("fw-expert") === "true",
+          };
+          setLanguage(migrated.language);
+          setExpert(migrated.expert_mode);
+          if (!settings) {
+            try {
+              await invoke<ApplicationSettings>("save_desktop_settings", { settings: migrated });
+              localStorage.removeItem("fw-language");
+              localStorage.removeItem("fw-expert");
+            } catch (reason) {
+              if (mounted.current) setError(parseDesktopError(reason));
+            }
+          }
+          if (mounted.current) setSettingsLoaded(true);
+        })
+        .catch((reason) => {
+          if (mounted.current) setError(parseDesktopError(reason));
+        });
       void getCurrentWebviewWindow()
         .onDragDropEvent((event) => {
           if (event.payload.type === "enter" || event.payload.type === "over") setDragging(true);

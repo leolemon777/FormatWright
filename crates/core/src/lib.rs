@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 pub mod application;
+pub mod application_state;
 pub mod capabilities;
 pub mod doctor;
 mod document;
@@ -24,6 +25,13 @@ mod workflow;
 pub use application::{
     BulkJobService, ConversionRunResult, ConversionService, JobExecutionService, QueueRunReport,
     QueueWindowControl, ReportService,
+};
+pub use application_state::{
+    APPLICATION_SETTINGS_SCHEMA_VERSION, APPLICATION_STATE_BUNDLE_SCHEMA_VERSION,
+    ApplicationSettings, ApplicationSettingsService, ApplicationStateLayout,
+    ApplicationStateService, EngineRegistryIdentity, StateBundleBackupReport, StateBundleComponent,
+    StateBundleComponents, StateBundleEntry, StateBundleManifest, StateBundleOptions,
+    StateBundlePreflightReport, StateBundleRestoreReport,
 };
 pub use capabilities::{
     CapabilitySnapshot, RouteAvailability, capability_snapshot_for_input, ensure_route_available,

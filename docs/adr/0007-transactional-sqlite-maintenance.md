@@ -29,7 +29,7 @@ The implementation follows the [SQLite Online Backup API](https://sqlite.org/bac
 - Corrupt, logically inconsistent, or too-new backups cannot reach the live switch.
 - Manual backup destinations are never silently overwritten and contain no temporary WAL/SHM sidecars.
 - Migration safety is enforced by the same Core path for CLI and Desktop database opens.
-- Current backup scope is SQLite only. Presets, settings, engine registry identity, and optional reports still require an application-state bundle before the release upgrade/rollback gate closes.
+- SQLite backup remains independently usable. The later `ApplicationStateService` bundle composes this online snapshot with presets, settings, engine registry identity, and optional reports under a hashed manifest and recovery journal.
 - Full integrity checks and compaction are synchronous. A cancellable Desktop maintenance workflow remains follow-up work.
 
 ## Verification

@@ -16,6 +16,8 @@ FormatWright publishes these machine contracts:
 | Validation Report | urn:formatwright:schema:validation-report:v1 | Validators | UI, CLI, audit |
 | Engine Manifest | urn:formatwright:schema:engine-manifest:v1 | Pack builder/plugin | Registry, Doctor |
 | Preset Library | urn:formatwright:schema:preset-library:v1 | Desktop/editor | Desktop, CLI/API later |
+| Application State Manifest | urn:formatwright:schema:application-state-manifest:v1 | MaintenanceService | CLI/Desktop restore, migration tools |
+| Application Settings | urn:formatwright:schema:application-settings:v1 | Desktop settings | Desktop, application-state bundle |
 
 Canonical JSON Schemas live under schemas/. Rust types and examples must validate against them in CI.
 
@@ -109,7 +111,11 @@ Capability claims are intersected with runtime Doctor inspection. A manifest can
 
 The portable preset library includes a versioned envelope and bounded named entries with stable UUIDs. Presets contain typed conversion settings only: target, quality, dimensions, DPI, color mode, and stream-preservation policy. Paths, secrets, arbitrary engine arguments, and shell strings are forbidden. Imports validate completely before merge and reject duplicate IDs or case-insensitive names.
 
-## 9. Stable error model
+## 9. Application State Manifest requirements
+
+The application-state manifest enumerates the exact ZIP member set, component type, bounded byte size, and lowercase SHA-256 for every payload. Archive paths are fixed or single-level JSON names; undeclared, duplicate, nested, absolute, traversal, link, oversized, or hash-mismatched members are rejected before live state changes. Engine registry entries carry identity/path references only; third-party binaries are never copied blindly.
+
+## 10. Stable error model
 
 Errors contain:
 
@@ -137,7 +143,7 @@ Categories:
 - STORAGE_FAILED
 - INTERNAL
 
-## 10. Traceability
+## 11. Traceability
 
 Every schema field must map to:
 

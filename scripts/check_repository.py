@@ -19,6 +19,8 @@ EXPECTED_SCHEMA_NAMES = {
     "validation-report",
     "engine-manifest",
     "preset-library",
+    "application-state-manifest",
+    "application-settings",
 }
 EXPECTED_WORKFLOWS = {f"GW-{number:02d}" for number in range(1, 13)}
 EXACT_PACKAGE_MANAGER = re.compile(r"^pnpm@\d+\.\d+\.\d+$")
@@ -127,6 +129,10 @@ def check_required_files(errors: list[str]) -> None:
         "docs/adr/0005-bounded-desktop-queue-projection.md",
         "docs/adr/0006-cross-platform-process-tree-control.md",
         "schemas/preset-library/v1.schema.json",
+        "schemas/application-state-manifest/v1.schema.json",
+        "schemas/application-settings/v1.schema.json",
+        "docs/testing/APPLICATION_STATE_BUNDLE.md",
+        "docs/adr/0010-versioned-application-state-bundles.md",
         "apps/desktop/package.json",
         "apps/desktop/src-tauri/tauri.conf.json",
         "apps/desktop/src-tauri/tauri.windows.conf.json",

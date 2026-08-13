@@ -8,14 +8,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use clap::{Parser, Subcommand, ValueEnum};
 use formatwright_core::{
-    BulkJobAction, BulkJobService, ConversionService, EngineIdentity, ErrorCode,
-    ExecutionMilestone, FormatWrightError, JobCreateRequest, JobExecutionService, JobRecord,
-    JobSelectionQuery, JobState, MaintenanceService, Plan, PlanRequest, Probe, QueueWindowControl,
-    ReportService, SqliteJobStore, cleanup_staged_output, doctor, execute_plan_observed,
-    identify_artifact, inspect_document, inspect_engine, inspect_media, inspect_office,
-    inspect_pdf, inspect_structured, office_format_hint, pdf_format_hint, plan_conversion,
-    plan_metadata_clean, prepare_conversion, resolve_output_path, staged_output_candidates,
-    structured_format_hint, verify_engine_pack,
+    ApplicationStateService, BulkJobAction, BulkJobService, ConversionService, EngineIdentity,
+    ErrorCode, ExecutionMilestone, FormatWrightError, JobCreateRequest, JobExecutionService,
+    JobRecord, JobSelectionQuery, JobState, MaintenanceService, Plan, PlanRequest, Probe,
+    QueueWindowControl, ReportService, SqliteJobStore, StateBundleOptions, cleanup_staged_output,
+    doctor, execute_plan_observed, identify_artifact, inspect_document, inspect_engine,
+    inspect_media, inspect_office, inspect_pdf, inspect_structured, office_format_hint,
+    pdf_format_hint, plan_conversion, plan_metadata_clean, prepare_conversion, resolve_output_path,
+    staged_output_candidates, structured_format_hint, verify_engine_pack,
 };
 use serde::Serialize;
 use tokio_util::sync::CancellationToken;
@@ -422,6 +422,14 @@ enum MaintenanceCommand {
         #[arg(value_name = "OUTPUT")]
         output: PathBuf,
     },
+    /// Create a portable bundle with `SQLite`, presets, settings, and engine identities.
+    BundleBackup {
+        #[arg(value_name = "OUTPUT")]
+        output: PathBuf,
+
+        #[arg(long, help = "Include bounded ValidationReport JSON files")]
+        include_reports: bool,
+    },
     /// Run full `SQLite`, foreign-key, and `FormatWright` queue-invariant checks.
     IntegrityCheck,
     /// Validate a backup on a migrated temporary copy; pass --yes to restore it.
@@ -430,6 +438,17 @@ enum MaintenanceCommand {
         backup: PathBuf,
 
         #[arg(long, help = "Replace the live database after a successful preflight")]
+        yes: bool,
+    },
+    /// Validate a complete application-state bundle; pass --yes to restore it.
+    BundleRestore {
+        #[arg(value_name = "BUNDLE")]
+        bundle: PathBuf,
+
+        #[arg(
+            long,
+            help = "Replace live application state after successful preflight"
+        )]
         yes: bool,
     },
     /// Take a safety snapshot and compact the live database with VACUUM.
@@ -924,6 +943,8 @@ async fn run(cli: Cli) -> Result<(), FormatWrightError> {
         },
         Command::Maintenance { command } => {
             let database_path = cli.state_db.unwrap_or_else(default_state_db);
+            ApplicationStateService::from_database(&database_path)?
+                .recover_interrupted_restore()?;
             let service = MaintenanceService::new(&database_path);
             match command {
                 MaintenanceCommand::Status => {
@@ -956,6 +977,24 @@ async fn run(cli: Cli) -> Result<(), FormatWrightError> {
                         println!("size: {} bytes", report.size_bytes);
                         println!("sha256: {}", report.sha256);
                         println!("schema: v{}", report.schema_version);
+                        Ok(())
+                    }
+                }
+                MaintenanceCommand::BundleBackup {
+                    output,
+                    include_reports,
+                } => {
+                    let report = ApplicationStateService::from_database(&database_path)?
+                        .backup(output, StateBundleOptions { include_reports })?;
+                    if cli.json {
+                        print_json(&report)
+                    } else {
+                        println!("bundle: {}", report.bundle_path.display());
+                        println!("bundle id: {}", report.bundle_id);
+                        println!("size: {} bytes", report.size_bytes);
+                        println!("sha256: {}", report.sha256);
+                        println!("entries: {}", report.entry_count);
+                        println!("reports included: {}", report.reports_included);
                         Ok(())
                     }
                 }
@@ -1013,6 +1052,48 @@ async fn run(cli: Cli) -> Result<(), FormatWrightError> {
                             println!("source schema: v{}", report.source_schema_version);
                             println!("restored schema: v{}", report.restored_schema_version);
                             println!("migration required: {}", report.migration_required);
+                            println!("no live data changed; rerun with --yes to restore");
+                            Ok(())
+                        }
+                    }
+                }
+                MaintenanceCommand::BundleRestore { bundle, yes } => {
+                    let state = ApplicationStateService::from_database(&database_path)?;
+                    if yes {
+                        let report = state.restore(&bundle)?;
+                        if cli.json {
+                            print_json(&report)
+                        } else {
+                            println!("application state restored: {}", report.bundle_id);
+                            println!("source: {}", report.bundle_path.display());
+                            println!("database: {}", report.database_path.display());
+                            if let Some(path) = report.safety_bundle_path {
+                                println!("safety bundle: {}", path.display());
+                            }
+                            println!("reports restored: {}", report.reports_restored);
+                            for warning in report.warnings {
+                                println!("warning: {warning}");
+                            }
+                            Ok(())
+                        }
+                    } else {
+                        let report = state.restore_preflight(&bundle)?;
+                        if cli.json {
+                            print_json(&report)
+                        } else {
+                            println!("bundle restore preflight: ok");
+                            println!("bundle id: {}", report.bundle_id);
+                            println!("entries: {}", report.entry_count);
+                            println!("uncompressed: {} bytes", report.total_uncompressed_bytes);
+                            println!("reports included: {}", report.reports_included);
+                            println!(
+                                "database schema: v{} -> v{}",
+                                report.database.source_schema_version,
+                                report.database.restored_schema_version
+                            );
+                            for warning in report.warnings {
+                                println!("warning: {warning}");
+                            }
                             println!("no live data changed; rerun with --yes to restore");
                             Ok(())
                         }
@@ -1569,6 +1650,7 @@ fn open_job_store(database_path: &Path) -> Result<SqliteJobStore, FormatWrightEr
             .with_diagnostic(error.to_string())
         })?;
     }
+    ApplicationStateService::from_database(database_path)?.recover_interrupted_restore()?;
     SqliteJobStore::open(database_path)
 }
 

@@ -34,7 +34,7 @@ The eleven `maintenance::tests` cover:
 - confirmed transactional restore plus a readable pre-restore safety snapshot.
 - five-copy automatic retention that always preserves the snapshot just created, plus refusal to restore from a lexical alias of the live database.
 
-Application integrity currently checks migration continuity, known job states, active/terminal reservation cardinality, event count/latest state, Plan parsing, and deterministic Plan hash. It does not yet validate filesystem report references or package presets/settings/engine registry data.
+Application integrity checks migration continuity, known job states, active/terminal reservation cardinality, event count/latest state, Plan parsing, and deterministic Plan hash. `ApplicationStateService` separately validates presets, settings, engine-registry identities, optional report identity, archive path/type/size, and every payload hash before restore.
 
 ## Recorded CLI disk-backed run
 
@@ -42,7 +42,7 @@ A temporary database completed initialization, portable backup, preflight, confi
 
 ## Remaining gate work
 
-- Build an application-state bundle for presets, settings, engine registry identity, and optional reports.
+- Desktop maintenance progress/cancellation UI and cross-version clean-machine bundle restore evidence.
 - Add a Desktop maintenance/recovery surface and background cancellation for full check/compact.
 - Add explicit multi-process maintenance leasing and concurrent reservation stress.
 - Exercise old-version upgrade, failed migration rollback, restore, and downgrade refusal in a clean offline Windows VM.
