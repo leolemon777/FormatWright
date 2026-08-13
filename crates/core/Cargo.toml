@@ -10,6 +10,7 @@ description = "Local-first inspection, planning, execution, recovery, and valida
 [dependencies]
 blake3.workspace = true
 csv.workspace = true
+fs2.workspace = true
 formatwright-engine-sdk = { version = "=0.1.0", path = "../engine-sdk" }
 image.workspace = true
 quick-xml.workspace = true

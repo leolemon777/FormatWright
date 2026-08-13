@@ -165,6 +165,14 @@ type FolderPreview = {
   skipped: number;
   sample: FolderMappingEntry[];
   truncated: boolean;
+  disk_budget: {
+    estimated_output_bytes: number;
+    peak_temporary_bytes: number;
+    safety_margin_bytes: number;
+    required_bytes: number;
+    available_bytes: number;
+    sufficient: boolean;
+  };
 };
 
 type FolderQueueResult = {
@@ -1165,11 +1173,11 @@ export default function App() {
               {convertMode === "file" && <button className="secondary" type="button" disabled={!preview || busy !== null || !routeAvailable} onClick={queueConversion}>{busy === "queue" ? copy.queueing : copy.queueOnly}</button>}
               {convertMode === "file" && busy === "run" && <button className="danger" type="button" onClick={cancel}>{copy.cancel}</button>}
               {convertMode === "folder" && <button className="secondary" type="button" disabled={!folderInputRoot || !folderOutputRoot || folderBusy !== null} onClick={previewFolderBatch}>{folderBusy === "preview" ? copy.planningFolder : copy.previewFolderMapping}</button>}
-              {convertMode === "folder" && <button className="primary" type="button" disabled={!folderPreview || folderBusy !== null} onClick={queueFolderBatch}>{folderBusy === "queue" ? copy.queueingFolder : copy.queueFolderBatch}</button>}
+              {convertMode === "folder" && <button className="primary" type="button" disabled={!folderPreview || !folderPreview.disk_budget.sufficient || folderBusy !== null} onClick={queueFolderBatch}>{folderBusy === "queue" ? copy.queueingFolder : copy.queueFolderBatch}</button>}
             </div>
 
             {convertMode === "file" && preview && <PlanView preview={preview} expert={expert} copy={copy} />}
-            {convertMode === "folder" && folderPreview && <section className="folder-preview"><div className="plan-heading"><div><p className="section-label">MAPPING PREVIEW</p><h2>{folderPreview.planned.toLocaleString()} {copy.filesReady}</h2></div><span className="loss loss-safe">{copy.expiresSoon}</span></div><p>{copy.folderPreviewSummary}: {folderPreview.discovered.toLocaleString()} {copy.discovered} · {folderPreview.planned.toLocaleString()} {copy.planned} · {folderPreview.skipped.toLocaleString()} {copy.skipped}</p><div className="mapping-list">{folderPreview.sample.map((entry) => <div key={entry.input_path}><span>{entry.relative_input_path}</span><strong>→</strong><span>{entry.output_path}</span></div>)}</div>{folderPreview.truncated && <p className="typed-note">{copy.mappingTruncated}</p>}</section>}
+            {convertMode === "folder" && folderPreview && <section className="folder-preview"><div className="plan-heading"><div><p className="section-label">MAPPING PREVIEW</p><h2>{folderPreview.planned.toLocaleString()} {copy.filesReady}</h2></div><span className={`loss ${folderPreview.disk_budget.sufficient ? "loss-safe" : "loss-lossy"}`}>{folderPreview.disk_budget.sufficient ? copy.diskReady : copy.diskInsufficient}</span></div><p>{copy.folderPreviewSummary}: {folderPreview.discovered.toLocaleString()} {copy.discovered} · {folderPreview.planned.toLocaleString()} {copy.planned} · {folderPreview.skipped.toLocaleString()} {copy.skipped} · {copy.diskRequired} {formatBytes(folderPreview.disk_budget.required_bytes)} / {copy.diskAvailable} {formatBytes(folderPreview.disk_budget.available_bytes)}</p><div className="mapping-list">{folderPreview.sample.map((entry) => <div key={entry.input_path}><span>{entry.relative_input_path}</span><strong>→</strong><span>{entry.output_path}</span></div>)}</div>{folderPreview.truncated && <p className="typed-note">{copy.mappingTruncated}</p>}<p className="typed-note">{copy.previewExpires}: {new Date(folderPreview.expires_unix_ms).toLocaleTimeString()}</p></section>}
           </div>
 
           <aside className="side-panel">

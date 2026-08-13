@@ -13,9 +13,9 @@ use formatwright_core::{
     ApplicationSettings, ApplicationSettingsService, ApplicationStateLayout,
     ApplicationStateService, BatchRecord, BulkActionReport, BulkJobAction, BulkJobService,
     CapabilitySnapshot, CompactReport, ConversionPreset, ConversionService, DoctorReport,
-    EngineDiscoveryPolicy, EngineRegistryIdentity, FolderBatchService, FolderMappingEntry,
-    IntegrityReport, JobCreateRequest, JobExecutionService, JobQueryPage, JobRecord,
-    JobSelectionQuery, JobState, JobStateCount, MaintenanceService, MaintenanceStatus,
+    EngineDiscoveryPolicy, EngineRegistryIdentity, FolderBatchService, FolderDiskBudget,
+    FolderMappingEntry, IntegrityReport, JobCreateRequest, JobExecutionService, JobQueryPage,
+    JobRecord, JobSelectionQuery, JobState, JobStateCount, MaintenanceService, MaintenanceStatus,
     PRESET_SCHEMA_VERSION, Plan, PlanRequest, PresetLibrary, Probe, QueueRunReport,
     QueueWindowControl, ReportService, SelectionSnapshot, SqliteJobStore, StateBundleBackupReport,
     StateBundleOptions, StateBundlePreflightReport, ValidationReport, VerifiedEnginePack,
@@ -117,6 +117,7 @@ struct DesktopFolderPreview {
     skipped: usize,
     sample: Vec<FolderMappingEntry>,
     truncated: bool,
+    disk_budget: FolderDiskBudget,
 }
 
 #[derive(Debug)]
@@ -575,6 +576,8 @@ async fn preview_desktop_folder_batch(
         .filter(|entry| planned_outputs.contains(&entry.output_path))
         .take(DESKTOP_FOLDER_PREVIEW_SAMPLE)
         .collect::<Vec<_>>();
+    let disk_budget = FolderBatchService::disk_budget(&mapping.output_root, &requests, 4)
+        .map_err(serialize_error)?;
     let now = unix_ms_now();
     let preview = DesktopFolderPreview {
         preview_id: Uuid::new_v4(),
@@ -590,6 +593,7 @@ async fn preview_desktop_folder_batch(
         skipped,
         truncated: requests.len() > sample.len(),
         sample,
+        disk_budget: disk_budget.clone(),
     };
     let cache = DesktopFolderPreviewCache {
         preview: preview.clone(),
@@ -625,6 +629,20 @@ fn queue_desktop_folder_batch(
         .ok_or_else(|| "folder preview is missing, expired, or already queued".to_owned())?;
     if cache.created.elapsed() > DESKTOP_FOLDER_PREVIEW_TTL {
         return Err("folder preview expired; preview the mapping again".to_owned());
+    }
+    let current_budget =
+        FolderBatchService::disk_budget(&cache.preview.output_root, &cache.requests, 4)
+            .map_err(serialize_error)?;
+    if !current_budget.sufficient {
+        return Err(serialize_error(formatwright_core::FormatWrightError::new(
+            formatwright_core::ErrorCode::ResourceExhausted,
+            formatwright_core::Stage::Store,
+            format!(
+                "Folder batch requires {} bytes but only {} bytes are available",
+                current_budget.required_bytes, current_budget.available_bytes
+            ),
+            "Free disk space or choose another output root, then preview again.",
+        )));
     }
     for request in &cache.requests {
         if request.output_path.exists() {

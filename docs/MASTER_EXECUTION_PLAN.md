@@ -570,9 +570,10 @@ API 不直接接受宿主任意路径。请求引用预先授权的 workspace/ro
 
 ### Gate 2：Desktop Beta 功能闭环（1–2 周）
 
-- [x] 文件夹添加与 mapping preview：Core 有界递归枚举、不跟随链接、输入/输出根互斥、相对目录保留与确定性重名消歧；Desktop 最多生成 10,000 个不可变 Plan，只展示前 100 条映射，确认后原子提交批次/任务/预约/队列事件。
+- [x] 文件夹添加与 mapping preview：Core 有界递归枚举、不跟随链接、输入/输出根互斥、相对目录保留与确定性重名消歧；Desktop 最多生成 10,000 个不可变 Plan，只展示前 100 条映射；按预计输出、并发 staging 与 256 MiB 最小余量计算磁盘预算并在提交前重检；确认后原子提交批次/任务/预约/队列事件。
 - [ ] 阶段/速度/ETA/调度原因；启动恢复横幅与精确 partial cleanup 已完成。
-- [ ] 报告/配方导出、revalidate、打开输出；磁盘空间预检。
+- [x] 文件夹批次磁盘空间预检。
+- [ ] 报告/配方导出、revalidate、打开输出。
 - [ ] Windows Explorer 集成；macOS/Linux 入口只在对应平台通过后启用。
 - [ ] secret prompt 与全链路 redaction。
 - [ ] 键盘、UIA、Narrator/VoiceOver/Orca、高 DPI/zoom/RTL 自动与人工矩阵。
@@ -787,7 +788,7 @@ API 不直接接受宿主任意路径。请求引用预先授权的 workspace/ro
 ### 第 5–6 周：Desktop 长期自用闭环
 
 - [x] 恢复横幅、精确 partial 清理、批量 retry/resume/cancel、路径/状态/批次筛选、稳定 selection 与有界分页已完成；继续虚拟化和实时进度。
-- [x] 文件夹 mapping preview 与原子批次入队；继续磁盘空间预检、打开输出/导出报告。
+- [x] 文件夹 mapping preview、磁盘空间预检与原子批次入队；继续打开输出/导出报告。
 - Windows Explorer 入口、键盘/UIA/高 DPI/RTL 回归。
 
 退出：日常高频流程无需 CLI 补救；关闭/重启/升级不丢任务。

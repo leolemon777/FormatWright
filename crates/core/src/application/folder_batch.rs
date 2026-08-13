@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{ErrorCode, FormatWrightError, Result, Stage};
+use crate::job_store::JobCreateRequest;
 
 pub const MAX_FOLDER_BATCH_FILES: usize = 100_000;
 
@@ -24,6 +25,16 @@ pub struct FolderMappingPlan {
     pub discovered: usize,
     pub skipped: usize,
     pub mappings: Vec<FolderMappingEntry>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct FolderDiskBudget {
+    pub estimated_output_bytes: u64,
+    pub peak_temporary_bytes: u64,
+    pub safety_margin_bytes: u64,
+    pub required_bytes: u64,
+    pub available_bytes: u64,
+    pub sufficient: bool,
 }
 
 #[derive(Debug, Default)]
@@ -127,6 +138,69 @@ impl FolderBatchService {
             discovered,
             skipped,
             mappings,
+        })
+    }
+
+    /// Estimates durable output plus bounded concurrent staging and compares
+    /// it with current free space at the canonical output root.
+    ///
+    /// # Errors
+    ///
+    /// Returns a storage error when input sizes or free space cannot be read.
+    pub fn disk_budget(
+        output_root: impl AsRef<Path>,
+        requests: &[JobCreateRequest],
+        parallelism: usize,
+    ) -> Result<FolderDiskBudget> {
+        let output_root = canonical_local_directory(output_root.as_ref(), "output")?;
+        let parallelism = parallelism.clamp(1, 16);
+        let mut estimated_output_bytes = 0_u64;
+        let mut temporary = Vec::with_capacity(requests.len());
+        for request in requests {
+            let input_bytes = std::fs::metadata(&request.input_path)
+                .map_err(|error| folder_io_error(&request.input_path, "measure", error))?
+                .len();
+            let output_bytes = request
+                .plan
+                .estimated_output_bytes
+                .unwrap_or_else(|| input_bytes.saturating_mul(2).saturating_add(64 * 1024));
+            estimated_output_bytes = estimated_output_bytes.saturating_add(output_bytes);
+            let peak = request
+                .plan
+                .steps
+                .iter()
+                .filter_map(|step| step.estimated_temporary_bytes)
+                .max()
+                .unwrap_or_else(|| input_bytes.saturating_mul(2));
+            temporary.push(peak);
+        }
+        temporary.sort_unstable_by(|left, right| right.cmp(left));
+        let peak_temporary_bytes = temporary
+            .into_iter()
+            .take(parallelism)
+            .fold(0_u64, u64::saturating_add);
+        let working_bytes = estimated_output_bytes.saturating_add(peak_temporary_bytes);
+        let safety_margin_bytes = (working_bytes / 10).max(256 * 1024 * 1024);
+        let required_bytes = working_bytes.saturating_add(safety_margin_bytes);
+        let available_bytes = fs2::available_space(&output_root).map_err(|error| {
+            FormatWrightError::new(
+                ErrorCode::StorageFailed,
+                Stage::Store,
+                format!(
+                    "Cannot read available space for folder batch output: {}",
+                    output_root.display()
+                ),
+                "Choose a local output disk with readable capacity information.",
+            )
+            .with_diagnostic(error.to_string())
+        })?;
+        Ok(FolderDiskBudget {
+            estimated_output_bytes,
+            peak_temporary_bytes,
+            safety_margin_bytes,
+            required_bytes,
+            available_bytes,
+            sufficient: available_bytes >= required_bytes,
         })
     }
 }
@@ -258,6 +332,7 @@ mod tests {
     use tempfile::tempdir;
 
     use super::FolderBatchService;
+    use crate::job_store::JobCreateRequest;
 
     #[test]
     fn preserves_relative_folders_and_disambiguates_same_stem_outputs() {
@@ -294,5 +369,64 @@ mod tests {
 
         assert!(FolderBatchService::preview_mapping(&input, &nested, "webp").is_err());
         assert!(FolderBatchService::preview_mapping(&input, suite.path(), "../exe").is_err());
+    }
+
+    #[test]
+    fn disk_budget_includes_outputs_parallel_staging_and_safety_margin() {
+        let suite = tempdir().expect("suite");
+        let output = suite.path().join("output");
+        fs::create_dir_all(&output).expect("output");
+        let mut requests = Vec::new();
+        for index in 0..3 {
+            let input = suite.path().join(format!("input-{index}.json"));
+            fs::write(&input, vec![0_u8; 1024]).expect("input");
+            let mut plan = crate::domain::Plan {
+                schema_version: crate::domain::SCHEMA_VERSION,
+                plan_id: uuid::Uuid::new_v4(),
+                plan_hash: "blake3:test".to_owned(),
+                input_fingerprint: "fwfp-v1:test".to_owned(),
+                target_format: "yaml".to_owned(),
+                constraints: std::collections::BTreeMap::new(),
+                steps: Vec::new(),
+                changes: crate::domain::ChangeSet::default(),
+                validators: Vec::new(),
+                network_policy: crate::domain::NetworkPolicy::Deny,
+                output_path: Some(output.join(format!("output-{index}.yaml"))),
+                estimated_output_bytes: Some(2_000),
+            };
+            plan.steps.push(crate::domain::PlanStep {
+                step_id: format!("step-{index}"),
+                capability_id: "test".to_owned(),
+                engine: formatwright_engine_sdk::EngineIdentity {
+                    engine_id: "test".to_owned(),
+                    version: "1".to_owned(),
+                    binary_path: suite.path().join("test"),
+                    binary_sha256: "sha256:test".to_owned(),
+                    manifest_sha256: None,
+                    build_configuration: None,
+                    certification: formatwright_engine_sdk::Certification::Unverified,
+                },
+                operation: formatwright_engine_sdk::Operation::Serialize,
+                loss_class: formatwright_engine_sdk::LossClass::Lossless,
+                arguments: std::collections::BTreeMap::new(),
+                estimated_temporary_bytes: Some((index + 1) * 1_000),
+            });
+            requests.push(JobCreateRequest {
+                input_path: input,
+                output_path: output.join(format!("output-{index}.yaml")),
+                plan,
+            });
+        }
+
+        let budget = FolderBatchService::disk_budget(&output, &requests, 2).expect("disk budget");
+
+        assert_eq!(budget.estimated_output_bytes, 6_000);
+        assert_eq!(budget.peak_temporary_bytes, 5_000);
+        assert_eq!(budget.safety_margin_bytes, 256 * 1024 * 1024);
+        assert_eq!(budget.required_bytes, 6_000 + 5_000 + 256 * 1024 * 1024);
+        assert_eq!(
+            budget.sufficient,
+            budget.available_bytes >= budget.required_bytes
+        );
     }
 }

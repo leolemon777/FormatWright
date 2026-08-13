@@ -23,9 +23,9 @@ pub mod validation;
 mod workflow;
 
 pub use application::{
-    BulkJobService, ConversionRunResult, ConversionService, FolderBatchService, FolderMappingEntry,
-    FolderMappingPlan, JobExecutionService, MAX_FOLDER_BATCH_FILES, QueueRunReport,
-    QueueWindowControl, ReportService,
+    BulkJobService, ConversionRunResult, ConversionService, FolderBatchService, FolderDiskBudget,
+    FolderMappingEntry, FolderMappingPlan, JobExecutionService, MAX_FOLDER_BATCH_FILES,
+    QueueRunReport, QueueWindowControl, ReportService,
 };
 pub use application_state::{
     APPLICATION_SETTINGS_SCHEMA_VERSION, APPLICATION_STATE_BUNDLE_SCHEMA_VERSION,
