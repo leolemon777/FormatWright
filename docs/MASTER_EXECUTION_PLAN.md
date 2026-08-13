@@ -202,14 +202,14 @@
 
 ### 4.3 P1：Desktop Beta
 
-- [ ] 文件夹作为一等输入，展示枚举/跳过/目录映射预览。
+- [x] 文件夹作为一等输入，展示枚举/跳过/目录映射预览；单批最多 10,000 个不可变 Plan，提交前重检磁盘预算并原子入队。
 - [x] 桌面真正执行持久队列：队列级开始、finish-current pause、可恢复 immediate pause、启动恢复摘要，以及单任务和筛选后的批量 Resume/Retry/Cancel 已落地。
 - [ ] 状态筛选、搜索、分页/虚拟化、稳定选择、批量重试失败项、跳过完成项：SQLite 路径/状态/批次筛选、有界分页、稳定选择和批量动作已完成；只剩超长列表虚拟化。
-- [ ] “仅重新验证”、导出 Plan/任务配方/ValidationReport、打开输出目录、partial 清理入口。
+- [ ] “仅重新验证”和手动 partial 清理入口；任务配方/ValidationReport 安全导出、报告路径脱敏以及从可信 job_id 打开输出已完成。
 - [ ] 逐阶段进度、速度、ETA 置信度和调度原因；不伪造引擎无法提供的百分比。
 - [x] 启动恢复横幅：展示启动中断恢复数、精确 staging 清理数、各持久状态与可恢复总数；可直接进入按状态/批次筛选的任务页处理。
 - [ ] 密码/秘密专用提示，不写入 Plan、日志、SQLite、历史或报告。
-- [ ] 临时空间/输出空间预检与硬阻断；支持更换目标路径。
+- [x] 文件夹批次按预计输出、并发 staging 和安全余量做磁盘空间预检与提交前硬阻断；目标根可重新选择。
 - [ ] Windows Explorer 右键菜单；macOS Finder Quick Action；Linux file-manager action。
 - [ ] 全键盘工作流、Narrator/VoiceOver/Orca 屏幕阅读器、高 DPI、200% zoom、RTL 文件名、对比度和 reduced-motion 测试。
 - [ ] 24 人 Beta 可用性计划；80% 三分钟首次成功、Plan/Warning 理解率和恢复任务目标。
@@ -573,7 +573,8 @@ API 不直接接受宿主任意路径。请求引用预先授权的 workspace/ro
 - [x] 文件夹添加与 mapping preview：Core 有界递归枚举、不跟随链接、输入/输出根互斥、相对目录保留与确定性重名消歧；Desktop 最多生成 10,000 个不可变 Plan，只展示前 100 条映射；按预计输出、并发 staging 与 256 MiB 最小余量计算磁盘预算并在提交前重检；确认后原子提交批次/任务/预约/队列事件。
 - [ ] 阶段/速度/ETA/调度原因；启动恢复横幅与精确 partial cleanup 已完成。
 - [x] 文件夹批次磁盘空间预检。
-- [ ] 报告/配方导出、revalidate、打开输出。
+- [x] 报告/配方导出与打开输出；导出有 16 MiB 上限、默认报告路径脱敏、原子 no-clobber，打开路径由后端按 job_id 查询。
+- [ ] revalidate。
 - [ ] Windows Explorer 集成；macOS/Linux 入口只在对应平台通过后启用。
 - [ ] secret prompt 与全链路 redaction。
 - [ ] 键盘、UIA、Narrator/VoiceOver/Orca、高 DPI/zoom/RTL 自动与人工矩阵。
@@ -788,7 +789,7 @@ API 不直接接受宿主任意路径。请求引用预先授权的 workspace/ro
 ### 第 5–6 周：Desktop 长期自用闭环
 
 - [x] 恢复横幅、精确 partial 清理、批量 retry/resume/cancel、路径/状态/批次筛选、稳定 selection 与有界分页已完成；继续虚拟化和实时进度。
-- [x] 文件夹 mapping preview、磁盘空间预检与原子批次入队；继续打开输出/导出报告。
+- [x] 文件夹 mapping preview、磁盘空间预检、原子批次入队、打开输出与安全导出报告/任务配方。
 - Windows Explorer 入口、键盘/UIA/高 DPI/RTL 回归。
 
 退出：日常高频流程无需 CLI 补救；关闭/重启/升级不丢任务。

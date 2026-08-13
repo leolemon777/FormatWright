@@ -1,7 +1,7 @@
 # Desktop MVP Verification
 
 - Status: Phase 4 Windows development evidence
-- Updated: 2026-08-11
+- Updated: 2026-08-12
 
 ## Implemented surface
 
@@ -17,6 +17,7 @@ The Tauri 2 desktop application now invokes the same `formatwright-core::prepare
 - A cancellation command reaches the active Rust `CancellationToken` and process-tree runner for single-shot converts; queue pause modes use `QueueWindowControl`.
 - SQLite jobs live under the Tauri application data directory. On startup, active jobs become interrupted instead of disappearing.
 - Validation reports are written for **immediate** converts and for **queue-window** completions through a same-directory partial, recoverable backup, and rename into the application-data `reports` directory before the terminal SQLite transition. Report-write failure leaves an immediate job `Interrupted`, never falsely `Completed`/`Warning`.
+- Reports can be exported with paths redacted by default, immutable job recipes can be exported for reproducibility, and both use a 16 MiB bound plus atomic no-clobber publication. The file-browser action resolves the output from a trusted `job_id` in SQLite instead of accepting an arbitrary frontend path.
 - Engine Doctor performs local discovery only and does not download automatically.
 - Engine import selects a local manifest, runs the shared pack verifier off the UI thread, persists an immutable manifest-hash registry entry, re-verifies entries on startup, rejects ambiguous executable-name claims, and activates only exact verified paths. Unsigned or merely signature-bearing packs remain `Unverified` until a trusted release keyring exists.
 - Simplified Chinese and English strings live outside React components. Basic/expert mode and language preferences persist in local storage.
@@ -27,7 +28,7 @@ The Tauri 2 desktop application now invokes the same `formatwright-core::prepare
 
 - `pnpm --dir apps/desktop test -- --run`: two files and six tests pass, covering the 10,000-job coalesced projection, duplicate-batch refusal, target recommendations, non-overwriting output suggestions, PDF page-directory suggestions, and typed error parsing.
 - `pnpm --dir apps/desktop build`: TypeScript project build and Vite production bundle pass.
-- Current ordinary Rust baseline: 160 tests pass (134 core, 9 schema-contract, 13 desktop and 4 engine-SDK tests), including shared Conversion/Report services, versioned application-state bundles/settings, exact preview approval, in-flight pause and process-tree recovery, Desktop per-job and stable-selection bulk actions, idempotent enqueue, live queue read/paging/enqueue, queue failure drain, report-before-terminal persistence/recovery, report size/no-clobber bounds, Windows output identity, SQLite v4 maintenance/restore/concurrency/atomic claim, round-robin batch selection, no-clobber output publish, engine-pack activation, atomic durable batches, deterministic resource admission, and the bounded queue bridge. The homogeneous and mixed 10,000-conversion release gates are opt-in.
+- Current ordinary Rust baseline: 171 tests pass (139 core, 9 schema-contract, 19 desktop and 4 engine-SDK tests), including shared Conversion/Report services, versioned application-state bundles/settings, exact preview approval, in-flight pause and process-tree recovery, Desktop per-job and stable-selection bulk actions, idempotent enqueue, live queue read/paging/enqueue, queue failure drain, report-before-terminal persistence/recovery, bounded redacted no-clobber export, Windows output identity, SQLite v4 maintenance/restore/concurrency/atomic claim, round-robin batch selection, no-clobber output publish, engine-pack activation, atomic durable batches, deterministic resource admission, and the bounded queue bridge. The homogeneous and mixed 10,000-conversion release gates are opt-in.
 - Workspace Clippy with warnings denied passes for the desktop IPC and persistence implementation.
 - `formatwright-desktop.exe` starts a native window titled `FormatWright`, remains responsive, and is then terminated by the harness.
 - Edge headless rendered the local production UI at 1440×1000. The captured Convert page, including native-picker affordances, was visually checked for navigation, hierarchy, clipping, contrast, disabled controls, bilingual typography, and responsive column boundaries.
@@ -39,4 +40,4 @@ Generated screenshots and application data are local development artifacts and a
 
 This is Windows development evidence, not Desktop Beta certification. The picker plugin, its least-privilege capabilities, frontend calls, TypeScript types, Rust registration, and native executable startup are verified. The Orca computer-use runtime was unavailable (`runtime_unavailable`), so automated interaction with the native picker and accessibility tree could not be performed in this run; keyboard/screen-reader behavior still needs a live assistive-technology pass.
 
-Remaining Phase 4 work includes a startup recovery banner, filtered/bulk history actions, report export/redaction controls, open-file/open-folder actions, folder-as-input, a certified-pack download/install experience backed by the Phase 5 signature keyring, Windows context-menu registration, macOS/Linux integration, RTL UI fixtures, signed installers, and the three-minute first-user study.
+Remaining Phase 4 work includes validation-only/revalidate, long-list virtualization, a certified-pack download/install experience backed by the Phase 5 signature keyring, Windows context-menu registration, macOS/Linux integration, RTL UI fixtures, signed installers, and the three-minute first-user study.

@@ -24,6 +24,7 @@ use formatwright_core::{
 use queue_bridge::{DEFAULT_BATCH_JOBS, DEFAULT_BENCHMARK_JOBS, QueueBatchIter};
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager};
+use tempfile::TempPath;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -90,6 +91,17 @@ const DESKTOP_FOLDER_PREVIEW_TTL: std::time::Duration = std::time::Duration::fro
 const DESKTOP_FOLDER_PREVIEW_LIMIT: usize = 32;
 const DESKTOP_FOLDER_PREVIEW_SAMPLE: usize = 100;
 const DESKTOP_FOLDER_PLAN_LIMIT: usize = 10_000;
+const DESKTOP_EXPORT_SCHEMA_VERSION: u16 = 1;
+const MAX_DESKTOP_EXPORT_BYTES: usize = 16 * 1024 * 1024;
+
+#[derive(Clone, Debug, Serialize)]
+struct DesktopRecipeExport {
+    schema_version: u16,
+    job_id: Uuid,
+    input_path: PathBuf,
+    output_path: PathBuf,
+    plan: Plan,
+}
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1058,6 +1070,75 @@ fn get_desktop_report(
 
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)]
+fn export_desktop_report(
+    state: tauri::State<'_, DesktopState>,
+    job_id: String,
+    destination_path: PathBuf,
+    redact_paths: Option<bool>,
+) -> Result<u64, String> {
+    let job_id = Uuid::parse_str(&job_id).map_err(|error| error.to_string())?;
+    let report = ReportService::new(&state.reports_directory)
+        .read(job_id)
+        .map_err(serialize_error)?
+        .ok_or_else(|| serialize_error(desktop_missing_job_artifact("ValidationReport")))?;
+    let report = report_for_export(report, redact_paths.unwrap_or(true));
+    let bytes = serde_json::to_vec_pretty(&report).map_err(|error| {
+        serialize_error(desktop_export_error(
+            formatwright_core::ErrorCode::StorageFailed,
+            "ValidationReport could not be serialized for export",
+            "Retry the export or restore a valid report from backup.",
+            Some(error.to_string()),
+        ))
+    })?;
+    write_desktop_export_noclobber(&destination_path, &bytes).map_err(serialize_error)
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+fn export_desktop_recipe(
+    state: tauri::State<'_, DesktopState>,
+    job_id: String,
+    destination_path: PathBuf,
+) -> Result<u64, String> {
+    let job_id = Uuid::parse_str(&job_id).map_err(|error| error.to_string())?;
+    let details = lock(&state.store)?
+        .get_job_details(job_id)
+        .map_err(serialize_error)?
+        .ok_or_else(|| serialize_error(desktop_missing_job_artifact("job")))?;
+    let recipe = DesktopRecipeExport {
+        schema_version: DESKTOP_EXPORT_SCHEMA_VERSION,
+        job_id,
+        input_path: details.job.input_path,
+        output_path: details.job.output_path,
+        plan: details.plan,
+    };
+    let bytes = serde_json::to_vec_pretty(&recipe).map_err(|error| {
+        serialize_error(desktop_export_error(
+            formatwright_core::ErrorCode::StorageFailed,
+            "Job recipe could not be serialized for export",
+            "Retry the export or restore a valid job database from backup.",
+            Some(error.to_string()),
+        ))
+    })?;
+    write_desktop_export_noclobber(&destination_path, &bytes).map_err(serialize_error)
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+fn reveal_desktop_job_output(
+    state: tauri::State<'_, DesktopState>,
+    job_id: String,
+) -> Result<(), String> {
+    let job_id = Uuid::parse_str(&job_id).map_err(|error| error.to_string())?;
+    let job = lock(&state.store)?
+        .get_job(job_id)
+        .map_err(serialize_error)?
+        .ok_or_else(|| serialize_error(desktop_missing_job_artifact("job")))?;
+    reveal_existing_output(&job.output_path).map_err(serialize_error)
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
 fn list_desktop_presets(
     state: tauri::State<'_, DesktopState>,
 ) -> Result<Vec<ConversionPreset>, String> {
@@ -1149,6 +1230,187 @@ fn unix_ms_now() -> i64 {
         .ok()
         .and_then(|duration| i64::try_from(duration.as_millis()).ok())
         .unwrap_or_default()
+}
+
+fn report_for_export(mut report: ValidationReport, redact_paths: bool) -> ValidationReport {
+    if redact_paths {
+        report.input.display_path = None;
+        report.output.display_path = None;
+        report.redaction.paths_redacted = true;
+    }
+    report
+}
+
+fn write_desktop_export_noclobber(
+    destination: &Path,
+    bytes: &[u8],
+) -> formatwright_core::Result<u64> {
+    if bytes.len() > MAX_DESKTOP_EXPORT_BYTES {
+        return Err(desktop_export_error(
+            formatwright_core::ErrorCode::ResourceExhausted,
+            "Desktop JSON export exceeds the 16 MiB limit",
+            "Export a smaller report or recipe.",
+            None,
+        ));
+    }
+    if destination.file_name().is_none() {
+        return Err(desktop_export_error(
+            formatwright_core::ErrorCode::InputInvalid,
+            "Desktop JSON export needs a file destination",
+            "Choose a JSON filename inside an existing local directory.",
+            None,
+        ));
+    }
+    let parent = destination.parent().ok_or_else(|| {
+        desktop_export_error(
+            formatwright_core::ErrorCode::InputInvalid,
+            "Desktop JSON export destination has no parent directory",
+            "Choose a JSON filename inside an existing local directory.",
+            None,
+        )
+    })?;
+    let file_name = destination
+        .file_name()
+        .ok_or_else(|| {
+            desktop_export_error(
+                formatwright_core::ErrorCode::InputInvalid,
+                "Desktop JSON export needs a file destination",
+                "Choose a JSON filename inside an existing local directory.",
+                None,
+            )
+        })?
+        .to_os_string();
+    let parent = parent.canonicalize().map_err(|error| {
+        desktop_export_error(
+            formatwright_core::ErrorCode::InputInvalid,
+            "Desktop JSON export directory is unavailable",
+            "Choose an existing writable local directory.",
+            Some(error.to_string()),
+        )
+    })?;
+    let destination = parent.join(file_name);
+    if destination.exists() {
+        return Err(desktop_export_error(
+            formatwright_core::ErrorCode::OutputConflict,
+            "Desktop JSON export will not overwrite an existing file",
+            "Choose another filename or remove the existing file first.",
+            None,
+        ));
+    }
+
+    let partial = parent.join(format!(".formatwright-export-{}.partial", Uuid::new_v4()));
+    let write_result = (|| -> std::io::Result<()> {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&partial)?;
+        file.write_all(bytes)?;
+        file.sync_all()
+    })();
+    if let Err(error) = write_result {
+        let _ = std::fs::remove_file(&partial);
+        return Err(desktop_export_error(
+            formatwright_core::ErrorCode::StorageFailed,
+            "Desktop JSON export could not be persisted",
+            "Check destination permissions and available storage, then retry.",
+            Some(error.to_string()),
+        ));
+    }
+    let temporary = TempPath::try_from_path(partial).map_err(|error| {
+        desktop_export_error(
+            formatwright_core::ErrorCode::StorageFailed,
+            "Desktop JSON export staging path is invalid",
+            "Choose another local destination and retry.",
+            Some(error.to_string()),
+        )
+    })?;
+    if let Err(error) = temporary.persist_noclobber(&destination) {
+        return Err(desktop_export_error(
+            if destination.exists() {
+                formatwright_core::ErrorCode::OutputConflict
+            } else {
+                formatwright_core::ErrorCode::StorageFailed
+            },
+            "Desktop JSON export could not be committed without overwriting",
+            "Choose another filename and retry.",
+            Some(error.error.to_string()),
+        ));
+    }
+    Ok(u64::try_from(bytes.len()).unwrap_or(u64::MAX))
+}
+
+fn reveal_existing_output(path: &Path) -> formatwright_core::Result<()> {
+    let path = path.canonicalize().map_err(|error| {
+        desktop_export_error(
+            formatwright_core::ErrorCode::InputInvalid,
+            "The job output is no longer available",
+            "Restore the output or run the conversion again.",
+            Some(error.to_string()),
+        )
+    })?;
+    let mut command = platform_reveal_command(&path);
+    command.spawn().map_err(|error| {
+        desktop_export_error(
+            formatwright_core::ErrorCode::ExecutionFailed,
+            "The operating-system file browser could not be opened",
+            "Open the output path manually from the report.",
+            Some(error.to_string()),
+        )
+    })?;
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn platform_reveal_command(path: &Path) -> std::process::Command {
+    let mut command = std::process::Command::new("explorer.exe");
+    command.arg("/select,").arg(path);
+    command
+}
+
+#[cfg(target_os = "macos")]
+fn platform_reveal_command(path: &Path) -> std::process::Command {
+    let mut command = std::process::Command::new("open");
+    command.arg("-R").arg(path);
+    command
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn platform_reveal_command(path: &Path) -> std::process::Command {
+    let target = if path.is_dir() {
+        path
+    } else {
+        path.parent().unwrap_or(path)
+    };
+    let mut command = std::process::Command::new("xdg-open");
+    command.arg(target);
+    command
+}
+
+fn desktop_missing_job_artifact(artifact: &str) -> formatwright_core::FormatWrightError {
+    desktop_export_error(
+        formatwright_core::ErrorCode::InputInvalid,
+        format!("The requested {artifact} was not found"),
+        "Refresh the job list and select an existing completed job.",
+        None,
+    )
+}
+
+fn desktop_export_error(
+    code: formatwright_core::ErrorCode,
+    message: impl Into<String>,
+    action: impl Into<String>,
+    diagnostic: Option<String>,
+) -> formatwright_core::FormatWrightError {
+    let error = formatwright_core::FormatWrightError::new(
+        code,
+        formatwright_core::Stage::Store,
+        message,
+        action,
+    );
+    match diagnostic {
+        Some(diagnostic) => error.with_diagnostic(diagnostic),
+        None => error,
+    }
 }
 
 #[allow(clippy::needless_pass_by_value)]
@@ -1666,6 +1928,64 @@ fn recover_desktop_jobs(
     })
 }
 
+fn setup_desktop(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    let data_directory = app.path().app_data_dir()?;
+    let resource_directory = app.path().resource_dir()?;
+    let job_database_path = data_directory.join("jobs.sqlite3");
+    let (restored_bundle_id, restore_error) = apply_pending_restore(&job_database_path);
+    let state_layout = ApplicationStateLayout::from_database(&job_database_path)
+        .map_err(|error| Box::<dyn std::error::Error>::from(error.to_string()))?;
+    ApplicationStateService::new(state_layout.clone())
+        .recover_interrupted_restore()
+        .map_err(|error| Box::<dyn std::error::Error>::from(error.to_string()))?;
+    let reports_directory = state_layout.reports_directory;
+    let engine_registry_directory = state_layout.engine_registry_directory;
+    let engine_store_directory = data_directory.join("engines");
+    let presets_path = state_layout.presets_path;
+    let settings_path = state_layout.settings_path;
+    std::fs::create_dir_all(&reports_directory)?;
+    std::fs::create_dir_all(&engine_registry_directory)?;
+    std::fs::create_dir_all(&engine_store_directory)?;
+    install_bundled_engine_packs(
+        &resource_directory,
+        &engine_store_directory,
+        &engine_registry_directory,
+    )
+    .map_err(Box::<dyn std::error::Error>::from)?;
+    for manifest_path in registered_manifest_paths(&engine_registry_directory)
+        .map_err(Box::<dyn std::error::Error>::from)?
+    {
+        let _ = activate_engine_pack(manifest_path);
+    }
+    let mut store = SqliteJobStore::open(&job_database_path)
+        .map_err(|error| Box::<dyn std::error::Error>::from(error.to_string()))?;
+    let mut startup_recovery = recover_desktop_jobs(&mut store)
+        .map_err(|error| Box::<dyn std::error::Error>::from(error.to_string()))?;
+    startup_recovery.restored_bundle_id = restored_bundle_id;
+    startup_recovery.restore_error = restore_error;
+    let presets = load_preset_library(&presets_path).map_err(Box::<dyn std::error::Error>::from)?;
+    let settings = ApplicationSettingsService::new(&settings_path)
+        .read()
+        .map_err(|error| Box::<dyn std::error::Error>::from(error.to_string()))?;
+    app.manage(DesktopState {
+        store: Mutex::new(store),
+        job_database_path,
+        cancellations: Mutex::new(HashMap::new()),
+        queue_control: Mutex::new(None),
+        presets: Mutex::new(presets),
+        presets_path,
+        settings: Mutex::new(settings),
+        settings_path,
+        reports_directory,
+        engine_registry_directory,
+        engine_store_directory,
+        startup_recovery,
+        operation_gate: Mutex::new(DesktopOperationGate::default()),
+        folder_previews: Mutex::new(HashMap::new()),
+    });
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 /// Starts the bundled local desktop application.
 ///
@@ -1675,64 +1995,7 @@ fn recover_desktop_jobs(
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .setup(|app| {
-            let data_directory = app.path().app_data_dir()?;
-            let resource_directory = app.path().resource_dir()?;
-            let job_database_path = data_directory.join("jobs.sqlite3");
-            let (restored_bundle_id, restore_error) = apply_pending_restore(&job_database_path);
-            let state_layout = ApplicationStateLayout::from_database(&job_database_path)
-                .map_err(|error| Box::<dyn std::error::Error>::from(error.to_string()))?;
-            ApplicationStateService::new(state_layout.clone())
-                .recover_interrupted_restore()
-                .map_err(|error| Box::<dyn std::error::Error>::from(error.to_string()))?;
-            let reports_directory = state_layout.reports_directory;
-            let engine_registry_directory = state_layout.engine_registry_directory;
-            let engine_store_directory = data_directory.join("engines");
-            let presets_path = state_layout.presets_path;
-            let settings_path = state_layout.settings_path;
-            std::fs::create_dir_all(&reports_directory)?;
-            std::fs::create_dir_all(&engine_registry_directory)?;
-            std::fs::create_dir_all(&engine_store_directory)?;
-            install_bundled_engine_packs(
-                &resource_directory,
-                &engine_store_directory,
-                &engine_registry_directory,
-            )
-            .map_err(Box::<dyn std::error::Error>::from)?;
-            for manifest_path in registered_manifest_paths(&engine_registry_directory)
-                .map_err(Box::<dyn std::error::Error>::from)?
-            {
-                let _ = activate_engine_pack(manifest_path);
-            }
-            let mut store = SqliteJobStore::open(&job_database_path)
-                .map_err(|error| Box::<dyn std::error::Error>::from(error.to_string()))?;
-            let mut startup_recovery = recover_desktop_jobs(&mut store)
-                .map_err(|error| Box::<dyn std::error::Error>::from(error.to_string()))?;
-            startup_recovery.restored_bundle_id = restored_bundle_id;
-            startup_recovery.restore_error = restore_error;
-            let presets =
-                load_preset_library(&presets_path).map_err(Box::<dyn std::error::Error>::from)?;
-            let settings = ApplicationSettingsService::new(&settings_path)
-                .read()
-                .map_err(|error| Box::<dyn std::error::Error>::from(error.to_string()))?;
-            app.manage(DesktopState {
-                store: Mutex::new(store),
-                job_database_path,
-                cancellations: Mutex::new(HashMap::new()),
-                queue_control: Mutex::new(None),
-                presets: Mutex::new(presets),
-                presets_path,
-                settings: Mutex::new(settings),
-                settings_path,
-                reports_directory,
-                engine_registry_directory,
-                engine_store_directory,
-                startup_recovery,
-                operation_gate: Mutex::new(DesktopOperationGate::default()),
-                folder_previews: Mutex::new(HashMap::new()),
-            });
-            Ok(())
-        })
+        .setup(setup_desktop)
         .invoke_handler(tauri::generate_handler![
             run_queue_bridge_benchmark,
             desktop_doctor,
@@ -1762,6 +2025,9 @@ pub fn run() {
             capture_desktop_job_selection,
             run_desktop_bulk_action,
             get_desktop_report,
+            export_desktop_report,
+            export_desktop_recipe,
+            reveal_desktop_job_output,
             list_desktop_presets,
             save_desktop_preset,
             delete_desktop_preset,
@@ -1798,8 +2064,8 @@ mod tests {
         acquire_active_operation, acquire_maintenance_operation, acquire_queue_window,
         apply_pending_restore, backup_path, bundled_manifest_paths, load_preset_library,
         pending_restore_path, persist_preset_library, prepare_approved_desktop_conversion,
-        recover_desktop_jobs, registered_manifest_paths, requeue_job, run_queue_window_on_database,
-        stage_pending_restore,
+        recover_desktop_jobs, registered_manifest_paths, report_for_export, requeue_job,
+        run_queue_window_on_database, stage_pending_restore, write_desktop_export_noclobber,
     };
 
     fn plan(output_path: PathBuf) -> Plan {
@@ -1843,6 +2109,52 @@ mod tests {
                 metadata_values_redacted: true,
             },
         }
+    }
+
+    #[test]
+    fn report_export_path_redaction_does_not_mutate_the_stored_report() {
+        let job_id = Uuid::new_v4();
+        let mut stored = report(job_id, ValidationStatus::Pass);
+        stored.input.display_path = Some("E:\\private\\input.pdf".to_owned());
+        stored.output.display_path = Some("E:\\private\\output.png".to_owned());
+        stored.redaction.paths_redacted = false;
+
+        let exported = report_for_export(stored.clone(), true);
+
+        assert_eq!(
+            stored.input.display_path.as_deref(),
+            Some("E:\\private\\input.pdf")
+        );
+        assert_eq!(
+            stored.output.display_path.as_deref(),
+            Some("E:\\private\\output.png")
+        );
+        assert_eq!(exported.input.display_path, None);
+        assert_eq!(exported.output.display_path, None);
+        assert!(exported.redaction.paths_redacted);
+    }
+
+    #[test]
+    fn desktop_json_export_is_durable_and_never_overwrites() {
+        let directory = tempdir().expect("export directory");
+        let destination = directory.path().join("report.json");
+
+        assert_eq!(
+            write_desktop_export_noclobber(&destination, b"first").expect("first export"),
+            5
+        );
+        assert_eq!(fs::read(&destination).expect("read export"), b"first");
+
+        write_desktop_export_noclobber(&destination, b"second")
+            .expect_err("existing export must win");
+        assert_eq!(fs::read(&destination).expect("read export"), b"first");
+        assert_eq!(
+            fs::read_dir(directory.path())
+                .expect("read directory")
+                .filter_map(std::result::Result::ok)
+                .count(),
+            1
+        );
     }
 
     fn validating_job(store: &mut SqliteJobStore, root: &std::path::Path) -> Uuid {

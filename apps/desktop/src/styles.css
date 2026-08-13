@@ -150,6 +150,7 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .report-warning, .report-unknown { color: #ffc36b; }
 .report-fail { color: #ff8e82; }
 .report-body { margin-top: 20px; }
+.report-export-option { justify-content: flex-end; margin-top: 12px; }
 .report-summary { display: grid; grid-template-columns: 180px 1fr; gap: 10px; }
 .report-summary > div { display: flex; flex-direction: column; gap: 8px; border: 1px solid #30372f; padding: 16px; }
 .report-summary span { color: #7e887b; font-size: 11px; }
