@@ -1,6 +1,7 @@
 //! Shared durable-queue execution window used by every surface.
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use formatwright_engine_sdk::EngineIdentity;
 use serde::Serialize;
@@ -12,11 +13,13 @@ use crate::document::inspect_document;
 use crate::domain::{JobState, Plan, Probe, ValidationReport, ValidationStatus};
 use crate::error::{ErrorCode, FormatWrightError, Result, Stage};
 use crate::inspect::inspect_media;
-use crate::job_store::{JobDetails, SqliteJobStore};
+use crate::job_store::{JobDetails, JobRecord, SqliteJobStore};
 use crate::office::inspect_office;
 use crate::pdf::inspect_pdf;
 use crate::runner::{ExecutionMilestone, ExecutionResult, execute_plan_observed};
-use crate::scheduler::{ResourceRequest, ResourceScheduler, SchedulerPolicy, request_for_plan};
+use crate::scheduler::{
+    AdmissionBlocker, ResourceRequest, ResourceScheduler, SchedulerPolicy, request_for_plan,
+};
 use crate::structured::inspect_structured;
 
 /// Machine-readable summary of one bounded `jobs run` scheduling window.
@@ -33,6 +36,28 @@ pub struct QueueRunReport {
     pub stopped: bool,
     pub parallelism: usize,
     pub peak_active: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum QueueWaitReason {
+    AlreadyRunning,
+    ProcessLimit,
+    MemoryBudget,
+    ExclusiveEngine,
+    WorkClassLimit,
+    AdmissionPaused,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct QueueProgressUpdate {
+    pub schema_version: u32,
+    pub job_id: Uuid,
+    pub job_sequence: u64,
+    pub state: JobState,
+    pub wait_reason: Option<QueueWaitReason>,
+    pub occurred_unix_ms: i64,
+    pub eta_milliseconds: Option<u64>,
 }
 
 /// Controls admission and worker cancellation for one durable queue window.
@@ -144,10 +169,33 @@ impl JobExecutionService {
         limit: usize,
         parallel: usize,
         control: QueueWindowControl,
-        mut on_report: F,
+        on_report: F,
     ) -> Result<QueueRunReport>
     where
         F: FnMut(Uuid, &ValidationReport) -> Result<()>,
+    {
+        Self::run_window_observed_with_progress(store, limit, parallel, control, on_report, |_| {})
+            .await
+    }
+
+    /// Runs a bounded queue window and emits truthful state/wait-reason
+    /// snapshots. ETA remains absent unless an engine can supply real timing.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same failures as [`Self::run_window_observed`].
+    #[allow(clippy::too_many_lines)]
+    pub async fn run_window_observed_with_progress<F, P>(
+        store: &mut SqliteJobStore,
+        limit: usize,
+        parallel: usize,
+        control: QueueWindowControl,
+        mut on_report: F,
+        mut on_progress: P,
+    ) -> Result<QueueRunReport>
+    where
+        F: FnMut(Uuid, &ValidationReport) -> Result<()>,
+        P: FnMut(QueueProgressUpdate),
     {
         if !(1..=16).contains(&parallel) {
             return Err(FormatWrightError::new(
@@ -193,9 +241,20 @@ impl JobExecutionService {
         let (milestone_sender, mut milestone_receiver) = tokio::sync::mpsc::unbounded_channel();
         let mut peak_active = 0_usize;
         let mut active_jobs = HashSet::new();
+        let mut last_wait_reasons = HashMap::new();
 
         let execution = async {
             while !pending.is_empty() || !workers.is_empty() {
+                if control.admission_cancelled() {
+                    for candidate in &pending {
+                        emit_wait_reason(
+                            &mut on_progress,
+                            &mut last_wait_reasons,
+                            &candidate.details.job,
+                            QueueWaitReason::AdmissionPaused,
+                        );
+                    }
+                }
                 while !control.admission_cancelled()
                     && scheduler.active_count() < policy.max_processes
                     && !pending.is_empty()
@@ -207,8 +266,17 @@ impl JobExecutionService {
                             break;
                         };
                         if scheduler.try_admit(candidate.resources.clone()) {
+                            last_wait_reasons.remove(&candidate.details.job.id);
                             admitted = Some(candidate);
                             break;
+                        }
+                        if let Some(blocker) = scheduler.admission_blocker(&candidate.resources) {
+                            emit_wait_reason(
+                                &mut on_progress,
+                                &mut last_wait_reasons,
+                                &candidate.details.job,
+                                queue_wait_reason(blocker),
+                            );
                         }
                         pending.push_back(candidate);
                     }
@@ -217,7 +285,11 @@ impl JobExecutionService {
                     };
                     let job_id = candidate.details.job.id;
                     active_jobs.insert(job_id);
-                    match prepare_queued_job(store, candidate.details).await? {
+                    match prepare_queued_job(store, candidate.details, |job| {
+                        on_progress(queue_progress(job, None));
+                    })
+                    .await?
+                    {
                         QueuePreparation::Ready(prepared) => {
                             let prepared = *prepared;
                             let worker_cancellation = control.worker_token();
@@ -264,6 +336,17 @@ impl JobExecutionService {
                     }
                 }
 
+                if scheduler.active_count() >= policy.max_processes {
+                    for candidate in &pending {
+                        emit_wait_reason(
+                            &mut on_progress,
+                            &mut last_wait_reasons,
+                            &candidate.details.job,
+                            QueueWaitReason::ProcessLimit,
+                        );
+                    }
+                }
+
                 if workers.is_empty() {
                     if control.admission_cancelled() || pending.is_empty() {
                         break;
@@ -278,7 +361,9 @@ impl JobExecutionService {
 
                 let joined = tokio::select! {
                     Some(job_id) = milestone_receiver.recv() => {
-                        mark_job_validating(store, job_id)?;
+                        if let Some(job) = mark_job_validating(store, job_id)? {
+                            on_progress(queue_progress(&job, None));
+                        }
                         continue;
                     }
                     joined = workers.join_next() => joined,
@@ -306,30 +391,39 @@ impl JobExecutionService {
                         on_report(outcome.job_id, &result.report)?;
                         match result.report.status {
                             ValidationStatus::Pass => {
-                                mark_job_validating(store, outcome.job_id)?;
-                                store.transition(
+                                if let Some(job) = mark_job_validating(store, outcome.job_id)? {
+                                    on_progress(queue_progress(&job, None));
+                                }
+                                let job = store.transition(
                                     outcome.job_id,
                                     JobState::Completed,
                                     "VALIDATION_FINISHED",
                                 )?;
+                                on_progress(queue_progress(&job, None));
                                 completed = completed.saturating_add(1);
                             }
                             ValidationStatus::Warning | ValidationStatus::Unknown => {
-                                mark_job_validating(store, outcome.job_id)?;
-                                store.transition(
+                                if let Some(job) = mark_job_validating(store, outcome.job_id)? {
+                                    on_progress(queue_progress(&job, None));
+                                }
+                                let job = store.transition(
                                     outcome.job_id,
                                     JobState::Warning,
                                     "VALIDATION_FINISHED",
                                 )?;
+                                on_progress(queue_progress(&job, None));
                                 warning = warning.saturating_add(1);
                             }
                             ValidationStatus::Fail => {
-                                mark_job_validating(store, outcome.job_id)?;
-                                store.transition(
+                                if let Some(job) = mark_job_validating(store, outcome.job_id)? {
+                                    on_progress(queue_progress(&job, None));
+                                }
+                                let job = store.transition(
                                     outcome.job_id,
                                     JobState::Failed,
                                     "VALIDATION_FINISHED",
                                 )?;
+                                on_progress(queue_progress(&job, None));
                                 failed = failed.saturating_add(1);
                             }
                         }
@@ -340,11 +434,17 @@ impl JobExecutionService {
                         } else {
                             (JobState::Cancelled, "QUEUE_CANCELLED")
                         };
-                        store.transition(outcome.job_id, state, code)?;
+                        let job = store.transition(outcome.job_id, state, code)?;
+                        on_progress(queue_progress(&job, None));
                         cancelled = cancelled.saturating_add(1);
                     }
                     Err(_) => {
-                        store.transition(outcome.job_id, JobState::Failed, "EXECUTION_STOPPED")?;
+                        let job = store.transition(
+                            outcome.job_id,
+                            JobState::Failed,
+                            "EXECUTION_STOPPED",
+                        )?;
+                        on_progress(queue_progress(&job, None));
                         failed = failed.saturating_add(1);
                     }
                 }
@@ -466,29 +566,33 @@ struct QueueWorkerOutcome {
     result: Result<ExecutionResult>,
 }
 
-async fn prepare_queued_job(
+async fn prepare_queued_job<P>(
     store: &mut SqliteJobStore,
     details: JobDetails,
-) -> Result<QueuePreparation> {
+    mut on_state: P,
+) -> Result<QueuePreparation>
+where
+    P: FnMut(&JobRecord),
+{
     let job_id = details.job.id;
-    if store
-        .claim_queued_job(job_id, "QUEUE_REINSPECTING")?
-        .is_none()
-    {
+    let Some(inspecting) = store.claim_queued_job(job_id, "QUEUE_REINSPECTING")? else {
         return Ok(QueuePreparation::Contended);
-    }
+    };
+    on_state(&inspecting);
     if let Err(error) = store.validate_output_reservation(job_id) {
         if matches!(
             error.code,
             ErrorCode::InputInvalid | ErrorCode::OutputConflict
         ) {
-            store.transition(job_id, JobState::Blocked, "OUTPUT_IDENTITY_CHANGED")?;
+            let blocked = store.transition(job_id, JobState::Blocked, "OUTPUT_IDENTITY_CHANGED")?;
+            on_state(&blocked);
             return Ok(QueuePreparation::Blocked);
         }
         return Err(error);
     }
     let Some(stored_engine) = details.plan.steps.first().map(|step| step.engine.clone()) else {
-        store.transition(job_id, JobState::Failed, "PLAN_INVALID")?;
+        let failed = store.transition(job_id, JobState::Failed, "PLAN_INVALID")?;
+        on_state(&failed);
         return Ok(QueuePreparation::Failed);
     };
     for stored_step in &details.plan.steps {
@@ -502,7 +606,8 @@ async fn prepare_queued_job(
             engine.binary_sha256 == stored_identity.binary_sha256
                 && engine.version == stored_identity.version
         }) {
-            store.transition(job_id, JobState::Blocked, "ENGINE_IDENTITY_CHANGED")?;
+            let blocked = store.transition(job_id, JobState::Blocked, "ENGINE_IDENTITY_CHANGED")?;
+            on_state(&blocked);
             return Ok(QueuePreparation::Blocked);
         }
     }
@@ -515,22 +620,67 @@ async fn prepare_queued_job(
             (probe, validation_engine)
         }
         Ok(_) => {
-            store.transition(job_id, JobState::Blocked, "INPUT_CHANGED")?;
+            let blocked = store.transition(job_id, JobState::Blocked, "INPUT_CHANGED")?;
+            on_state(&blocked);
             return Ok(QueuePreparation::Blocked);
         }
         Err(_) => {
-            store.transition(job_id, JobState::Blocked, "REINSPECTION_FAILED")?;
+            let blocked = store.transition(job_id, JobState::Blocked, "REINSPECTION_FAILED")?;
+            on_state(&blocked);
             return Ok(QueuePreparation::Blocked);
         }
     };
-    store.transition(job_id, JobState::Planned, "PLAN_REVALIDATED")?;
-    store.transition(job_id, JobState::Running, "ENGINE_STARTED")?;
+    let planned = store.transition(job_id, JobState::Planned, "PLAN_REVALIDATED")?;
+    on_state(&planned);
+    let running = store.transition(job_id, JobState::Running, "ENGINE_STARTED")?;
+    on_state(&running);
     Ok(QueuePreparation::Ready(Box::new(PreparedQueueJob {
         job_id,
         probe,
         plan: details.plan,
         validation_engine,
     })))
+}
+
+fn queue_wait_reason(blocker: AdmissionBlocker) -> QueueWaitReason {
+    match blocker {
+        AdmissionBlocker::AlreadyActive => QueueWaitReason::AlreadyRunning,
+        AdmissionBlocker::ProcessLimit => QueueWaitReason::ProcessLimit,
+        AdmissionBlocker::MemoryBudget => QueueWaitReason::MemoryBudget,
+        AdmissionBlocker::ExclusiveEngine => QueueWaitReason::ExclusiveEngine,
+        AdmissionBlocker::ClassLimit => QueueWaitReason::WorkClassLimit,
+    }
+}
+
+fn emit_wait_reason<P>(
+    on_progress: &mut P,
+    last_wait_reasons: &mut HashMap<Uuid, QueueWaitReason>,
+    job: &JobRecord,
+    reason: QueueWaitReason,
+) where
+    P: FnMut(QueueProgressUpdate),
+{
+    if last_wait_reasons.get(&job.id) == Some(&reason) {
+        return;
+    }
+    last_wait_reasons.insert(job.id, reason);
+    on_progress(queue_progress(job, Some(reason)));
+}
+
+fn queue_progress(job: &JobRecord, wait_reason: Option<QueueWaitReason>) -> QueueProgressUpdate {
+    QueueProgressUpdate {
+        schema_version: 1,
+        job_id: job.id,
+        job_sequence: job.sequence,
+        state: job.state,
+        wait_reason,
+        occurred_unix_ms: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .ok()
+            .and_then(|duration| i64::try_from(duration.as_millis()).ok())
+            .unwrap_or_default(),
+        eta_milliseconds: None,
+    }
 }
 
 async fn inspect_queued_input(
@@ -574,7 +724,7 @@ async fn inspect_queued_input(
     ))
 }
 
-fn mark_job_validating(store: &mut SqliteJobStore, job_id: Uuid) -> Result<()> {
+fn mark_job_validating(store: &mut SqliteJobStore, job_id: Uuid) -> Result<Option<JobRecord>> {
     let job = store.get_job(job_id)?.ok_or_else(|| {
         FormatWrightError::new(
             ErrorCode::StorageFailed,
@@ -584,9 +734,11 @@ fn mark_job_validating(store: &mut SqliteJobStore, job_id: Uuid) -> Result<()> {
         )
     })?;
     if job.state == JobState::Running {
-        store.transition(job_id, JobState::Validating, "ENGINE_FINISHED")?;
+        return store
+            .transition(job_id, JobState::Validating, "ENGINE_FINISHED")
+            .map(Some);
     }
-    Ok(())
+    Ok(None)
 }
 
 #[cfg(test)]
@@ -597,7 +749,7 @@ mod tests {
     use tempfile::tempdir;
     use tokio_util::sync::CancellationToken;
 
-    use super::{JobExecutionService, QueueRunReport, QueueWindowControl};
+    use super::{JobExecutionService, QueueRunReport, QueueWaitReason, QueueWindowControl};
     use crate::domain::{
         ChangeSet, JobState, NetworkPolicy, Plan, PlanRequest, SCHEMA_VERSION, ValidationStatus,
     };
@@ -809,6 +961,60 @@ mod tests {
             store.get_job(job_id).expect("read").expect("exists").state,
             JobState::Completed
         );
+    }
+
+    #[tokio::test]
+    async fn progress_reports_real_stages_and_scheduler_wait_reason_without_eta() {
+        let suite = tempdir().expect("suite");
+        let mut store = SqliteJobStore::open(suite.path().join("jobs.sqlite3")).expect("store");
+        let first = queue_structured_job_with_test_controls(
+            &mut store,
+            &suite.path().join("first.json"),
+            &suite.path().join("first.yaml"),
+            Some(100),
+            false,
+        )
+        .await;
+        let second = queue_structured_job(
+            &mut store,
+            &suite.path().join("second.json"),
+            &suite.path().join("second.yaml"),
+        )
+        .await;
+        let mut progress = Vec::new();
+
+        let report = JobExecutionService::run_window_observed_with_progress(
+            &mut store,
+            8,
+            1,
+            QueueWindowControl::new(),
+            |_, _| Ok(()),
+            |update| progress.push(update),
+        )
+        .await
+        .expect("run with progress");
+
+        assert_eq!(report.completed, 2);
+        assert!(
+            progress
+                .iter()
+                .all(|update| update.eta_milliseconds.is_none())
+        );
+        assert!(progress.iter().any(|update| {
+            update.job_id == first
+                && update.state == JobState::Running
+                && update.wait_reason.is_none()
+        }));
+        assert!(progress.iter().any(|update| {
+            update.job_id == second
+                && update.state == JobState::Queued
+                && update.wait_reason == Some(QueueWaitReason::ProcessLimit)
+        }));
+        assert!(progress.iter().any(|update| {
+            update.job_id == second
+                && update.state == JobState::Completed
+                && update.wait_reason.is_none()
+        }));
     }
 
     #[tokio::test]

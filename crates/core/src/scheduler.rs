@@ -19,6 +19,16 @@ pub enum WorkClass {
     SerialEngine,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum AdmissionBlocker {
+    AlreadyActive,
+    ProcessLimit,
+    MemoryBudget,
+    ExclusiveEngine,
+    ClassLimit,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResourceRequest {
     pub job_id: Uuid,
@@ -80,19 +90,27 @@ impl ResourceScheduler {
         self.reserved_memory_bytes
     }
 
-    pub fn try_admit(&mut self, request: ResourceRequest) -> bool {
-        if self.active.contains_key(&request.job_id)
-            || self.active.len() >= self.policy.max_processes
-            || self
-                .reserved_memory_bytes
-                .saturating_add(request.memory_bytes)
-                > self.policy.memory_budget_bytes
-            || request
-                .exclusivity_key
-                .as_ref()
-                .is_some_and(|key| self.exclusivity_keys.contains(key))
+    #[must_use]
+    pub fn admission_blocker(&self, request: &ResourceRequest) -> Option<AdmissionBlocker> {
+        if self.active.contains_key(&request.job_id) {
+            return Some(AdmissionBlocker::AlreadyActive);
+        }
+        if self.active.len() >= self.policy.max_processes {
+            return Some(AdmissionBlocker::ProcessLimit);
+        }
+        if self
+            .reserved_memory_bytes
+            .saturating_add(request.memory_bytes)
+            > self.policy.memory_budget_bytes
         {
-            return false;
+            return Some(AdmissionBlocker::MemoryBudget);
+        }
+        if request
+            .exclusivity_key
+            .as_ref()
+            .is_some_and(|key| self.exclusivity_keys.contains(key))
+        {
+            return Some(AdmissionBlocker::ExclusiveEngine);
         }
         let same_class = self
             .active
@@ -107,7 +125,11 @@ impl ResourceScheduler {
                 self.policy.max_processes
             }
         };
-        if same_class >= class_limit {
+        (same_class >= class_limit).then_some(AdmissionBlocker::ClassLimit)
+    }
+
+    pub fn try_admit(&mut self, request: ResourceRequest) -> bool {
+        if self.admission_blocker(&request).is_some() {
             return false;
         }
         self.reserved_memory_bytes = self
@@ -259,10 +281,53 @@ mod tests {
         let third = Uuid::new_v4();
         assert!(scheduler.try_admit(request(first, WorkClass::CpuHeavy, 1024 * MIB)));
         assert!(scheduler.try_admit(request(second, WorkClass::CpuHeavy, 1024 * MIB)));
-        assert!(!scheduler.try_admit(request(third, WorkClass::CpuHeavy, 1024 * MIB)));
+        let third_request = request(third, WorkClass::CpuHeavy, 1024 * MIB);
+        assert_eq!(
+            scheduler.admission_blocker(&third_request),
+            Some(AdmissionBlocker::MemoryBudget)
+        );
+        assert!(!scheduler.try_admit(third_request));
         assert_eq!(scheduler.reserved_memory_bytes(), 2 * 1024 * MIB);
         assert!(scheduler.release(first));
         assert!(scheduler.try_admit(request(third, WorkClass::CpuHeavy, 1024 * MIB)));
+    }
+
+    #[test]
+    fn reports_the_exact_scheduler_admission_blocker() {
+        let policy = SchedulerPolicy {
+            max_processes: 3,
+            max_cpu_heavy: 1,
+            max_io_heavy: 2,
+            max_gpu: 1,
+            memory_budget_bytes: 4 * 1024 * MIB,
+        };
+        let mut scheduler = ResourceScheduler::new(policy);
+        let first = Uuid::new_v4();
+        assert!(scheduler.try_admit(request(first, WorkClass::CpuHeavy, MIB)));
+
+        let cpu_waiter = request(Uuid::new_v4(), WorkClass::CpuHeavy, MIB);
+        assert_eq!(
+            scheduler.admission_blocker(&cpu_waiter),
+            Some(AdmissionBlocker::ClassLimit)
+        );
+
+        let serial = |job_id| ResourceRequest {
+            job_id,
+            class: WorkClass::SerialEngine,
+            memory_bytes: MIB,
+            exclusivity_key: Some("soffice".to_owned()),
+        };
+        assert!(scheduler.try_admit(serial(Uuid::new_v4())));
+        assert_eq!(
+            scheduler.admission_blocker(&serial(Uuid::new_v4())),
+            Some(AdmissionBlocker::ExclusiveEngine)
+        );
+
+        assert!(scheduler.try_admit(request(Uuid::new_v4(), WorkClass::Lightweight, MIB)));
+        assert_eq!(
+            scheduler.admission_blocker(&request(Uuid::new_v4(), WorkClass::Lightweight, MIB)),
+            Some(AdmissionBlocker::ProcessLimit)
+        );
     }
 
     #[test]

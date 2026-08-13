@@ -126,6 +126,9 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .job-actions .primary { color: #101410; background: #b9ff66; }
 .job-list strong, .job-list small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .job-list small { margin-top: 4px; color: #788175; }
+.job-progress { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 6px; color: #9ba89a; font: 10px/1.35 ui-monospace, monospace; }
+.job-progress span + span::before { margin-right: 12px; color: #536052; content: "·"; }
+.execution-progress { display: flex; flex-wrap: wrap; gap: 5px 16px; margin: 14px 0 0; border-left: 2px solid #7ecbff; padding: 8px 11px; color: #a8b4a5; background: #121a17; font: 11px/1.4 ui-monospace, monospace; }
 .job-pagination { display: flex; align-items: center; justify-content: flex-end; gap: 12px; margin-top: 16px; color: #8d978b; font-size: 12px; }
 .status { font: 700 10px ui-monospace, monospace; text-transform: uppercase; }
 .status-completed, .status-pass { color: #b9ff66; }

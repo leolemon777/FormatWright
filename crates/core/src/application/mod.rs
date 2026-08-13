@@ -18,7 +18,9 @@ pub use folder_batch::{
     FolderBatchService, FolderDiskBudget, FolderMappingEntry, FolderMappingPlan,
     MAX_FOLDER_BATCH_FILES,
 };
-pub use job_execution::{JobExecutionService, QueueRunReport, QueueWindowControl};
+pub use job_execution::{
+    JobExecutionService, QueueProgressUpdate, QueueRunReport, QueueWaitReason, QueueWindowControl,
+};
 pub use job_recovery::{JobRecoveryService, StagedCleanupReport};
 pub use report_service::ReportService;
 pub use revalidation::RevalidationService;

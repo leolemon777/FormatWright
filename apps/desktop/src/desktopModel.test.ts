@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   JOB_PAGE_SIZE,
+  elapsedProgressSeconds,
   isDirectoryOutput,
   jobListAriaAttributes,
+  latestJobProgress,
   parseDesktopError,
+  progressForJob,
   recommendedTargets,
   suggestedOutput,
 } from "./desktopModel";
@@ -42,5 +45,23 @@ describe("desktop workflow model", () => {
       "aria-posinset": 10_000,
       "aria-setsize": 10_000,
     });
+  });
+
+  it("keeps truthful progress monotonic and derives elapsed time without inventing ETA", () => {
+    const running = {
+      schema_version: 1,
+      job_id: "job-1",
+      job_sequence: 4,
+      state: "running",
+      wait_reason: null,
+      occurred_unix_ms: 4_000,
+      eta_milliseconds: null,
+    };
+    const stale = { ...running, job_sequence: 3, state: "inspecting", occurred_unix_ms: 5_000 };
+    expect(latestJobProgress(running, stale)).toBe(running);
+    expect(progressForJob(running, 5)).toBeUndefined();
+    expect(progressForJob(running, 4)).toBe(running);
+    expect(elapsedProgressSeconds(running, 6_750)).toBe(2);
+    expect(running.eta_milliseconds).toBeNull();
   });
 });

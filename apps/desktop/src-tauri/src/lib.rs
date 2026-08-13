@@ -17,10 +17,10 @@ use formatwright_core::{
     FolderMappingEntry, IntegrityReport, JobCreateRequest, JobExecutionService, JobQueryPage,
     JobRecord, JobRecoveryService, JobSelectionQuery, JobState, JobStateCount, MaintenanceService,
     MaintenanceStatus, PRESET_SCHEMA_VERSION, Plan, PlanRequest, PresetLibrary, Probe,
-    QueueRunReport, QueueWindowControl, ReportService, RevalidationService, SelectionSnapshot,
-    SqliteJobStore, StagedCleanupReport, StateBundleBackupReport, StateBundleOptions,
-    StateBundlePreflightReport, ValidationReport, VerifiedEnginePack, activate_engine_pack,
-    capability_snapshot_for_input, cleanup_staged_output, prepare_conversion,
+    QueueProgressUpdate, QueueRunReport, QueueWindowControl, ReportService, RevalidationService,
+    SelectionSnapshot, SqliteJobStore, StagedCleanupReport, StateBundleBackupReport,
+    StateBundleOptions, StateBundlePreflightReport, ValidationReport, VerifiedEnginePack,
+    activate_engine_pack, capability_snapshot_for_input, cleanup_staged_output, prepare_conversion,
 };
 use queue_bridge::{DEFAULT_BATCH_JOBS, DEFAULT_BENCHMARK_JOBS, QueueBatchIter};
 use serde::{Deserialize, Serialize};
@@ -483,6 +483,18 @@ async fn run_desktop_conversion(
                 }
             }
             let _ = window.emit("formatwright://job-updated", job);
+            let _ = window.emit(
+                "formatwright://job-progress",
+                &QueueProgressUpdate {
+                    schema_version: 1,
+                    job_id: job.id,
+                    job_sequence: job.sequence,
+                    state: job.state,
+                    wait_reason: None,
+                    occurred_unix_ms: job.updated_unix_ms,
+                    eta_milliseconds: None,
+                },
+            );
         },
     )
     .await
@@ -737,19 +749,28 @@ fn queue_desktop_folder_batch(
     })
 }
 
-async fn run_queue_window_on_database<F>(
+async fn run_queue_window_on_database<F, P>(
     database_path: &Path,
     limit: usize,
     parallel: usize,
     control: QueueWindowControl,
     on_report: F,
+    on_progress: P,
 ) -> formatwright_core::Result<QueueRunReport>
 where
     F: FnMut(Uuid, &ValidationReport) -> formatwright_core::Result<()>,
+    P: FnMut(QueueProgressUpdate),
 {
     let mut queue_store = SqliteJobStore::open(database_path)?;
-    JobExecutionService::run_window_observed(&mut queue_store, limit, parallel, control, on_report)
-        .await
+    JobExecutionService::run_window_observed_with_progress(
+        &mut queue_store,
+        limit,
+        parallel,
+        control,
+        on_report,
+        on_progress,
+    )
+    .await
 }
 
 #[tauri::command]
@@ -765,6 +786,7 @@ async fn run_desktop_queue_window(
     let (control, _lease) = acquire_queue_window(&state.queue_control)?;
     let reports_directory = state.reports_directory.clone();
     let database_path = state.job_database_path.clone();
+    let progress_window = window.clone();
     let report = run_queue_window_on_database(
         &database_path,
         limit,
@@ -774,6 +796,9 @@ async fn run_desktop_queue_window(
             ReportService::new(&reports_directory)
                 .save(job_id, validation)
                 .map(drop)
+        },
+        move |progress| {
+            let _ = progress_window.emit("formatwright://job-progress", &progress);
         },
     )
     .await;
@@ -2777,6 +2802,7 @@ mod tests {
                     release_rx.recv().expect("release callback");
                     Ok(())
                 },
+                |_| {},
             ))
         });
         callback_entered_rx

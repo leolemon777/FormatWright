@@ -25,8 +25,8 @@ mod workflow;
 pub use application::{
     BulkJobService, ConversionRunResult, ConversionService, FolderBatchService, FolderDiskBudget,
     FolderMappingEntry, FolderMappingPlan, JobExecutionService, JobRecoveryService,
-    MAX_FOLDER_BATCH_FILES, QueueRunReport, QueueWindowControl, ReportService, RevalidationService,
-    StagedCleanupReport,
+    MAX_FOLDER_BATCH_FILES, QueueProgressUpdate, QueueRunReport, QueueWaitReason,
+    QueueWindowControl, ReportService, RevalidationService, StagedCleanupReport,
 };
 pub use application_state::{
     APPLICATION_SETTINGS_SCHEMA_VERSION, APPLICATION_STATE_BUNDLE_SCHEMA_VERSION,
@@ -76,7 +76,8 @@ pub use runner::{
     execute_plan_observed, resolve_output_path, staged_output_candidates, staged_output_path,
 };
 pub use scheduler::{
-    ResourceRequest, ResourceScheduler, SchedulerPolicy, WorkClass, request_for_plan,
+    AdmissionBlocker, ResourceRequest, ResourceScheduler, SchedulerPolicy, WorkClass,
+    request_for_plan,
 };
 pub use structured::{inspect_structured, plan_structured_conversion, structured_format_hint};
 pub use validation::validate_media_output;

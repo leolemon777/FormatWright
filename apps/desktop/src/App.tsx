@@ -6,11 +6,15 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   JOB_PAGE_SIZE,
+  elapsedProgressSeconds,
   isDirectoryOutput,
   jobListAriaAttributes,
+  latestJobProgress,
   parseDesktopError,
+  progressForJob,
   recommendedTargets,
   suggestedOutput,
+  type JobProgressUpdate,
 } from "./desktopModel";
 import { messages, type Language } from "./i18n";
 import {
@@ -75,6 +79,7 @@ type JobRecord = {
   state: string;
   input_path: string;
   output_path: string;
+  sequence: number;
   updated_unix_ms: number;
 };
 
@@ -352,6 +357,8 @@ export default function App() {
   const [jobOffset, setJobOffset] = useState(0);
   const [jobTotal, setJobTotal] = useState(0);
   const [jobBatches, setJobBatches] = useState<BatchRecord[]>([]);
+  const [jobProgress, setJobProgress] = useState<Record<string, JobProgressUpdate>>({});
+  const [progressClock, setProgressClock] = useState(() => Date.now());
   const [recovery, setRecovery] = useState<RecoverySummary | null>(null);
   const [recoveryDismissed, setRecoveryDismissed] = useState(false);
   const [maintenanceStatus, setMaintenanceStatus] = useState<MaintenanceStatus | null>(null);
@@ -392,6 +399,14 @@ export default function App() {
     void listen<JobRecord>("formatwright://job-updated", (event) => {
       if (event.payload.state === "running") setActiveJobId(event.payload.id);
       void refreshJobs();
+    }).then((dispose) => disposers.push(dispose));
+    void listen<JobProgressUpdate>("formatwright://job-progress", (event) => {
+      if (!mounted.current) return;
+      setJobProgress((current) => ({
+        ...current,
+        [event.payload.job_id]: latestJobProgress(current[event.payload.job_id], event.payload),
+      }));
+      setProgressClock(Date.now());
     }).then((dispose) => disposers.push(dispose));
     void listen<QueueRunReport>("formatwright://queue-window-finished", (event) => {
       if (mounted.current) setQueueReport(event.payload);
@@ -449,6 +464,12 @@ export default function App() {
       for (const dispose of disposers) dispose();
     };
   }, [projection]);
+
+  useEffect(() => {
+    if (busy !== "queue-run" && busy !== "run") return;
+    const timer = window.setInterval(() => setProgressClock(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [busy]);
 
   useEffect(() => {
     if (!("__TAURI_INTERNALS__" in window)) return;
@@ -629,6 +650,8 @@ export default function App() {
   async function runConversion() {
     if (!preview) return;
     setBusy("run");
+    setJobProgress({});
+    setProgressClock(Date.now());
     setError(null);
     try {
       const result = await invoke<{ job: JobRecord; report: ValidationReport }>(
@@ -643,6 +666,7 @@ export default function App() {
       setPreview(null);
       setError(parseDesktopError(reason));
       setActiveJobId(null);
+      await refreshJobs();
     } finally {
       setBusy(null);
     }
@@ -671,6 +695,7 @@ export default function App() {
       await refreshJobs();
     } catch (reason) {
       setError(parseDesktopError(reason));
+      await refreshJobs();
     } finally {
       setBusy(null);
     }
@@ -678,6 +703,8 @@ export default function App() {
 
   async function runQueueWindow() {
     setBusy("queue-run");
+    setJobProgress({});
+    setProgressClock(Date.now());
     setError(null);
     try {
       const report = await invoke<QueueRunReport>("run_desktop_queue_window", {
@@ -688,8 +715,10 @@ export default function App() {
       await refreshJobs();
     } catch (reason) {
       setError(parseDesktopError(reason));
+      await refreshJobs();
     } finally {
       setBusy(null);
+      setProgressClock(Date.now());
     }
   }
 
@@ -865,6 +894,11 @@ export default function App() {
     setError(null);
     try {
       await invoke<JobRecord>("requeue_desktop_job", { jobId: job.id });
+      setJobProgress((current) => {
+        const next = { ...current };
+        delete next[job.id];
+        return next;
+      });
       setQueueReport(null);
       await refreshJobs();
     } catch (reason) {
@@ -916,6 +950,7 @@ export default function App() {
       });
       setBulkReport(result);
       setQueueReport(null);
+      setJobProgress({});
       await refreshJobs();
     } catch (reason) {
       setError(parseDesktopError(reason));
@@ -1209,6 +1244,7 @@ export default function App() {
     (recovery.recovered_after_restart > 0 || recovery.restored_bundle_id != null || recovery.restore_error != null || recoverableCount > 0);
   const pageStart = jobTotal === 0 ? 0 : jobOffset + 1;
   const pageEnd = Math.min(jobOffset + jobs.length, jobTotal);
+  const activeProgress = activeJobId ? jobProgress[activeJobId] : undefined;
 
   return (
     <main className="shell">
@@ -1293,6 +1329,8 @@ export default function App() {
               {convertMode === "folder" && <button className="primary" type="button" disabled={!folderPreview || !folderPreview.disk_budget.sufficient || folderBusy !== null} onClick={queueFolderBatch}>{folderBusy === "queue" ? copy.queueingFolder : copy.queueFolderBatch}</button>}
             </div>
 
+            {convertMode === "file" && busy === "run" && activeProgress && <p className="execution-progress" role="status"><span>{copy.stageLabel}: {activeProgress.state}</span><span>{copy.elapsedLabel}: {elapsedProgressSeconds(activeProgress, progressClock)}s</span><span>{copy.rateEtaUnavailable}</span></p>}
+
             {convertMode === "file" && preview && <PlanView preview={preview} expert={expert} copy={copy} />}
             {convertMode === "folder" && folderPreview && <section className="folder-preview"><div className="plan-heading"><div><p className="section-label">MAPPING PREVIEW</p><h2>{folderPreview.planned.toLocaleString()} {copy.filesReady}</h2></div><span className={`loss ${folderPreview.disk_budget.sufficient ? "loss-safe" : "loss-lossy"}`}>{folderPreview.disk_budget.sufficient ? copy.diskReady : copy.diskInsufficient}</span></div><p>{copy.folderPreviewSummary}: {folderPreview.discovered.toLocaleString()} {copy.discovered} · {folderPreview.planned.toLocaleString()} {copy.planned} · {folderPreview.skipped.toLocaleString()} {copy.skipped} · {copy.diskRequired} {formatBytes(folderPreview.disk_budget.required_bytes)} / {copy.diskAvailable} {formatBytes(folderPreview.disk_budget.available_bytes)}</p><div className="mapping-list">{folderPreview.sample.map((entry) => <div key={entry.input_path}><span>{entry.relative_input_path}</span><strong>→</strong><span>{entry.output_path}</span></div>)}</div>{folderPreview.truncated && <p className="typed-note">{copy.mappingTruncated}</p>}<p className="typed-note">{copy.previewExpires}: {new Date(folderPreview.expires_unix_ms).toLocaleTimeString()}</p></section>}
           </div>
@@ -1337,16 +1375,22 @@ export default function App() {
           {jobs.length === 0 ? <p className="empty">{copy.historyEmpty}</p> : (
             <div className="job-list" role="list" aria-label={copy.jobListLabel}>
               {jobs.map((job, index) => {
-                const resumable = job.state === "interrupted" || job.state === "blocked";
-                const retryable = job.state === "failed" || job.state === "cancelled";
-                const cleanupAllowed = ["blocked", "failed", "cancelled", "interrupted"].includes(job.state);
+                const liveProgress = progressForJob(jobProgress[job.id], job.sequence);
+                const liveState = liveProgress?.state ?? job.state;
+                const resumable = liveState === "interrupted" || liveState === "blocked";
+                const retryable = liveState === "failed" || liveState === "cancelled";
+                const cleanupAllowed = ["blocked", "failed", "cancelled", "interrupted"].includes(liveState);
+                const waitReason = liveProgress?.wait_reason
+                  ? copy.waitReasons[liveProgress.wait_reason as keyof typeof copy.waitReasons]
+                  : null;
                 return (
                   <article key={job.id} role="listitem" {...jobListAriaAttributes(jobOffset, index, jobTotal)}>
                     <div>
                       <strong title={job.output_path}>{job.output_path}</strong>
                       <small title={job.input_path}>{job.input_path}</small>
+                      {liveProgress && <span className="job-progress"><span>{copy.stageLabel}: {liveState}</span>{waitReason && <span>{copy.waitingFor}: {waitReason}</span>}<span>{copy.elapsedLabel}: {elapsedProgressSeconds(liveProgress, progressClock)}s</span>{liveProgress.eta_milliseconds == null && <span>{copy.rateEtaUnavailable}</span>}</span>}
                     </div>
-                    <span className={`status status-${job.state}`}>{job.state}</span>
+                    <span className={`status status-${liveState}`}>{liveState}</span>
                     <span className="job-actions">
                       {(resumable || retryable) && <button className="primary" type="button" aria-label={`${resumable ? copy.resumeJob : copy.retryJob}: ${job.id}`} disabled={jobActionBusy !== null || jobCleanupBusy !== null || busy === "queue-run" || bulkBusy} onClick={() => requeueJob(job)}>{jobActionBusy === job.id ? (resumable ? copy.resumingJob : copy.retryingJob) : (resumable ? copy.resumeJob : copy.retryJob)}</button>}
                       {cleanupAllowed && <button className={pendingCleanupId === job.id ? "danger" : "secondary"} type="button" aria-label={`${pendingCleanupId === job.id ? copy.confirmCleanStaging : copy.cleanStaging}: ${job.id}`} disabled={jobActionBusy !== null || jobCleanupBusy !== null || busy === "queue-run" || bulkBusy} onClick={() => cleanupJobStaging(job)}>{jobCleanupBusy === job.id ? copy.cleaningStaging : pendingCleanupId === job.id ? copy.confirmCleanStaging : copy.cleanStaging}</button>}

@@ -7,6 +7,39 @@ export type DesktopError = {
 
 export const JOB_PAGE_SIZE = 100;
 
+export type JobProgressUpdate = {
+  schema_version: number;
+  job_id: string;
+  job_sequence: number;
+  state: string;
+  wait_reason: string | null;
+  occurred_unix_ms: number;
+  eta_milliseconds: number | null;
+};
+
+export function latestJobProgress(
+  current: JobProgressUpdate | undefined,
+  candidate: JobProgressUpdate,
+): JobProgressUpdate {
+  return current && (
+    current.job_sequence > candidate.job_sequence ||
+    (current.job_sequence === candidate.job_sequence && current.occurred_unix_ms > candidate.occurred_unix_ms)
+  )
+    ? current
+    : candidate;
+}
+
+export function progressForJob(
+  progress: JobProgressUpdate | undefined,
+  durableSequence: number,
+): JobProgressUpdate | undefined {
+  return progress && progress.job_sequence >= durableSequence ? progress : undefined;
+}
+
+export function elapsedProgressSeconds(progress: JobProgressUpdate, nowUnixMs: number): number {
+  return Math.max(0, Math.floor((nowUnixMs - progress.occurred_unix_ms) / 1_000));
+}
+
 export function jobListAriaAttributes(offset: number, index: number, total: number) {
   const position = Math.max(1, Math.trunc(offset) + Math.trunc(index) + 1);
   return {
