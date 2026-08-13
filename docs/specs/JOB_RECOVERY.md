@@ -128,21 +128,29 @@ A cross-volume move is not called atomic. If a future workflow requires it, Form
 - Partial cleanup failure produces a maintenance warning and records the exact path.
 - Secrets and temporary profile directories are deleted on best effort without claiming secure erase on SSDs.
 
-## 8. Batch memory bound
+## 8. Durable batches and stable bulk actions
+
+- A batch is a persisted identity with ordinal membership; creating it also creates every Job, initial event, and output reservation in one transaction.
+- An idempotency key is bound to one input, immutable Plan hash, and normalized output identity. Reuse with changed intent is rejected.
+- A selection snapshot persists ordered Job IDs from a batch/state/path query. Later state changes do not change its membership.
+- Bulk actions re-evaluate each member's current state under the writer transaction and persist transitioned, state-skipped, or output-conflict-skipped outcomes.
+- Retry/resume cleanup only touches deterministic staging paths owned by the eligible Job ID.
+
+## 9. Batch memory bound
 
 - SQLite holds the full queue.
 - The scheduler hydrates a bounded window of jobs.
 - UI queries are paginated.
 - Events may be coalesced for display but durable state transitions are never dropped.
 
-## 9. Symlinks and links
+## 10. Symlinks and links
 
 - Directory symlinks are not traversed by default.
 - File symlinks are allowed only when the resolved target is inside the authorized input root.
 - Output is a new regular file; hardlink identity is not preserved by default.
 - Link decisions are included in the Plan.
 
-## 10. Tests
+## 11. Tests
 
 The test suite must terminate the application at every numbered commit step and prove one of:
 

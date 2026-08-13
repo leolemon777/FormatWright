@@ -8,11 +8,12 @@ use std::sync::Mutex;
 use std::time::Instant;
 
 use formatwright_core::{
-    CapabilitySnapshot, ConversionPreset, DoctorReport, EngineDiscoveryPolicy, ExecutionMilestone,
-    JobExecutionService, JobRecord, JobState, PRESET_SCHEMA_VERSION, Plan, PlanRequest,
-    PresetLibrary, Probe, QueueRunReport, QueueWindowControl, SqliteJobStore, ValidationReport,
-    ValidationStatus, VerifiedEnginePack, activate_engine_pack, capability_snapshot_for_input,
-    execute_plan_observed, prepare_conversion,
+    BatchRecord, BulkActionReport, BulkJobAction, BulkJobService, CapabilitySnapshot,
+    ConversionPreset, DoctorReport, EngineDiscoveryPolicy, ExecutionMilestone, JobExecutionService,
+    JobRecord, JobSelectionQuery, JobState, PRESET_SCHEMA_VERSION, Plan, PlanRequest,
+    PresetLibrary, Probe, QueueRunReport, QueueWindowControl, SelectionSnapshot, SqliteJobStore,
+    ValidationReport, ValidationStatus, VerifiedEnginePack, activate_engine_pack,
+    capability_snapshot_for_input, execute_plan_observed, prepare_conversion,
 };
 use queue_bridge::{DEFAULT_BATCH_JOBS, DEFAULT_BENCHMARK_JOBS, QueueBatchIter};
 use serde::{Deserialize, Serialize};
@@ -79,6 +80,7 @@ struct DesktopConversionRequest {
     color_mode: Option<String>,
     preserve_all_streams: Option<bool>,
     approved_plan_hash: Option<String>,
+    idempotency_key: Option<String>,
 }
 
 impl DesktopConversionRequest {
@@ -317,10 +319,24 @@ async fn queue_desktop_conversion(
     let (probe, plan, _) = prepare_approved_desktop_conversion(&request).await?;
     let job = {
         let mut store = lock(&state.store)?;
-        store
-            .create_job(&probe.artifact.canonical_path, &request.output_path, &plan)
-            .and_then(|job| store.transition(job.id, JobState::Queued, "JOB_ENQUEUED"))
-            .map_err(serialize_error)?
+        if let Some(key) = request.idempotency_key.as_deref() {
+            let created = store
+                .enqueue_job_idempotent(
+                    key,
+                    &formatwright_core::JobCreateRequest {
+                        input_path: probe.artifact.canonical_path.clone(),
+                        output_path: request.output_path.clone(),
+                        plan: plan.clone(),
+                    },
+                )
+                .map_err(serialize_error)?;
+            created.job
+        } else {
+            store
+                .create_job(&probe.artifact.canonical_path, &request.output_path, &plan)
+                .and_then(|job| store.transition(job.id, JobState::Queued, "JOB_ENQUEUED"))
+                .map_err(serialize_error)?
+        }
     };
     let _ = window.emit("formatwright://job-updated", &job);
     Ok(job)
@@ -491,6 +507,53 @@ fn list_desktop_jobs(
     lock(&state.store)?
         .list_jobs(limit.unwrap_or(100).clamp(1, 500))
         .map_err(serialize_error)
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+fn list_desktop_batches(
+    state: tauri::State<'_, DesktopState>,
+    limit: Option<usize>,
+    offset: Option<usize>,
+) -> Result<Vec<BatchRecord>, String> {
+    lock(&state.store)?
+        .list_batches_page(
+            limit.unwrap_or(100).clamp(1, 500),
+            offset.unwrap_or_default(),
+        )
+        .map_err(serialize_error)
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+fn capture_desktop_job_selection(
+    state: tauri::State<'_, DesktopState>,
+    batch_id: Option<String>,
+    states: Vec<JobState>,
+    search: Option<String>,
+) -> Result<SelectionSnapshot, String> {
+    let batch_id = batch_id
+        .map(|value| Uuid::parse_str(&value).map_err(|error| error.to_string()))
+        .transpose()?;
+    lock(&state.store)?
+        .capture_selection(&JobSelectionQuery {
+            batch_id,
+            states,
+            search,
+        })
+        .map_err(serialize_error)
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+fn run_desktop_bulk_action(
+    state: tauri::State<'_, DesktopState>,
+    selection_id: String,
+    action: BulkJobAction,
+) -> Result<BulkActionReport, String> {
+    let selection_id = Uuid::parse_str(&selection_id).map_err(|error| error.to_string())?;
+    let mut store = lock(&state.store)?;
+    BulkJobService::apply(&mut store, selection_id, action).map_err(serialize_error)
 }
 
 #[tauri::command]
@@ -1017,6 +1080,9 @@ pub fn run() {
             cancel_desktop_job,
             requeue_desktop_job,
             list_desktop_jobs,
+            list_desktop_batches,
+            capture_desktop_job_selection,
+            run_desktop_bulk_action,
             get_desktop_report,
             list_desktop_presets,
             save_desktop_preset,
@@ -1123,6 +1189,7 @@ mod tests {
             color_mode: None,
             preserve_all_streams: Some(true),
             approved_plan_hash,
+            idempotency_key: None,
         }
     }
 

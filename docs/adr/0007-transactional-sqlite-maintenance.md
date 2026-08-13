@@ -37,7 +37,7 @@ The implementation follows the [SQLite Online Backup API](https://sqlite.org/bac
 - Healthy status/integrity and logical-corruption detection.
 - Validated non-overwriting online backup without partial/sidecar leakage.
 - v2 restore preflight migrates only a temporary copy; the source bytes remain unchanged.
-- v2 normal open creates a pre-migration snapshot before v3 is applied.
+- v2 normal open creates a pre-migration snapshot before current migrations are applied; a true v3 fixture is also snapshotted before v4 batch/selection migration.
 - Newer schema and corrupt restore sources are rejected without changing the live database.
 - Confirmed restore preserves a safety backup and transactionally installs the validated source.
 - CLI status, backup, preflight, confirmed restore, integrity JSON, and compact are exercised against a temporary disk-backed database.

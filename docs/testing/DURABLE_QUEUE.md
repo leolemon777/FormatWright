@@ -24,6 +24,8 @@ This is separate from `QUEUE_BRIDGE.md`, which tests bounded delivery from Rust 
 
 Additional tests prove that two active jobs cannot reserve the same canonical output path, terminal states release reservations, and retry cannot steal another job's reservation.
 
+Schema v4 additionally proves persistent atomic batches, job-level idempotency, immutable selection membership, audited bulk Retry/Resume/Cancel, output-conflict skips, v3 migration snapshots, and application-integrity count checks. See `BATCH_SELECTION_BULK.md`.
+
 ## Recorded Windows evidence
 
 ~~~text
@@ -47,8 +49,7 @@ The opt-in release gate in `TEN_THOUSAND_CONVERSIONS.md` now proves 10,000 disti
 
 ## Remaining certification work
 
-- Add desktop pause controls; bounded parallel CLI pause/resume now passes.
 - Run and retry a mixed successful/failed media/document distribution across the full 10,000-job corpus; the nine-job mixed and homogeneous 10,000-job gates now pass separately.
 - Extend RSS and WAL measurements from the nine-job mixed scheduler gate to the full 10,000-job corpus.
-- Exercise output-reservation races from multiple database connections.
+- Extend the existing independent-connection reservation/transition regressions into a multi-process soak with kill/restart injection.
 - Repeat on macOS and Linux filesystems.

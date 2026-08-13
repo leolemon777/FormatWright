@@ -12,7 +12,7 @@ use uuid::Uuid;
 use crate::error::{ErrorCode, FormatWrightError, Result, Stage};
 use crate::job_store::SqliteJobStore;
 
-pub(crate) const DATABASE_SCHEMA_VERSION: i64 = 3;
+pub(crate) const DATABASE_SCHEMA_VERSION: i64 = 4;
 const BACKUP_PAGES_PER_STEP: i32 = 128;
 const BACKUP_STEP_PAUSE: Duration = Duration::from_millis(5);
 const BACKUP_BUSY_TIMEOUT: Duration = Duration::from_secs(30);
@@ -645,6 +645,51 @@ fn application_issues(connection: &Connection) -> Result<Vec<String>> {
          )",
         false,
     )?;
+    if recorded_version >= 4 {
+        append_count_issue(
+            connection,
+            &mut issues,
+            "selection snapshots whose stored member count disagrees with membership",
+            "SELECT COUNT(*) FROM selection_snapshots
+             WHERE member_count <> (
+                 SELECT COUNT(*) FROM selection_members
+                 WHERE selection_members.selection_id = selection_snapshots.id
+             )",
+            false,
+        )?;
+        append_count_issue(
+            connection,
+            &mut issues,
+            "bulk actions whose outcome counts do not sum to matched count",
+            "SELECT COUNT(*) FROM bulk_actions
+             WHERE matched_count < 0 OR transitioned_count < 0
+                OR skipped_state_count < 0 OR skipped_conflict_count < 0
+                OR matched_count <> transitioned_count
+                    + skipped_state_count + skipped_conflict_count",
+            false,
+        )?;
+        append_count_issue(
+            connection,
+            &mut issues,
+            "bulk actions whose stored matched count disagrees with member outcomes",
+            "SELECT COUNT(*) FROM bulk_actions
+             WHERE matched_count <> (
+                 SELECT COUNT(*) FROM bulk_action_members
+                 WHERE bulk_action_members.action_id = bulk_actions.action_id
+             )",
+            false,
+        )?;
+        append_count_issue(
+            connection,
+            &mut issues,
+            "bulk action members with an unknown outcome",
+            "SELECT COUNT(*) FROM bulk_action_members
+             WHERE outcome NOT IN (
+                 'transitioned', 'skipped-state', 'skipped-output-conflict'
+             )",
+            false,
+        )?;
+    }
 
     let mut statement = connection
         .prepare("SELECT id, plan_hash, plan_json FROM jobs")
@@ -1133,6 +1178,50 @@ mod tests {
     }
 
     #[test]
+    fn application_integrity_detects_batch_action_count_drift() {
+        let directory = tempdir().expect("temp directory");
+        let database = directory.path().join("jobs.sqlite3");
+        drop(SqliteJobStore::open(&database).expect("initialize database"));
+        let connection = Connection::open(&database).expect("raw database");
+        connection
+            .execute(
+                "INSERT INTO selection_snapshots(
+                    id, query_json, member_count, created_unix_ms
+                 ) VALUES ('selection-drift', '{}', 1, 0)",
+                [],
+            )
+            .expect("insert mismatched selection");
+        connection
+            .execute(
+                "INSERT INTO bulk_actions(
+                    action_id, selection_id, action, matched_count,
+                    transitioned_count, skipped_state_count,
+                    skipped_conflict_count, created_unix_ms
+                 ) VALUES ('action-drift', 'selection-drift', 'retry', 1, 1, 0, 0, 0)",
+                [],
+            )
+            .expect("insert mismatched bulk action");
+        drop(connection);
+
+        let report = MaintenanceService::new(&database)
+            .integrity_check()
+            .expect("integrity report");
+        assert!(!report.ok);
+        assert!(
+            report
+                .application_issues
+                .iter()
+                .any(|issue| issue.contains("selection snapshots"))
+        );
+        assert!(
+            report
+                .application_issues
+                .iter()
+                .any(|issue| issue.contains("matched count"))
+        );
+    }
+
+    #[test]
     fn restore_preflight_migrates_a_copy_without_touching_the_source() {
         let directory = tempdir().expect("temp directory");
         let live = directory.path().join("live.sqlite3");
@@ -1181,6 +1270,53 @@ mod tests {
     }
 
     #[test]
+    fn opening_v3_database_snapshots_before_batch_schema_migration() {
+        let directory = tempdir().expect("temp directory");
+        let database = directory.path().join("jobs.sqlite3");
+        drop(SqliteJobStore::open(&database).expect("initialize database"));
+        let connection = Connection::open(&database).expect("raw database");
+        connection
+            .execute_batch(
+                "PRAGMA foreign_keys = OFF;
+                 DROP TABLE bulk_action_members;
+                 DROP TABLE bulk_actions;
+                 DROP TABLE selection_members;
+                 DROP TABLE selection_snapshots;
+                 DROP TABLE job_idempotency_keys;
+                 DROP TABLE batch_members;
+                 DROP TABLE batches;
+                 DELETE FROM schema_migrations WHERE version = 4;",
+            )
+            .expect("downgrade fixture to schema v3");
+        drop(connection);
+
+        drop(SqliteJobStore::open(&database).expect("migrate v3 database"));
+
+        let backups = directory
+            .path()
+            .join("backups")
+            .read_dir()
+            .expect("backup directory")
+            .map(|entry| entry.expect("backup entry").path())
+            .collect::<Vec<_>>();
+        assert_eq!(backups.len(), 1);
+        assert_eq!(
+            MaintenanceService::new(&backups[0])
+                .status()
+                .expect("snapshot status")
+                .schema_version,
+            3
+        );
+        assert_eq!(
+            MaintenanceService::new(&database)
+                .status()
+                .expect("migrated status")
+                .schema_version,
+            DATABASE_SCHEMA_VERSION
+        );
+    }
+
+    #[test]
     fn restore_preflight_rejects_a_newer_schema() {
         let directory = tempdir().expect("temp directory");
         let live = directory.path().join("live.sqlite3");
@@ -1190,7 +1326,7 @@ mod tests {
         let connection = Connection::open(&newer).expect("newer connection");
         connection
             .execute(
-                "INSERT INTO schema_migrations(version, applied_unix_ms) VALUES (4, 0)",
+                "INSERT INTO schema_migrations(version, applied_unix_ms) VALUES (5, 0)",
                 [],
             )
             .expect("newer marker");

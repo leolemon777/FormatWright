@@ -28,7 +28,7 @@ The eleven `maintenance::tests` cover:
 - a validated online backup, SHA-256 output, no overwrite, and no partial/WAL/SHM leakage beside the portable backup;
 - an online backup taken while a WAL writer has an uncommitted row; the portable backup contains only the committed snapshot;
 - restore preflight of a v2 database, migration of only the temporary copy, and byte-for-byte preservation of the selected source;
-- automatic pre-v3 migration snapshot containing schema v2 while the live database reaches v3;
+- automatic pre-migration snapshots containing schema v2/v3 while the live database reaches current schema v4;
 - refusal of schema v4 by a v3 application;
 - refusal of a non-SQLite restore source without changing the live file;
 - confirmed transactional restore plus a readable pre-restore safety snapshot.
@@ -38,7 +38,7 @@ Application integrity currently checks migration continuity, known job states, a
 
 ## Recorded CLI disk-backed run
 
-A temporary database completed initialization, portable backup, preflight, confirmed restore, JSON integrity check, and compact. The confirmed restore reported schema v3 and its safety snapshot. Recursive inspection found no `backup-partial` or `restore-stage` artifact; the live WAL/SHM pair remained expected for the active WAL database.
+A temporary database completed initialization, portable backup, preflight, confirmed restore, JSON integrity check, and compact. Current automated status/preflight assertions report schema v4, including v3→v4 snapshot coverage. Recursive inspection found no `backup-partial` or `restore-stage` artifact; the live WAL/SHM pair remained expected for the active WAL database.
 
 ## Remaining gate work
 

@@ -126,6 +126,21 @@ type QueueRunReport = {
   peak_active: number;
 };
 
+type SelectionSnapshot = {
+  id: string;
+  member_count: number;
+};
+
+type BulkActionReport = {
+  action_id: string;
+  selection_id: string;
+  action: "cancel" | "resume" | "retry";
+  matched: number;
+  transitioned: number;
+  skipped_state: number;
+  skipped_conflict: number;
+};
+
 type ConversionPreset = {
   schema_version: number;
   preset_id: string;
@@ -186,6 +201,10 @@ export default function App() {
   const [presetNotice, setPresetNotice] = useState<string | null>(null);
   const [presetBusy, setPresetBusy] = useState(false);
   const [jobActionBusy, setJobActionBusy] = useState<string | null>(null);
+  const [jobSearch, setJobSearch] = useState("");
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkReport, setBulkReport] = useState<BulkActionReport | null>(null);
+  const queueSubmission = useRef<{ intent: string; key: string } | null>(null);
   const mounted = useRef(true);
   const copy = messages[language];
 
@@ -312,7 +331,10 @@ export default function App() {
     }
   }
 
-  function request(approvedPlanHash: string | null = null) {
+  function request(
+    approvedPlanHash: string | null = null,
+    idempotencyKey: string | null = null,
+  ) {
     return {
       inputPath,
       outputPath,
@@ -323,6 +345,7 @@ export default function App() {
       colorMode: target === "png" || target === "jpg" || target === "jpeg" ? colorMode : null,
       preserveAllStreams,
       approvedPlanHash,
+      idempotencyKey,
     };
   }
 
@@ -370,14 +393,20 @@ export default function App() {
     if (!preview) return;
     setBusy("queue");
     setError(null);
+    const intent = JSON.stringify([inputPath, outputPath, preview.plan.plan_hash]);
+    const submission =
+      queueSubmission.current?.intent === intent
+        ? queueSubmission.current
+        : { intent, key: crypto.randomUUID() };
+    queueSubmission.current = submission;
     try {
       await invoke<JobRecord>("queue_desktop_conversion", {
-        request: request(preview.plan.plan_hash),
+        request: request(preview.plan.plan_hash, submission.key),
       });
+      queueSubmission.current = null;
       setTab("jobs");
       await refreshJobs();
     } catch (reason) {
-      setPreview(null);
       setError(parseDesktopError(reason));
     } finally {
       setBusy(null);
@@ -436,6 +465,33 @@ export default function App() {
       setError(parseDesktopError(reason));
     } finally {
       setJobActionBusy(null);
+    }
+  }
+
+  async function runBulkAction(
+    action: "cancel" | "resume" | "retry",
+    states: string[],
+  ) {
+    setBulkBusy(true);
+    setBulkReport(null);
+    setError(null);
+    try {
+      const selection = await invoke<SelectionSnapshot>("capture_desktop_job_selection", {
+        batchId: null,
+        states,
+        search: jobSearch.trim() || null,
+      });
+      const result = await invoke<BulkActionReport>("run_desktop_bulk_action", {
+        selectionId: selection.id,
+        action,
+      });
+      setBulkReport(result);
+      setQueueReport(null);
+      await refreshJobs();
+    } catch (reason) {
+      setError(parseDesktopError(reason));
+    } finally {
+      setBulkBusy(false);
     }
   }
 
@@ -633,6 +689,12 @@ export default function App() {
   const routeAvailable = !capabilities || route?.available === true;
   const targetOptions = Array.from(new Set([...recommendations, "jpg", "png", "webp", "avif", "mp4", "mp3", "m4a", "wav", "gif", "pdf", "docx", "json", "csv", "yaml", "xml"]));
   const tabs: Tab[] = ["convert", "jobs", "presets", "engines", "reports", "settings"];
+  const normalizedJobSearch = jobSearch.trim().toLocaleLowerCase();
+  const visibleJobs = normalizedJobSearch
+    ? jobs.filter((job) =>
+        `${job.input_path}\n${job.output_path}`.toLocaleLowerCase().includes(normalizedJobSearch),
+      )
+    : jobs;
 
   return (
     <main className="shell">
@@ -719,7 +781,16 @@ export default function App() {
               {copy.queueReport}: selected {queueReport.selected} · completed {queueReport.completed} · warning {queueReport.warning} · blocked {queueReport.blocked} · failed {queueReport.failed} · cancelled {queueReport.cancelled} · peak {queueReport.peak_active}/{queueReport.parallelism}{queueReport.stopped ? " · stopped" : ""}
             </p>
           )}
-          <div className="job-list">{jobs.length === 0 ? <p className="empty">{copy.historyEmpty}</p> : jobs.map((job) => { const resumable = job.state === "interrupted" || job.state === "blocked"; const retryable = job.state === "failed" || job.state === "cancelled"; return <article key={job.id}><div><strong>{job.output_path}</strong><small>{job.input_path}</small></div><span className={`status status-${job.state}`}>{job.state}</span><span className="job-actions">{(resumable || retryable) && <button className="primary" type="button" disabled={jobActionBusy !== null || busy === "queue-run"} onClick={() => requeueJob(job)}>{jobActionBusy === job.id ? (resumable ? copy.resumingJob : copy.retryingJob) : (resumable ? copy.resumeJob : copy.retryJob)}</button>}<button type="button" onClick={() => loadReport(job.id)}>{copy.selectJob}</button></span></article>; })}</div>
+          <div className="bulk-toolbar">
+            <label>{copy.filterJobs}<input value={jobSearch} maxLength={200} onChange={(event) => setJobSearch(event.target.value)} placeholder={copy.filterJobsHint} /></label>
+            <div className="heading-actions">
+              <button className="primary" type="button" disabled={bulkBusy || busy === "queue-run"} onClick={() => runBulkAction("retry", ["failed", "cancelled", "interrupted"])}>{copy.retryMatching}</button>
+              <button type="button" disabled={bulkBusy || busy === "queue-run"} onClick={() => runBulkAction("resume", ["blocked", "interrupted"])}>{copy.resumeMatching}</button>
+              <button className="danger" type="button" disabled={bulkBusy || busy === "queue-run"} onClick={() => runBulkAction("cancel", ["planned", "queued", "blocked", "interrupted"])}>{copy.cancelMatching}</button>
+            </div>
+          </div>
+          {bulkReport && <p className="success-notice" role="status" aria-live="polite">{copy.bulkReport}: {bulkReport.transitioned} / {bulkReport.matched} · {copy.skippedState} {bulkReport.skipped_state} · {copy.skippedConflict} {bulkReport.skipped_conflict}</p>}
+          <div className="job-list">{visibleJobs.length === 0 ? <p className="empty">{copy.historyEmpty}</p> : visibleJobs.map((job) => { const resumable = job.state === "interrupted" || job.state === "blocked"; const retryable = job.state === "failed" || job.state === "cancelled"; return <article key={job.id}><div><strong>{job.output_path}</strong><small>{job.input_path}</small></div><span className={`status status-${job.state}`}>{job.state}</span><span className="job-actions">{(resumable || retryable) && <button className="primary" type="button" disabled={jobActionBusy !== null || busy === "queue-run" || bulkBusy} onClick={() => requeueJob(job)}>{jobActionBusy === job.id ? (resumable ? copy.resumingJob : copy.retryingJob) : (resumable ? copy.resumeJob : copy.retryJob)}</button>}<button type="button" onClick={() => loadReport(job.id)}>{copy.selectJob}</button></span></article>; })}</div>
           <details className="benchmark"><summary>{copy.benchmark}</summary><button type="button" onClick={runBenchmark}>{copy.benchmark}</button>{benchmark && <p>{benchmark.total_jobs.toLocaleString()} / {benchmark.emitted_batches} batches / {benchmark.elapsed_milliseconds} ms</p>}<p>{queueSnapshot.totalJobs.toLocaleString()} projected · {queueSnapshot.completed.toLocaleString()} completed</p></details>
         </section>
       )}

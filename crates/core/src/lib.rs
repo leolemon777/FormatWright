@@ -21,7 +21,7 @@ pub mod structured;
 pub mod validation;
 mod workflow;
 
-pub use application::{JobExecutionService, QueueRunReport, QueueWindowControl};
+pub use application::{BulkJobService, JobExecutionService, QueueRunReport, QueueWindowControl};
 pub use capabilities::{
     CapabilitySnapshot, RouteAvailability, capability_snapshot_for_input, ensure_route_available,
 };
@@ -46,7 +46,9 @@ pub use formatwright_engine_sdk::{
 };
 pub use inspect::inspect_media;
 pub use job_store::{
-    JobCreateRequest, JobDetails, JobEventRecord, JobProgress, JobRecord, SqliteJobStore,
+    BatchRecord, BulkActionReport, BulkJobAction, IdempotentJobResult, JobCreateRequest,
+    JobDetails, JobEventRecord, JobProgress, JobRecord, JobSelectionQuery, SelectionSnapshot,
+    SqliteJobStore,
 };
 pub use maintenance::{
     BackupReport, CompactReport, IntegrityReport, MaintenanceService, MaintenanceStatus,

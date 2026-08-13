@@ -34,9 +34,10 @@ A disk-backed CLI JSON→YAML run also completed with Validation `Pass`; a secon
 
 This closes the application-level check/rename race for local filesystems. Unsupported filesystem primitives fail closed as `STORAGE_FAILED`. Network destinations are already outside the local-path policy; removable/legacy filesystem campaigns remain Gate 3 work.
 
+Schema v4 batch creation, selection capture, and bulk actions follow the same immediate-writer rule. Bulk stage cleanup runs only after current-state and reservation-conflict checks while that lock is held, preventing a second FormatWright process from admitting the same job between check and cleanup.
+
 ## Remaining work
 
 - Multi-process CLI reservation/transition soak with kill/restart injection.
 - A real worker hook that creates the destination precisely between validation and publish, in addition to the direct publish primitive tests.
-- Batch identity/selection model and bulk-action audit events.
 - 10k mixed-format concurrency, latency, WAL, RSS, and fairness evidence.

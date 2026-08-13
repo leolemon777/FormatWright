@@ -6,16 +6,17 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use formatwright_core::{
-    EngineIdentity, ErrorCode, ExecutionMilestone, FormatWrightError, JobCreateRequest,
-    JobExecutionService, JobRecord, JobState, MaintenanceService, Plan, PlanRequest, Probe,
-    SqliteJobStore, ValidationStatus, cleanup_staged_output, doctor, execute_plan_observed,
-    identify_artifact, inspect_builtin_engine, inspect_document, inspect_engine, inspect_media,
-    inspect_office, inspect_pdf, inspect_structured, office_format_hint, pdf_format_hint,
-    plan_conversion, plan_heic_conversion, plan_markup_to_docx, plan_markup_to_pdf,
-    plan_metadata_clean, plan_office_to_pdf, plan_pdf_render, plan_structured_conversion,
-    resolve_output_path, staged_output_candidates, structured_format_hint, verify_engine_pack,
+    BulkJobAction, BulkJobService, EngineIdentity, ErrorCode, ExecutionMilestone,
+    FormatWrightError, JobCreateRequest, JobExecutionService, JobRecord, JobSelectionQuery,
+    JobState, MaintenanceService, Plan, PlanRequest, Probe, SqliteJobStore, ValidationStatus,
+    cleanup_staged_output, doctor, execute_plan_observed, identify_artifact,
+    inspect_builtin_engine, inspect_document, inspect_engine, inspect_media, inspect_office,
+    inspect_pdf, inspect_structured, office_format_hint, pdf_format_hint, plan_conversion,
+    plan_heic_conversion, plan_markup_to_docx, plan_markup_to_pdf, plan_metadata_clean,
+    plan_office_to_pdf, plan_pdf_render, plan_structured_conversion, resolve_output_path,
+    staged_output_candidates, structured_format_hint, verify_engine_pack,
 };
 use serde::Serialize;
 use tokio_util::sync::CancellationToken;
@@ -178,6 +179,13 @@ enum Command {
 
         #[arg(
             long,
+            value_name = "KEY",
+            help = "Deduplicate an identical --queue-only submission"
+        )]
+        idempotency_key: Option<String>,
+
+        #[arg(
+            long,
             value_name = "SECONDS",
             help = "Cancel the conversion after a wall-clock timeout"
         )]
@@ -251,6 +259,44 @@ enum JobsCommand {
         #[arg(long, default_value_t = 0)]
         offset: usize,
     },
+    /// List durable batches without hydrating every member.
+    Batches {
+        #[arg(long, default_value_t = 100)]
+        limit: usize,
+
+        #[arg(long, default_value_t = 0)]
+        offset: usize,
+    },
+    /// Freeze a stable query result for an auditable bulk action.
+    Select {
+        #[arg(long, value_name = "BATCH_ID")]
+        batch: Option<Uuid>,
+
+        #[arg(long, value_enum, value_name = "STATE")]
+        state: Vec<JobStateArg>,
+
+        #[arg(long, value_name = "TEXT")]
+        search: Option<String>,
+    },
+    /// List jobs from an immutable selection snapshot in captured order.
+    Selection {
+        #[arg(value_name = "SELECTION_ID")]
+        selection_id: Uuid,
+
+        #[arg(long, default_value_t = 100)]
+        limit: usize,
+
+        #[arg(long, default_value_t = 0)]
+        offset: usize,
+    },
+    /// Apply one persisted and auditable action to a selection snapshot.
+    Bulk {
+        #[arg(value_name = "SELECTION_ID")]
+        selection_id: Uuid,
+
+        #[arg(long, value_enum)]
+        action: BulkActionArg,
+    },
     /// Show one job, its immutable Plan, and ordered events.
     Show {
         #[arg(value_name = "JOB_ID")]
@@ -287,6 +333,56 @@ enum JobsCommand {
     },
 }
 
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum BulkActionArg {
+    Cancel,
+    Resume,
+    Retry,
+}
+
+impl From<BulkActionArg> for BulkJobAction {
+    fn from(value: BulkActionArg) -> Self {
+        match value {
+            BulkActionArg::Cancel => Self::Cancel,
+            BulkActionArg::Resume => Self::Resume,
+            BulkActionArg::Retry => Self::Retry,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum JobStateArg {
+    Queued,
+    Inspecting,
+    Planned,
+    Blocked,
+    Running,
+    Validating,
+    Completed,
+    Warning,
+    Failed,
+    Cancelled,
+    Interrupted,
+}
+
+impl From<JobStateArg> for JobState {
+    fn from(value: JobStateArg) -> Self {
+        match value {
+            JobStateArg::Queued => Self::Queued,
+            JobStateArg::Inspecting => Self::Inspecting,
+            JobStateArg::Planned => Self::Planned,
+            JobStateArg::Blocked => Self::Blocked,
+            JobStateArg::Running => Self::Running,
+            JobStateArg::Validating => Self::Validating,
+            JobStateArg::Completed => Self::Completed,
+            JobStateArg::Warning => Self::Warning,
+            JobStateArg::Failed => Self::Failed,
+            JobStateArg::Cancelled => Self::Cancelled,
+            JobStateArg::Interrupted => Self::Interrupted,
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 struct RecoveryReport {
     interrupted_jobs: Vec<JobRecord>,
@@ -296,6 +392,7 @@ struct RecoveryReport {
 #[derive(Debug, Serialize)]
 struct ImageBatchReport {
     schema_version: u32,
+    batch_id: Option<Uuid>,
     discovered: usize,
     planned: usize,
     skipped: usize,
@@ -479,6 +576,7 @@ async fn run(cli: Cli) -> Result<(), FormatWrightError> {
             allow_lossy_data,
             dry_run,
             queue_only,
+            idempotency_key,
             timeout_seconds,
         } => {
             let output = output.unwrap_or_else(|| default_output_path(&input, &to));
@@ -514,6 +612,14 @@ async fn run(cli: Cli) -> Result<(), FormatWrightError> {
                     "Remove the timeout when queueing, or execute the conversion immediately.",
                 ));
             }
+            if idempotency_key.is_some() && !queue_only {
+                return Err(FormatWrightError::new(
+                    ErrorCode::InputInvalid,
+                    formatwright_core::Stage::Plan,
+                    "--idempotency-key applies only to --queue-only submissions",
+                    "Add --queue-only or remove the idempotency key.",
+                ));
+            }
             if dry_run {
                 if cli.json {
                     return print_json(&plan);
@@ -522,7 +628,13 @@ async fn run(cli: Cli) -> Result<(), FormatWrightError> {
                 return Ok(());
             }
             if queue_only {
-                return queue_stored_plan(&probe, &plan, cli.state_db, cli.json);
+                return queue_stored_plan(
+                    &probe,
+                    &plan,
+                    idempotency_key.as_deref(),
+                    cli.state_db,
+                    cli.json,
+                );
             }
 
             execute_stored_plan(
@@ -603,6 +715,72 @@ async fn run(cli: Cli) -> Result<(), FormatWrightError> {
                                 job.output_path.display()
                             );
                         }
+                        Ok(())
+                    }
+                }
+                JobsCommand::Batches { limit, offset } => {
+                    let batches = store.list_batches_page(limit, offset)?;
+                    if cli.json {
+                        print_json(&batches)
+                    } else {
+                        for batch in batches {
+                            println!("{}\t{} jobs\t{}", batch.id, batch.job_count, batch.name);
+                        }
+                        Ok(())
+                    }
+                }
+                JobsCommand::Select {
+                    batch,
+                    state,
+                    search,
+                } => {
+                    let selection = store.capture_selection(&JobSelectionQuery {
+                        batch_id: batch,
+                        states: state.into_iter().map(JobState::from).collect(),
+                        search,
+                    })?;
+                    if cli.json {
+                        print_json(&selection)
+                    } else {
+                        println!("selection: {}", selection.id);
+                        println!("members: {}", selection.member_count);
+                        Ok(())
+                    }
+                }
+                JobsCommand::Selection {
+                    selection_id,
+                    limit,
+                    offset,
+                } => {
+                    let jobs = store.list_selection_jobs_page(selection_id, limit, offset)?;
+                    if cli.json {
+                        print_json(&jobs)
+                    } else {
+                        for job in jobs {
+                            println!(
+                                "{}\t{:?}\t{} -> {}",
+                                job.id,
+                                job.state,
+                                job.input_path.display(),
+                                job.output_path.display()
+                            );
+                        }
+                        Ok(())
+                    }
+                }
+                JobsCommand::Bulk {
+                    selection_id,
+                    action,
+                } => {
+                    let report = BulkJobService::apply(&mut store, selection_id, action.into())?;
+                    if cli.json {
+                        print_json(&report)
+                    } else {
+                        println!("action: {}", report.action_id);
+                        println!("matched: {}", report.matched);
+                        println!("transitioned: {}", report.transitioned);
+                        println!("skipped state: {}", report.skipped_state);
+                        println!("skipped conflict: {}", report.skipped_conflict);
                         Ok(())
                     }
                 }
@@ -856,14 +1034,32 @@ async fn run(cli: Cli) -> Result<(), FormatWrightError> {
 fn queue_stored_plan(
     probe: &Probe,
     plan: &Plan,
+    idempotency_key: Option<&str>,
     state_db: Option<PathBuf>,
     json: bool,
 ) -> Result<(), FormatWrightError> {
     let database_path = state_db.unwrap_or_else(default_state_db);
     let mut store = open_job_store(&database_path)?;
     let resolved_output = resolve_output_path(plan)?;
-    let job = store.create_job(&probe.artifact.canonical_path, &resolved_output, plan)?;
-    let queued = store.transition(job.id, JobState::Queued, "JOB_ENQUEUED")?;
+    let request = JobCreateRequest {
+        input_path: probe.artifact.canonical_path.clone(),
+        output_path: resolved_output,
+        plan: plan.clone(),
+    };
+    let (job, created) = if let Some(key) = idempotency_key {
+        let result = store.enqueue_job_idempotent(key, &request)?;
+        (result.job, result.created)
+    } else {
+        (
+            store.create_job(&request.input_path, &request.output_path, plan)?,
+            true,
+        )
+    };
+    let queued = if created && idempotency_key.is_none() {
+        store.transition(job.id, JobState::Queued, "JOB_ENQUEUED")?
+    } else {
+        job
+    };
     print_job_action(&queued, json)
 }
 
@@ -1094,11 +1290,25 @@ async fn run_image_batch(
     }
     let database_path = state_db.unwrap_or_else(default_state_db);
     let mut store = open_job_store(&database_path)?;
-    let jobs = store.create_jobs(&requests)?;
-    store.queue_jobs(
-        &jobs.iter().map(|job| job.id).collect::<Vec<_>>(),
-        "BATCH_QUEUED",
-    )?;
+    let (batch_id, jobs) = if requests.is_empty() {
+        (None, Vec::new())
+    } else {
+        let source_name = input_root
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("images");
+        let batch_name = format!("Images: {source_name} -> {target_extension}")
+            .chars()
+            .take(120)
+            .collect::<String>();
+        let batch = store.create_batch(&batch_name, &requests)?;
+        let jobs = store.list_batch_jobs_page(batch.id, requests.len(), 0)?;
+        store.queue_jobs(
+            &jobs.iter().map(|job| job.id).collect::<Vec<_>>(),
+            "BATCH_QUEUED",
+        )?;
+        (Some(batch.id), jobs)
+    };
     let cancellation = CancellationToken::new();
     if !queue_only {
         let signal = cancellation.clone();
@@ -1182,7 +1392,8 @@ async fn run_image_batch(
         .saturating_add(cancelled);
     let queued = jobs.len().saturating_sub(terminal);
     let report = ImageBatchReport {
-        schema_version: 1,
+        schema_version: 2,
+        batch_id,
         discovered,
         planned: jobs.len(),
         skipped,
@@ -1197,6 +1408,9 @@ async fn run_image_batch(
     if json {
         print_json(&report)
     } else {
+        if let Some(batch_id) = report.batch_id {
+            println!("batch: {batch_id}");
+        }
         println!("discovered: {}", report.discovered);
         println!("planned: {}", report.planned);
         println!("skipped: {}", report.skipped);
