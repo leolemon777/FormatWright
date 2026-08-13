@@ -15,12 +15,12 @@ use formatwright_core::{
     CapabilitySnapshot, CompactReport, ConversionPreset, ConversionService, DoctorReport,
     EngineDiscoveryPolicy, EngineRegistryIdentity, FolderBatchService, FolderDiskBudget,
     FolderMappingEntry, IntegrityReport, JobCreateRequest, JobExecutionService, JobQueryPage,
-    JobRecord, JobSelectionQuery, JobState, JobStateCount, MaintenanceService, MaintenanceStatus,
-    PRESET_SCHEMA_VERSION, Plan, PlanRequest, PresetLibrary, Probe, QueueRunReport,
-    QueueWindowControl, ReportService, RevalidationService, SelectionSnapshot, SqliteJobStore,
-    StateBundleBackupReport, StateBundleOptions, StateBundlePreflightReport, ValidationReport,
-    VerifiedEnginePack, activate_engine_pack, capability_snapshot_for_input, cleanup_staged_output,
-    prepare_conversion,
+    JobRecord, JobRecoveryService, JobSelectionQuery, JobState, JobStateCount, MaintenanceService,
+    MaintenanceStatus, PRESET_SCHEMA_VERSION, Plan, PlanRequest, PresetLibrary, Probe,
+    QueueRunReport, QueueWindowControl, ReportService, RevalidationService, SelectionSnapshot,
+    SqliteJobStore, StagedCleanupReport, StateBundleBackupReport, StateBundleOptions,
+    StateBundlePreflightReport, ValidationReport, VerifiedEnginePack, activate_engine_pack,
+    capability_snapshot_for_input, cleanup_staged_output, prepare_conversion,
 };
 use queue_bridge::{DEFAULT_BATCH_JOBS, DEFAULT_BENCHMARK_JOBS, QueueBatchIter};
 use serde::{Deserialize, Serialize};
@@ -886,6 +886,24 @@ fn requeue_desktop_job(
     let job_id = Uuid::parse_str(&job_id).map_err(|error| error.to_string())?;
     let mut store = lock(&state.store)?;
     requeue_job(&mut store, job_id).map_err(serialize_error)
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+async fn cleanup_desktop_job_staging(
+    state: tauri::State<'_, DesktopState>,
+    job_id: String,
+) -> Result<StagedCleanupReport, String> {
+    let _operation = acquire_active_operation(&state.operation_gate)?;
+    let job_id = Uuid::parse_str(&job_id).map_err(|error| error.to_string())?;
+    let database_path = state.job_database_path.clone();
+    tokio::task::spawn_blocking(move || {
+        let mut store = SqliteJobStore::open(database_path)?;
+        JobRecoveryService::cleanup_staging(&mut store, job_id)
+    })
+    .await
+    .map_err(|error| format!("staging-cleanup worker failed: {error}"))?
+    .map_err(serialize_error)
 }
 
 #[tauri::command]
@@ -2106,6 +2124,7 @@ pub fn run() {
             cancel_desktop_queue_window,
             cancel_desktop_job,
             requeue_desktop_job,
+            cleanup_desktop_job_staging,
             list_desktop_jobs,
             query_desktop_jobs,
             get_desktop_recovery_summary,

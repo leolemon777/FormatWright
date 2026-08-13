@@ -2220,7 +2220,9 @@ pub fn staged_output_path(output: &Path, job_id: Uuid) -> Result<PathBuf> {
 ///
 /// Returns a storage error when an existing staged file cannot be removed.
 pub fn cleanup_staged_output(output: &Path, job_id: Uuid) -> Result<bool> {
-    let candidates = staged_output_candidates(output, job_id)?;
+    ensure_local_filesystem_path(output, Stage::Commit)?;
+    let resolved_output = resolve_output_identity(output, Stage::Commit)?;
+    let candidates = staged_output_candidates(&resolved_output, job_id)?;
     let mut removed = false;
     for partial in candidates {
         removed |= remove_staged_path(&partial)?;
@@ -2254,7 +2256,23 @@ fn office_staged_work_path(output: &Path, job_id: Uuid) -> Result<PathBuf> {
 }
 
 fn remove_staged_path(partial: &Path) -> Result<bool> {
-    let result = if partial.is_dir() {
+    let metadata = match std::fs::symlink_metadata(partial) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(staged_cleanup_error(partial, &error)),
+    };
+    if is_reparse_or_symlink(&metadata) {
+        return Err(FormatWrightError::new(
+            ErrorCode::PolicyBlocked,
+            Stage::Commit,
+            format!(
+                "Refusing to remove a linked or reparse staging path: {}",
+                partial.display()
+            ),
+            "Inspect or quarantine the unexpected staging link manually.",
+        ));
+    }
+    let result = if metadata.is_dir() {
         std::fs::remove_dir_all(partial)
     } else {
         std::fs::remove_file(partial)
@@ -2262,14 +2280,31 @@ fn remove_staged_path(partial: &Path) -> Result<bool> {
     match result {
         Ok(()) => Ok(true),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(error) => Err(FormatWrightError::new(
-            ErrorCode::StorageFailed,
-            Stage::Commit,
-            format!("Unable to remove staged output: {}", partial.display()),
-            "Close processes using the file and retry recovery.",
-        )
-        .with_diagnostic(error.to_string())),
+        Err(error) => Err(staged_cleanup_error(partial, &error)),
     }
+}
+
+#[cfg(windows)]
+fn is_reparse_or_symlink(metadata: &std::fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
+#[cfg(not(windows))]
+fn is_reparse_or_symlink(metadata: &std::fs::Metadata) -> bool {
+    metadata.file_type().is_symlink()
+}
+
+fn staged_cleanup_error(partial: &Path, error: &std::io::Error) -> FormatWrightError {
+    FormatWrightError::new(
+        ErrorCode::StorageFailed,
+        Stage::Commit,
+        format!("Unable to remove staged output: {}", partial.display()),
+        "Close processes using the file and retry recovery.",
+    )
+    .with_diagnostic(error.to_string())
 }
 
 async fn ensure_input_unchanged(input: &Probe, stage: Stage) -> Result<()> {

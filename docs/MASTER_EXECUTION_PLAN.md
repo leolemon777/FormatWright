@@ -79,7 +79,7 @@
 | Phase 1 架构 Spike | Windows 已完成；跨平台部分完成 | 安全子进程、10 GiB 稀疏文件、partial/原子提交、SQLite 恢复、10k WebView 投影、引擎 Manifest | 物理 10 GiB、macOS/Linux 真实进程树与引擎分发认证 |
 | Phase 2 Core + CLI Alpha | Windows 自包含候选完成；认证未完成 | Inspect/Plan/Convert/Batch/Doctor/Jobs/Engines；Starter PDF/Media；能力门控；12 条工作流均有开发环境实验路径 | R-008/R-009 干净机/供应链关闭证据、完整语料与跨平台工作流认证 |
 | Phase 3 队列/恢复/质量 | Windows 开发门槛完成；长期认证待补 | 10k 持久/同质/混合真实转换、P50/P95/RSS/WAL/staging、20 项可恢复失败、确定性资源调度、公平批次窗口、多进程原子认领与真实强退恢复、CLI/Desktop 已委托 `JobExecutionService` | 高分辨率/PDF/Office 10k 扩展、长时掉电 soak、跨平台恢复 |
-| Phase 4 Desktop Beta | 部分完成 | Tauri/React、双语普通/专家模式、原生选择器、单文件与文件夹 mapping preview/原子入队、Plan/Jobs/Reports/Doctor/Maintenance、启动恢复横幅与精确 partial 清理、SQLite 状态/路径/批次浏览和分页、持久队列窗口、可恢复 immediate pause、单任务与稳定筛选批量 Resume/Retry/Cancel、引擎导入、可编辑预设 | 磁盘空间预检、长列表虚拟化、系统右键/Finder/Linux 集成、完整可访问性与可用性 |
+| Phase 4 Desktop Beta | 部分完成 | Tauri/React、双语普通/专家模式、原生选择器、单文件与文件夹 mapping preview/磁盘预算/原子入队、Plan/Jobs/Reports/Doctor/Maintenance、启动恢复横幅与精确/手动 partial 清理、SQLite 状态/路径/批次浏览和分页、持久队列窗口、可恢复 immediate pause、单任务与稳定筛选批量 Resume/Retry/Cancel、引擎导入、可编辑预设 | 长列表虚拟化、系统右键/Finder/Linux 集成、完整可访问性与可用性 |
 | Phase 5 安全与发布 | 部分完成 | fuzz、依赖审计、cargo-deny、SPDX SBOM、零套接字观测、离线 NSIS 安装烟测 | 当前源码重打包、可信签名/吊销、引擎 SBOM、OS 强制隔离、升级回滚、macOS/Linux 包 |
 | Phase 6 API/MCP | 未开始 | 规格方向已确定 | Axum、OpenAPI、SSE、Webhook、Worker、目录授权、MCP tools |
 | Phase 7 浏览器/企业 | 未开始 | 范围原则已确定 | WASM 小任务、企业策略/SSO/审计/离线升级 |
@@ -205,7 +205,7 @@
 - [x] 文件夹作为一等输入，展示枚举/跳过/目录映射预览；单批最多 10,000 个不可变 Plan，提交前重检磁盘预算并原子入队。
 - [x] 桌面真正执行持久队列：队列级开始、finish-current pause、可恢复 immediate pause、启动恢复摘要，以及单任务和筛选后的批量 Resume/Retry/Cancel 已落地。
 - [ ] 状态筛选、搜索、分页/虚拟化、稳定选择、批量重试失败项、跳过完成项：SQLite 路径/状态/批次筛选、有界分页、稳定选择和批量动作已完成；只剩超长列表虚拟化。
-- [ ] 手动 partial 清理入口；“仅重新验证”、任务配方/ValidationReport 安全导出、报告路径脱敏以及从可信 job_id 打开输出已完成。Revalidation 不重跑转换、不改输出或原转换终态，证据追加到 SQLite v5 历史。
+- [x] 手动 partial 清理入口、“仅重新验证”、任务配方/ValidationReport 安全导出、报告路径脱敏以及从可信 job_id 打开输出。手动清理仅接受可信 job_id、只对 Blocked/Failed/Cancelled/Interrupted 删除确定性 staging 候选、二次确认并追加同状态审计事件；最终输出不参与删除。Revalidation 不重跑转换、不改输出或原转换终态，证据追加到 SQLite v5 历史。
 - [ ] 逐阶段进度、速度、ETA 置信度和调度原因；不伪造引擎无法提供的百分比。
 - [x] 启动恢复横幅：展示启动中断恢复数、精确 staging 清理数、各持久状态与可恢复总数；可直接进入按状态/批次筛选的任务页处理。
 - [ ] 密码/秘密专用提示，不写入 Plan、日志、SQLite、历史或报告。
@@ -788,7 +788,7 @@ API 不直接接受宿主任意路径。请求引用预先授权的 workspace/ro
 
 ### 第 5–6 周：Desktop 长期自用闭环
 
-- [x] 恢复横幅、精确 partial 清理、批量 retry/resume/cancel、路径/状态/批次筛选、稳定 selection 与有界分页已完成；继续虚拟化和实时进度。
+- [x] 恢复横幅、启动及手动精确 partial 清理、批量 retry/resume/cancel、路径/状态/批次筛选、稳定 selection 与有界分页已完成；继续虚拟化和实时进度。
 - [x] 文件夹 mapping preview、磁盘空间预检、原子批次入队、打开输出与安全导出报告/任务配方。
 - Windows Explorer 入口、键盘/UIA/高 DPI/RTL 回归。
 

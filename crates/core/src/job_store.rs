@@ -1684,6 +1684,102 @@ impl SqliteJobStore {
         )
     }
 
+    pub(crate) fn cleanup_staging_persisted<F>(
+        &mut self,
+        job_id: Uuid,
+        mut cleanup: F,
+    ) -> Result<(JobRecord, bool)>
+    where
+        F: FnMut(&JobRecord) -> Result<bool>,
+    {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(storage_error)?;
+        let row = transaction
+            .query_row(
+                "SELECT id, state, input_path, output_path, plan_hash, sequence,
+                        created_unix_ms, updated_unix_ms
+                 FROM jobs WHERE id = ?1",
+                [job_id.to_string()],
+                stored_job_row,
+            )
+            .optional()
+            .map_err(storage_error)?
+            .ok_or_else(|| {
+                FormatWrightError::new(
+                    ErrorCode::StorageFailed,
+                    Stage::Store,
+                    format!("Job does not exist: {job_id}"),
+                    "Refresh the job list.",
+                )
+            })?;
+        let mut job = job_record_from_row(row)?;
+        if !matches!(
+            job.state,
+            JobState::Blocked | JobState::Failed | JobState::Cancelled | JobState::Interrupted
+        ) {
+            return Err(FormatWrightError::new(
+                ErrorCode::PolicyBlocked,
+                Stage::Commit,
+                format!(
+                    "Staging cleanup is not allowed while the job is {:?}",
+                    job.state
+                ),
+                "Pause active work or wait for the job to become recoverable before cleanup.",
+            ));
+        }
+        let removed = cleanup(&job)?;
+        let now = now_unix_ms();
+        let sequence = job.sequence.saturating_add(1);
+        let updated = transaction
+            .execute(
+                "UPDATE jobs SET sequence = ?1, updated_unix_ms = ?2
+                 WHERE id = ?3 AND state = ?4 AND sequence = ?5",
+                params![
+                    sequence,
+                    now,
+                    job.id.to_string(),
+                    state_name(job.state),
+                    job.sequence
+                ],
+            )
+            .map_err(storage_error)?;
+        if updated != 1 {
+            return Err(FormatWrightError::new(
+                ErrorCode::StorageFailed,
+                Stage::Store,
+                "Job changed while staging cleanup was being recorded",
+                "Refresh the job and run an integrity check.",
+            )
+            .retryable(true));
+        }
+        let code = if removed {
+            "STAGED_OUTPUT_CLEANED"
+        } else {
+            "STAGED_OUTPUT_NOT_FOUND"
+        };
+        transaction
+            .execute(
+                "INSERT INTO job_events(
+                    job_id, sequence, previous_state, next_state, code,
+                    timestamp_unix_ms
+                 ) VALUES (?1, ?2, ?3, ?3, ?4, ?5)",
+                params![
+                    job.id.to_string(),
+                    sequence,
+                    state_name(job.state),
+                    code,
+                    now
+                ],
+            )
+            .map_err(storage_error)?;
+        job.sequence = sequence;
+        job.updated_unix_ms = now;
+        transaction.commit().map_err(storage_error)?;
+        Ok((job, removed))
+    }
+
     /// Re-resolves the output path and proves that it still maps to the
     /// durable reservation owned by this job.
     ///

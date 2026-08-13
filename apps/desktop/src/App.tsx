@@ -83,6 +83,11 @@ type JobQueryPage = {
   offset: number;
 };
 
+type StagedCleanupReport = {
+  job: JobRecord;
+  removed: boolean;
+};
+
 type BatchRecord = {
   id: string;
   name: string;
@@ -338,6 +343,9 @@ export default function App() {
   const [presetNotice, setPresetNotice] = useState<string | null>(null);
   const [presetBusy, setPresetBusy] = useState(false);
   const [jobActionBusy, setJobActionBusy] = useState<string | null>(null);
+  const [jobCleanupBusy, setJobCleanupBusy] = useState<string | null>(null);
+  const [pendingCleanupId, setPendingCleanupId] = useState<string | null>(null);
+  const [jobActionNotice, setJobActionNotice] = useState<string | null>(null);
   const [jobSearch, setJobSearch] = useState("");
   const [jobStateFilter, setJobStateFilter] = useState("");
   const [jobBatchId, setJobBatchId] = useState("");
@@ -852,6 +860,8 @@ export default function App() {
 
   async function requeueJob(job: JobRecord) {
     setJobActionBusy(job.id);
+    setPendingCleanupId(null);
+    setJobActionNotice(null);
     setError(null);
     try {
       await invoke<JobRecord>("requeue_desktop_job", { jobId: job.id });
@@ -861,6 +871,29 @@ export default function App() {
       setError(parseDesktopError(reason));
     } finally {
       setJobActionBusy(null);
+    }
+  }
+
+  async function cleanupJobStaging(job: JobRecord) {
+    if (pendingCleanupId !== job.id) {
+      setPendingCleanupId(job.id);
+      setJobActionNotice(copy.cleanupConfirmationHint);
+      return;
+    }
+    setJobCleanupBusy(job.id);
+    setJobActionNotice(null);
+    setError(null);
+    try {
+      const result = await invoke<StagedCleanupReport>("cleanup_desktop_job_staging", {
+        jobId: job.id,
+      });
+      setJobActionNotice(result.removed ? copy.stagingCleaned : copy.noStagingFound);
+      await refreshJobs();
+    } catch (reason) {
+      setError(parseDesktopError(reason));
+    } finally {
+      setJobCleanupBusy(null);
+      setPendingCleanupId(null);
     }
   }
 
@@ -1300,7 +1333,8 @@ export default function App() {
             </div>
           </div>
           {bulkReport && <p className="success-notice" role="status" aria-live="polite">{copy.bulkReport}: {bulkReport.transitioned} / {bulkReport.matched} · {copy.skippedState} {bulkReport.skipped_state} · {copy.skippedConflict} {bulkReport.skipped_conflict}</p>}
-          <div className="job-list">{jobs.length === 0 ? <p className="empty">{copy.historyEmpty}</p> : jobs.map((job) => { const resumable = job.state === "interrupted" || job.state === "blocked"; const retryable = job.state === "failed" || job.state === "cancelled"; return <article key={job.id}><div><strong>{job.output_path}</strong><small>{job.input_path}</small></div><span className={`status status-${job.state}`}>{job.state}</span><span className="job-actions">{(resumable || retryable) && <button className="primary" type="button" disabled={jobActionBusy !== null || busy === "queue-run" || bulkBusy} onClick={() => requeueJob(job)}>{jobActionBusy === job.id ? (resumable ? copy.resumingJob : copy.retryingJob) : (resumable ? copy.resumeJob : copy.retryJob)}</button>}<button type="button" onClick={() => loadReport(job.id)}>{copy.selectJob}</button></span></article>; })}</div>
+          {jobActionNotice && <p className={pendingCleanupId ? "typed-note" : "success-notice"} role="status" aria-live="polite">{jobActionNotice}</p>}
+          <div className="job-list">{jobs.length === 0 ? <p className="empty">{copy.historyEmpty}</p> : jobs.map((job) => { const resumable = job.state === "interrupted" || job.state === "blocked"; const retryable = job.state === "failed" || job.state === "cancelled"; const cleanupAllowed = ["blocked", "failed", "cancelled", "interrupted"].includes(job.state); return <article key={job.id}><div><strong>{job.output_path}</strong><small>{job.input_path}</small></div><span className={`status status-${job.state}`}>{job.state}</span><span className="job-actions">{(resumable || retryable) && <button className="primary" type="button" disabled={jobActionBusy !== null || jobCleanupBusy !== null || busy === "queue-run" || bulkBusy} onClick={() => requeueJob(job)}>{jobActionBusy === job.id ? (resumable ? copy.resumingJob : copy.retryingJob) : (resumable ? copy.resumeJob : copy.retryJob)}</button>}{cleanupAllowed && <button className={pendingCleanupId === job.id ? "danger" : "secondary"} type="button" disabled={jobActionBusy !== null || jobCleanupBusy !== null || busy === "queue-run" || bulkBusy} onClick={() => cleanupJobStaging(job)}>{jobCleanupBusy === job.id ? copy.cleaningStaging : pendingCleanupId === job.id ? copy.confirmCleanStaging : copy.cleanStaging}</button>}<button type="button" onClick={() => loadReport(job.id)}>{copy.selectJob}</button></span></article>; })}</div>
           <nav className="job-pagination" aria-label={copy.pagination}>
             <button type="button" disabled={jobOffset === 0} onClick={() => void refreshJobs(Math.max(0, jobOffset - JOB_PAGE_SIZE))}>{copy.previousPage}</button>
             <span>{pageStart.toLocaleString()}–{pageEnd.toLocaleString()} / {jobTotal.toLocaleString()}</span>

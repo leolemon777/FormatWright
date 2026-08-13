@@ -8,6 +8,7 @@ pub mod bulk_jobs;
 pub mod conversion_service;
 pub mod folder_batch;
 pub mod job_execution;
+pub mod job_recovery;
 pub mod report_service;
 pub mod revalidation;
 
@@ -18,5 +19,6 @@ pub use folder_batch::{
     MAX_FOLDER_BATCH_FILES,
 };
 pub use job_execution::{JobExecutionService, QueueRunReport, QueueWindowControl};
+pub use job_recovery::{JobRecoveryService, StagedCleanupReport};
 pub use report_service::ReportService;
 pub use revalidation::RevalidationService;
