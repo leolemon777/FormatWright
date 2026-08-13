@@ -9,6 +9,7 @@ pub mod conversion_service;
 pub mod folder_batch;
 pub mod job_execution;
 pub mod report_service;
+pub mod revalidation;
 
 pub use bulk_jobs::BulkJobService;
 pub use conversion_service::{ConversionRunResult, ConversionService};
@@ -18,3 +19,4 @@ pub use folder_batch::{
 };
 pub use job_execution::{JobExecutionService, QueueRunReport, QueueWindowControl};
 pub use report_service::ReportService;
+pub use revalidation::RevalidationService;

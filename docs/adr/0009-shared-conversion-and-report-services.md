@@ -25,7 +25,7 @@ CLI and Desktop shared low-level planners and runners but still carried separate
 - CLI and Desktop produce the same Plan hash and state-event semantics for immediate conversion.
 - Report reads reject malformed, oversized (>16 MiB), or cross-Job files instead of hydrating unbounded/corrupt content.
 - The report file and SQLite terminal transition are not one filesystem transaction. The ordered recovery contract is: report first; if report storage fails, active state becomes Interrupted; a report may exist before a later SQLite transition failure and is safe to replace on retry.
-- Report export/redaction variants and validation-only execution remain later use cases on the same service.
+- Report export/redaction variants now use a bounded no-overwrite boundary. Validation-only reuses the immutable Plan and format validators, records append-only evidence in SQLite schema v5, and does not replace the original conversion report or terminal state.
 
 ## Verification
 
@@ -36,6 +36,10 @@ CLI and Desktop shared low-level planners and runners but still carried separate
 - Report storage failure leaves the validating Job Interrupted.
 - Disk CLI immediate and queue-window E2E each prove matching Job/output/report/terminal event.
 
+## Implementation update
+
+Validation-only and safe report/recipe export shipped on 2026-08-12. Original report files remain the immutable conversion record. Revalidation reports are an append-only SQLite audit: application-state bundles therefore always include them as part of the database, while inclusion of original report files remains optional.
+
 ## Revisit when
 
-Reports move into an indexed database, validation-only/revalidate ships, application-state bundle policies select report inclusion, or a remote API needs streaming report persistence.
+A remote API needs streaming report persistence, full revalidation-history browsing becomes a product requirement, or report indexing must move beyond the append-only audit table.

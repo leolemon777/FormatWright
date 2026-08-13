@@ -21,15 +21,16 @@ Restore without `--yes` is preflight-only and does not change live data. Confirm
 
 ## Direct automated assertions
 
-The eleven `maintenance::tests` cover:
+The fifteen `maintenance::tests` cover:
 
 - healthy schema/status and full integrity;
 - a logically damaged migration sequence that still passes SQLite page checks but fails application invariants;
 - a validated online backup, SHA-256 output, no overwrite, and no partial/WAL/SHM leakage beside the portable backup;
 - an online backup taken while a WAL writer has an uncommitted row; the portable backup contains only the committed snapshot;
 - restore preflight of a v2 database, migration of only the temporary copy, and byte-for-byte preservation of the selected source;
-- automatic pre-migration snapshots containing schema v2/v3 while the live database reaches current schema v4;
-- refusal of schema v4 by a v3 application;
+- automatic pre-migration snapshots containing schema v2/v3/v4 while the live database reaches current schema v5;
+- detection of mismatched/tampered append-only revalidation identity, Plan hash, status, and terminal-job linkage;
+- refusal of a newer schema by an older application;
 - refusal of a non-SQLite restore source without changing the live file;
 - confirmed transactional restore plus a readable pre-restore safety snapshot.
 - five-copy automatic retention that always preserves the snapshot just created, plus refusal to restore from a lexical alias of the live database.
@@ -38,7 +39,7 @@ Application integrity checks migration continuity, known job states, active/term
 
 ## Recorded CLI disk-backed run
 
-A temporary database completed initialization, portable backup, preflight, confirmed restore, JSON integrity check, and compact. Current automated status/preflight assertions report schema v4, including v3→v4 snapshot coverage. Recursive inspection found no `backup-partial` or `restore-stage` artifact; the live WAL/SHM pair remained expected for the active WAL database.
+A temporary database completed initialization, portable backup, preflight, confirmed restore, JSON integrity check, and compact. Current automated status/preflight assertions report schema v5, including v3→v4 and v4→v5 snapshot coverage. Recursive inspection found no `backup-partial` or `restore-stage` artifact; the live WAL/SHM pair remained expected for the active WAL database.
 
 ## Remaining gate work
 

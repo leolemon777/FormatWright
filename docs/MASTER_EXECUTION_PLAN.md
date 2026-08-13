@@ -18,7 +18,7 @@
 - **未开始**：只有规格或方向，没有可运行实现。
 - **发布阻断**：不完成就不能发布 Public Beta；不是一般优化项。
 
-当前产品结论：**FormatWright 已具备 Windows 自包含开发候选：Release 内嵌并首次启动安装 PDF/Media Starter，生产只解析激活 pack 的精确路径，UI 与后端共同按 capability snapshot 门控；真实 PDF→PNG/JPG、GIF 与结构化链路已在本机通过；R-001 至 R-007 与 R-010 已关闭；SQLite MaintenanceService、可校验应用状态整包、v4 持久批次/幂等键/稳定 Selection/Bulk Action 审计、共享 ConversionService/ReportService，以及 CLI/Desktop 批量入口已完成；Desktop 已具备启动恢复摘要、精确 partial 清理、SQLite 状态/路径/批次筛选、有界分页，以及与执行互斥的状态/完整性/整包备份/压缩/下次启动恢复中心；四进程原子认领、公平批次窗口、真实强退恢复，以及 10,000 项结构化/图片/媒体混合公平性/P50/P95/RSS/WAL 门禁已通过。** 但这仍不是 Public Beta：R-008/R-009 尚缺离线干净虚拟机、完整引擎 SBOM/许可证与源码义务、可信签名/吊销、升级回滚和正式代码签名证据；Gate 1 尚缺高分辨率/PDF/Office 扩展、长时掉电与跨平台认证，Gate 2–5 仍未完成。不得用于唯一副本或不可替代数据，也不得宣称“已认证”或“正式发布”。
+当前产品结论：**FormatWright 已具备 Windows 自包含开发候选：Release 内嵌并首次启动安装 PDF/Media Starter，生产只解析激活 pack 的精确路径，UI 与后端共同按 capability snapshot 门控；真实 PDF→PNG/JPG、GIF 与结构化链路已在本机通过；R-001 至 R-007 与 R-010 已关闭；SQLite MaintenanceService、可校验应用状态整包、v5 持久批次/幂等键/稳定 Selection/Bulk Action/追加式 Revalidation 审计、共享 ConversionService/ReportService，以及 CLI/Desktop 批量入口已完成；Desktop 已具备启动恢复摘要、精确 partial 清理、SQLite 状态/路径/批次筛选、有界分页，以及与执行互斥的状态/完整性/整包备份/压缩/下次启动恢复中心；四进程原子认领、公平批次窗口、真实强退恢复，以及 10,000 项结构化/图片/媒体混合公平性/P50/P95/RSS/WAL 门禁已通过。** 但这仍不是 Public Beta：R-008/R-009 尚缺离线干净虚拟机、完整引擎 SBOM/许可证与源码义务、可信签名/吊销、升级回滚和正式代码签名证据；Gate 1 尚缺高分辨率/PDF/Office 扩展、长时掉电与跨平台认证，Gate 2–5 仍未完成。不得用于唯一副本或不可替代数据，也不得宣称“已认证”或“正式发布”。
 
 ### 1.1 近期进度快照（2026-08-12）
 
@@ -40,14 +40,14 @@
 - [x] 真实 15 页 PDF→PNG/JPG、GIF 与结构化 E2E 通过；证据见 `docs/testing/WINDOWS_STARTER.md`。
 - [x] 修复 R-010 Poppler 分数像素向上取整不一致；原失败 PDF 的 PNG/JPG 验证均为 Pass。
 - [x] 新增共享 `MaintenanceService` 与 CLI `maintenance status|backup|restore|integrity-check|compact`；SQLite online backup、完整性/引用不变量、恢复临时副本 migration preflight、显式事务切换与恢复前安全快照已通过磁盘 E2E。
-- [x] `SqliteJobStore::open` 在旧 schema→当前 v4 migration 前自动创建可验证便携快照，自动快照默认保留 5 份；损坏或新版恢复源不会改变 live DB。
+- [x] `SqliteJobStore::open` 在旧 schema→当前 v5 migration 前自动创建可验证便携快照，自动快照默认保留 5 份；损坏或新版恢复源不会改变 live DB。
 - [x] SQLite 所有 mutation 改为 immediate writer transaction；两个独立连接的同输出预约和同任务 transition 竞态各只有一个赢家，事件序列/完整性保持有效。
 - [x] 六类输出提交统一使用跨平台 no-clobber publish；文件/目录已存在时原内容不变，晚到冲突稳定返回 `OUTPUT_CONFLICT`。
-- [x] SQLite schema v4：持久 Batch、任务幂等键、最多 100,000 项的稳定 Selection Snapshot、逐任务 Bulk Action 审计；v3 migration 前自动快照与计数不变量检查通过。
+- [x] SQLite schema v5：持久 Batch、任务幂等键、最多 100,000 项的稳定 Selection Snapshot、逐任务 Bulk Action 审计及追加式 Revalidation 证据；v3/v4 migration 前自动快照与不变量检查通过。
 - [x] CLI `jobs batches|select|selection|bulk` 与 Desktop 筛选后批量 Retry/Resume/Cancel 复用 `BulkJobService`；`batch-images` 返回持久 `batch_id`。
 - [x] CLI `convert --queue-only --idempotency-key` 与 Desktop 入队重试使用原子幂等入队；两个独立连接并发重放最终只有一个 Queued Job。
 - [x] Core `ConversionService` 与 `ReportService` 统一 CLI/Desktop 即时转换和所有 CLI/Desktop 队列报告；CLI 重复 Planner 已删除，报告在终态前原子持久化。
-- [x] `ApplicationStateService`：版本化 manifest、逐成员 SHA-256/路径/大小验证、SQLite+presets+settings+registry identity+可选 reports，恢复前完整 safety bundle 与中断 journal 回滚；CLI 磁盘 E2E 通过。
+- [x] `ApplicationStateService`：版本化 manifest、逐成员 SHA-256/路径/大小验证、SQLite+presets+settings+registry identity+可选原始 report 文件，恢复前完整 safety bundle 与中断 journal 回滚；追加式 revalidation 审计属于 SQLite，始终随数据库备份；CLI 磁盘 E2E 通过。
 - [x] 多进程队列所有权：持久批次 round-robin 窗口、`Queued → Inspecting` immediate-transaction 原子认领、`contended` 对账；四个 CLI 进程对 24 项只启动 24 次引擎并生成 24 份输出/报告。
 - [x] 真实强退恢复：在 `Running` 且 partial 已写入时定向终止进程树；recover 精确中断 1 项并清理 1 个 partial，resume 后完成、源 hash 不变、独立 ffprobe 通过。
 - [x] 10,000 mixed release gate：9,600 JSON→YAML + 200 PNG→WebP + 200 MKV→MP4；首窗口 86/85/85，批次首启差 1.791s，P50/P95 137.533/193.880s，49.762 jobs/s，控制面 RSS 70,877,184、WAL 峰值 48,092,792 bytes；20 个合法格式内容变化逐项确认为 `INPUT_CHANGED`，修复后全部完成，10,000 输出/报告、400 独立 probe、0 partial。
@@ -191,7 +191,7 @@
 - [x] **R-006 长生命周期与取消收口**：`run_window` 用结构化 `select` 取代悬挂 cancellation linker；64 窗口 task 计数、两种运行中 pause、外部取消 drain、report/SQLite failure、worker panic 与 Windows 真实父子进程树/partial 清理均有回归。锁 poison、窗口关闭和进程强退的 Desktop 端到端恢复继续归入 Gate 2。
 - [x] **R-007 Desktop 实时队列访问**：队列窗口使用独立 WAL/busy-timeout 连接，UI 保留短事务连接；窗口运行中 list/paging/queue-only 并发回归通过，新任务留待下一窗口；RAII lease 防止双 runner 并在所有退出路径清除控制状态。
 - [x] SQLite 多连接并发预约/transition/queue claim 竞态：mutation 使用 immediate writer transaction + 5 秒 busy timeout；同输出、同 transition 与同 queued Job 都只有一个赢家。四进程 24 项 exact-once 和一次真实 kill/recover/resume 已通过；长时掉电 soak 仍归 release evidence。
-- [x] 任务级幂等 key、批次模型、稳定 selection query 和批量动作审计；schema v4、v3 自动快照、Core/CLI/Desktop 与完整性不变量有直接证据。
+- [x] 任务级幂等 key、批次模型、稳定 selection query、批量动作审计和追加式 revalidation 证据；schema v5、v3/v4 自动快照、Core/CLI/Desktop 与完整性不变量有直接证据。
 - [x] immediate pause 的运行中恢复语义与未准入保持 queued 已有回归；finish-current 的真正运行中时序与更长生命周期/真实子进程断言归入 R-006。
 - [x] 10,000 混合图片/媒体/数据 small-file 负载：记录吞吐、公平性、P50/P95 队列延迟、RSS、临时空间、DB/WAL，并注入/恢复 20 个输入变化；高分辨率及 PDF/Office/document 扩展仍待认证。
 - [ ] 真实物理 10 GiB 顺序读写门禁、低内存机器、磁盘满、权限丢失、目标卷消失和 removable drive。
@@ -205,7 +205,7 @@
 - [x] 文件夹作为一等输入，展示枚举/跳过/目录映射预览；单批最多 10,000 个不可变 Plan，提交前重检磁盘预算并原子入队。
 - [x] 桌面真正执行持久队列：队列级开始、finish-current pause、可恢复 immediate pause、启动恢复摘要，以及单任务和筛选后的批量 Resume/Retry/Cancel 已落地。
 - [ ] 状态筛选、搜索、分页/虚拟化、稳定选择、批量重试失败项、跳过完成项：SQLite 路径/状态/批次筛选、有界分页、稳定选择和批量动作已完成；只剩超长列表虚拟化。
-- [ ] “仅重新验证”和手动 partial 清理入口；任务配方/ValidationReport 安全导出、报告路径脱敏以及从可信 job_id 打开输出已完成。
+- [ ] 手动 partial 清理入口；“仅重新验证”、任务配方/ValidationReport 安全导出、报告路径脱敏以及从可信 job_id 打开输出已完成。Revalidation 不重跑转换、不改输出或原转换终态，证据追加到 SQLite v5 历史。
 - [ ] 逐阶段进度、速度、ETA 置信度和调度原因；不伪造引擎无法提供的百分比。
 - [x] 启动恢复横幅：展示启动中断恢复数、精确 staging 清理数、各持久状态与可恢复总数；可直接进入按状态/批次筛选的任务页处理。
 - [ ] 密码/秘密专用提示，不写入 Plan、日志、SQLite、历史或报告。
@@ -487,7 +487,7 @@ flowchart LR
 | Output | 用户目标同卷 partial | 验证后冲突复检与 rename | 失败不伪装成最终输出 |
 | Local evidence | `.artifacts/` | 测试生成、Git ignore | 发布只附脱敏摘要/hash |
 
-SQLite v4 已实现 `batches`、`batch_members`、`selection_snapshots` 与幂等/批量审计；`job_dependencies` 和通用 migration registry 仍待后续。产品继续保持 SQLite 单机架构，不引入 Redis/Postgres；多进程执行通过数据库 immediate writer 与原子状态认领协调，Maintenance 仍需独占入口，不把它误称为分布式 lease。
+SQLite v5 已实现 `batches`、`batch_members`、`selection_snapshots`、幂等/批量审计与 `job_revalidations` 追加式证据；`job_dependencies` 和通用 migration registry 仍待后续。产品继续保持 SQLite 单机架构，不引入 Redis/Postgres；多进程执行通过数据库 immediate writer 与原子状态认领协调，Maintenance 仍需独占入口，不把它误称为分布式 lease。
 
 ## 9. 安全架构
 
@@ -574,7 +574,7 @@ API 不直接接受宿主任意路径。请求引用预先授权的 workspace/ro
 - [ ] 阶段/速度/ETA/调度原因；启动恢复横幅与精确 partial cleanup 已完成。
 - [x] 文件夹批次磁盘空间预检。
 - [x] 报告/配方导出与打开输出；导出有 16 MiB 上限、默认报告路径脱敏、原子 no-clobber，打开路径由后端按 job_id 查询。
-- [ ] revalidate。
+- [x] validation-only revalidate：复用不可变 Plan 与各格式验证器，不执行转换、不修改输出；输入变化拒绝，结果作为 SQLite v5 追加证据原子保存，原始转换报告/终态不变。
 - [ ] Windows Explorer 集成；macOS/Linux 入口只在对应平台通过后启用。
 - [ ] secret prompt 与全链路 redaction。
 - [ ] 键盘、UIA、Narrator/VoiceOver/Orca、高 DPI/zoom/RTL 自动与人工矩阵。
@@ -825,7 +825,7 @@ API 不直接接受宿主任意路径。请求引用预先授权的 workspace/ro
 
 - 永不修改或删除用户源文件；输出、应用状态和测试证据使用不同保留策略。
 - SQLite 每次 schema migration 前自动创建已验证快照，默认保留最近 5 个；CLI 可将便携 SQLite 备份导出到自选目录。Presets/Engine Registry/Settings 的逐项 migration 前快照仍待统一。
-- SQLite online backup、一致性检查、安全恢复与应用状态整包已完成；整包覆盖 presets、engine registry identity、设置和可选报告，第三方引擎二进制不盲目复制并返回恢复警告。
+- SQLite online backup、一致性检查、安全恢复与应用状态整包已完成；整包覆盖 presets、engine registry identity、设置和可选原始报告文件，SQLite 内的 revalidation 审计始终包含；第三方引擎二进制不盲目复制并返回恢复警告。
 - SQLite restore 已先复制到临时库、运行 migration preflight、`integrity_check`/外键/队列引用校验，显式 `--yes` 后以 SQLite backup transaction 切换；完整应用数据目录的原子切换仍待整包实现。
 - 检测非正常退出后运行轻量完整性检查；完整检查、compact 和清理必须显式触发且可取消。
 

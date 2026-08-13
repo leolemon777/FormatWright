@@ -31,8 +31,15 @@ report_job=queued_job_id report_status=pass last_event=VALIDATION_FINISHED
 
 Both use an explicit state DB; reports live in its sibling `reports/` directory. This makes the output/report/job relationship inspectable and suitable for the later application-state bundle.
 
+## Validation-only and export follow-up
+
+- Report export is bounded to 16 MiB, defaults to path redaction, and publishes with no-overwrite semantics. Immutable recipes use the same bounded export boundary.
+- Validation-only reopens the original input and existing output, reuses the format validators, and never executes conversion or commit steps. Changed input is rejected; changed output is reported without mutation.
+- Each validation-only result is appended to SQLite schema v5. The original report file, original conversion terminal state, and conversion event history remain unchanged; Desktop report view/export select the newest evidence.
+- Application-state bundles keep original report files opt-in. Revalidation evidence is an audit table inside SQLite and therefore follows every database backup even when original report files are excluded.
+
 ## Remaining work
 
-- Add validation-only/revalidate and redacted report export use cases.
-- Complete application-state bundle policy for optional reports.
+- Repeat surface-equivalence E2E for every Certified route and platform.
+- Add a browsable revalidation-history surface if operators need more than the newest evidence.
 - Repeat surface-equivalence E2E for every Certified route and platform.

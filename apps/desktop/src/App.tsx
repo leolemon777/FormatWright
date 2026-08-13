@@ -314,7 +314,7 @@ export default function App() {
   const [preserveAllStreams, setPreserveAllStreams] = useState(true);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [report, setReport] = useState<ValidationReport | null>(null);
-  const [reportBusy, setReportBusy] = useState<"report" | "recipe" | "reveal" | null>(null);
+  const [reportBusy, setReportBusy] = useState<"report" | "recipe" | "reveal" | "revalidate" | null>(null);
   const [reportNotice, setReportNotice] = useState<string | null>(null);
   const [redactReportPaths, setRedactReportPaths] = useState(true);
   const [jobs, setJobs] = useState<JobRecord[]>([]);
@@ -1092,6 +1092,22 @@ export default function App() {
     }
   }
 
+  async function revalidateJob() {
+    if (!report) return;
+    setError(null);
+    setReportNotice(null);
+    setReportBusy("revalidate");
+    try {
+      setReport(await invoke<ValidationReport>("revalidate_desktop_job", { jobId: report.job_id }));
+      await refreshJobs();
+      setReportNotice(copy.revalidatedReport);
+    } catch (reason) {
+      setError(parseDesktopError(reason));
+    } finally {
+      setReportBusy(null);
+    }
+  }
+
   async function refreshEngines() {
     if (!("__TAURI_INTERNALS__" in window)) return;
     setError(null);
@@ -1317,7 +1333,7 @@ export default function App() {
 
       {tab === "reports" && (
         <section className="page-card">
-          <div className="page-heading"><div><p className="section-label">VALIDATION</p><h1>{copy.report}</h1></div>{report && <div className="heading-actions"><button className="secondary" type="button" disabled={reportBusy !== null} onClick={revealOutput}>{reportBusy === "reveal" ? copy.openingOutput : copy.openOutput}</button><button type="button" disabled={reportBusy !== null} onClick={exportRecipe}>{reportBusy === "recipe" ? copy.exportingRecipe : copy.exportRecipe}</button><button className="primary" type="button" disabled={reportBusy !== null} onClick={exportReport}>{reportBusy === "report" ? copy.exportingReport : copy.exportReport}</button><span className={`report-status report-${report.status}`}>{report.status}</span></div>}</div>
+          <div className="page-heading"><div><p className="section-label">VALIDATION</p><h1>{copy.report}</h1></div>{report && <div className="heading-actions"><button className="secondary" type="button" disabled={reportBusy !== null} onClick={revealOutput}>{reportBusy === "reveal" ? copy.openingOutput : copy.openOutput}</button><button type="button" disabled={reportBusy !== null} onClick={revalidateJob}>{reportBusy === "revalidate" ? copy.revalidatingReport : copy.revalidateReport}</button><button type="button" disabled={reportBusy !== null} onClick={exportRecipe}>{reportBusy === "recipe" ? copy.exportingRecipe : copy.exportRecipe}</button><button className="primary" type="button" disabled={reportBusy !== null} onClick={exportReport}>{reportBusy === "report" ? copy.exportingReport : copy.exportReport}</button><span className={`report-status report-${report.status}`}>{report.status}</span></div>}</div>
           {report && <label className="checkbox-control report-export-option"><input type="checkbox" checked={redactReportPaths} onChange={(event) => setRedactReportPaths(event.target.checked)} />{copy.redactReportPaths}</label>}
           {reportNotice && <p className="success-notice" role="status" aria-live="polite">{reportNotice}</p>}
           {!report ? <p className="empty">{copy.noReport}</p> : <ReportView report={report} copy={copy} />}

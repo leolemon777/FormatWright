@@ -11,7 +11,7 @@ use rusqlite::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::domain::{JobState, Plan, SCHEMA_VERSION};
+use crate::domain::{JobState, Plan, SCHEMA_VERSION, ValidationStatus};
 use crate::error::{ErrorCode, FormatWrightError, Result, Stage};
 use crate::maintenance::automatic_snapshot_before_migration;
 
@@ -53,6 +53,15 @@ pub struct JobDetails {
     pub job: JobRecord,
     pub plan: Plan,
     pub events: Vec<JobEventRecord>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct RevalidationRecord {
+    pub id: Uuid,
+    pub job_id: Uuid,
+    pub status: ValidationStatus,
+    pub report: crate::domain::ValidationReport,
+    pub created_unix_ms: i64,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -249,7 +258,8 @@ impl SqliteJobStore {
             )
             .map_err(storage_error)?;
         self.migrate_output_reservation_identity()?;
-        self.migrate_batch_selection_schema()
+        self.migrate_batch_selection_schema()?;
+        self.migrate_revalidation_schema()
     }
 
     fn migrate_output_reservation_identity(&mut self) -> Result<()> {
@@ -389,6 +399,44 @@ impl SqliteJobStore {
         transaction
             .execute(
                 "INSERT INTO schema_migrations(version, applied_unix_ms) VALUES (4, ?1)",
+                [now_unix_ms()],
+            )
+            .map_err(storage_error)?;
+        transaction.commit().map_err(storage_error)
+    }
+
+    fn migrate_revalidation_schema(&mut self) -> Result<()> {
+        let already_applied = self
+            .connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = 5)",
+                [],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(storage_error)?;
+        if already_applied {
+            return Ok(());
+        }
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(storage_error)?;
+        transaction
+            .execute_batch(
+                "CREATE TABLE job_revalidations (
+                     id TEXT PRIMARY KEY,
+                     job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+                     status TEXT NOT NULL,
+                     report_json TEXT NOT NULL,
+                     created_unix_ms INTEGER NOT NULL
+                 );
+                 CREATE INDEX idx_job_revalidations_job_created
+                     ON job_revalidations(job_id, created_unix_ms DESC);",
+            )
+            .map_err(storage_error)?;
+        transaction
+            .execute(
+                "INSERT INTO schema_migrations(version, applied_unix_ms) VALUES (5, ?1)",
                 [now_unix_ms()],
             )
             .map_err(storage_error)?;
@@ -898,6 +946,153 @@ impl SqliteJobStore {
             created_unix_ms: row.5,
             updated_unix_ms: now,
         })
+    }
+
+    /// Appends validation-only evidence without changing conversion truth.
+    ///
+    /// # Errors
+    ///
+    /// Returns a storage, serialization, or policy error for missing,
+    /// non-terminal, mismatched, or oversized evidence.
+    pub fn record_revalidation(
+        &mut self,
+        job_id: Uuid,
+        report: &crate::domain::ValidationReport,
+    ) -> Result<RevalidationRecord> {
+        if report.job_id != job_id {
+            return Err(FormatWrightError::new(
+                ErrorCode::InputInvalid,
+                Stage::Validate,
+                "Revalidation report belongs to another job",
+                "Record the report under its own Job ID.",
+            ));
+        }
+        let report_json = serde_json::to_string(report).map_err(|error| {
+            FormatWrightError::new(
+                ErrorCode::StorageFailed,
+                Stage::Validate,
+                "Revalidation report could not be serialized",
+                "Retry validation-only or restore a valid Plan.",
+            )
+            .with_diagnostic(error.to_string())
+        })?;
+        if report_json.len() > 16 * 1024 * 1024 {
+            return Err(FormatWrightError::new(
+                ErrorCode::ResourceExhausted,
+                Stage::Validate,
+                "Revalidation report exceeds the 16 MiB limit",
+                "Reduce diagnostic detail before recording validation evidence.",
+            ));
+        }
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(storage_error)?;
+        let row = transaction
+            .query_row(
+                "SELECT state, plan_hash
+                 FROM jobs WHERE id = ?1",
+                [job_id.to_string()],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()
+            .map_err(storage_error)?
+            .ok_or_else(|| {
+                FormatWrightError::new(
+                    ErrorCode::StorageFailed,
+                    Stage::Store,
+                    format!("Job does not exist: {job_id}"),
+                    "Refresh the job list.",
+                )
+            })?;
+        let state = parse_state(&row.0)?;
+        if !matches!(
+            state,
+            JobState::Completed | JobState::Warning | JobState::Failed
+        ) {
+            return Err(FormatWrightError::new(
+                ErrorCode::PolicyBlocked,
+                Stage::Validate,
+                "Only terminal jobs with an output can record revalidation evidence",
+                "Finish the conversion successfully before running validation-only.",
+            ));
+        }
+        if report.plan_hash != row.1 {
+            return Err(FormatWrightError::new(
+                ErrorCode::InputChanged,
+                Stage::Validate,
+                "Revalidation report does not match the stored immutable Plan",
+                "Refresh the job and run validation-only again.",
+            ));
+        }
+        let id = Uuid::new_v4();
+        let now = now_unix_ms();
+        transaction
+            .execute(
+                "INSERT INTO job_revalidations(
+                    id, job_id, status, report_json, created_unix_ms
+                 ) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    id.to_string(),
+                    job_id.to_string(),
+                    validation_status_name(report.status),
+                    report_json,
+                    now
+                ],
+            )
+            .map_err(storage_error)?;
+        transaction.commit().map_err(storage_error)?;
+        Ok(RevalidationRecord {
+            id,
+            job_id,
+            status: report.status,
+            report: report.clone(),
+            created_unix_ms: now,
+        })
+    }
+
+    /// Loads the newest validation-only evidence for a job.
+    ///
+    /// # Errors
+    ///
+    /// Returns a storage or serialization error when the record is invalid.
+    pub fn latest_revalidation(&self, job_id: Uuid) -> Result<Option<RevalidationRecord>> {
+        self.connection
+            .query_row(
+                "SELECT id, status, report_json, created_unix_ms
+                 FROM job_revalidations WHERE job_id = ?1
+                 ORDER BY created_unix_ms DESC, rowid DESC LIMIT 1",
+                [job_id.to_string()],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, i64>(3)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(storage_error)?
+            .map(|row| {
+                let report = serde_json::from_str(&row.2).map_err(|error| {
+                    FormatWrightError::new(
+                        ErrorCode::StorageFailed,
+                        Stage::Validate,
+                        "Stored revalidation report is invalid",
+                        "Restore a consistent application-state backup.",
+                    )
+                    .with_diagnostic(error.to_string())
+                })?;
+                Ok(RevalidationRecord {
+                    id: parse_job_id(&row.0)?,
+                    job_id,
+                    status: parse_validation_status(&row.1)?,
+                    report,
+                    created_unix_ms: row.3,
+                })
+            })
+            .transpose()
     }
 
     /// Loads one job by ID.
@@ -2471,6 +2666,30 @@ fn state_name(state: JobState) -> &'static str {
     }
 }
 
+const fn validation_status_name(status: ValidationStatus) -> &'static str {
+    match status {
+        ValidationStatus::Pass => "pass",
+        ValidationStatus::Warning => "warning",
+        ValidationStatus::Fail => "fail",
+        ValidationStatus::Unknown => "unknown",
+    }
+}
+
+fn parse_validation_status(value: &str) -> Result<ValidationStatus> {
+    match value {
+        "pass" => Ok(ValidationStatus::Pass),
+        "warning" => Ok(ValidationStatus::Warning),
+        "fail" => Ok(ValidationStatus::Fail),
+        "unknown" => Ok(ValidationStatus::Unknown),
+        _ => Err(FormatWrightError::new(
+            ErrorCode::StorageFailed,
+            Stage::Validate,
+            format!("Unknown stored validation status: {value}"),
+            "Restore a consistent application-state backup.",
+        )),
+    }
+}
+
 fn parse_state(value: &str) -> Result<JobState> {
     match value {
         "queued" => Ok(JobState::Queued),
@@ -2544,7 +2763,9 @@ mod tests {
     #[cfg(windows)]
     use super::reservation_key;
     use super::{BulkJobAction, JobCreateRequest, JobSelectionQuery, SqliteJobStore};
-    use crate::domain::{ChangeSet, JobState, NetworkPolicy, Plan, SCHEMA_VERSION};
+    use crate::domain::{
+        ChangeSet, JobState, NetworkPolicy, Plan, SCHEMA_VERSION, ValidationStatus,
+    };
     use crate::{BulkJobService, ErrorCode};
 
     fn plan() -> Plan {
@@ -2570,6 +2791,32 @@ mod tests {
         plan
     }
 
+    fn validation_report(job_id: Uuid, status: ValidationStatus) -> crate::ValidationReport {
+        let artifact = crate::ArtifactSummary {
+            display_path: None,
+            format_id: "mp4".to_owned(),
+            size_bytes: 1,
+            fast_fingerprint: "fwfp-v1:test".to_owned(),
+            full_blake3: None,
+        };
+        crate::ValidationReport {
+            schema_version: SCHEMA_VERSION,
+            report_id: Uuid::new_v4(),
+            job_id,
+            plan_hash: "blake3:test".to_owned(),
+            status,
+            input: artifact.clone(),
+            output: artifact,
+            engines: Vec::new(),
+            checks: Vec::new(),
+            intentional_changes: Vec::new(),
+            redaction: crate::ReportRedaction {
+                paths_redacted: true,
+                metadata_values_redacted: true,
+            },
+        }
+    }
+
     #[test]
     fn transitions_are_transactional_and_ordered() {
         let mut store = SqliteJobStore::open_in_memory().expect("in-memory store");
@@ -2590,6 +2837,55 @@ mod tests {
             .transition(job.id, JobState::Completed, "VALIDATION_PASSED")
             .expect("complete job");
         assert_eq!(completed.sequence, 3);
+    }
+
+    #[test]
+    fn revalidation_history_is_append_only_and_preserves_conversion_state() {
+        let mut store = SqliteJobStore::open_in_memory().expect("in-memory store");
+        let job = store
+            .create_job("input.mkv", "output.mp4", &plan())
+            .expect("create job");
+        store
+            .transition(job.id, JobState::Running, "ENGINE_STARTED")
+            .expect("start job");
+        store
+            .transition(job.id, JobState::Validating, "ENGINE_FINISHED")
+            .expect("validate job");
+        store
+            .transition(job.id, JobState::Completed, "VALIDATION_PASSED")
+            .expect("complete job");
+
+        let failed_report = validation_report(job.id, ValidationStatus::Fail);
+        let failed = store
+            .record_revalidation(job.id, &failed_report)
+            .expect("record changed output");
+        assert_eq!(failed.status, ValidationStatus::Fail);
+        assert_eq!(
+            store
+                .get_job(job.id)
+                .expect("job")
+                .expect("stored job")
+                .state,
+            JobState::Completed
+        );
+        let passed_report = validation_report(job.id, ValidationStatus::Pass);
+        let passed = store
+            .record_revalidation(job.id, &passed_report)
+            .expect("record restored output");
+        assert_eq!(passed.status, ValidationStatus::Pass);
+
+        let latest = store
+            .latest_revalidation(job.id)
+            .expect("latest")
+            .expect("stored evidence");
+        assert_eq!(latest.id, passed.id);
+        assert_eq!(latest.report, passed_report);
+        let details = store
+            .get_job_details(job.id)
+            .expect("details")
+            .expect("job");
+        assert_eq!(details.job.state, JobState::Completed);
+        assert_eq!(details.events.len(), 4);
     }
 
     #[test]
@@ -3372,7 +3668,10 @@ mod tests {
         let legacy_plan_json = serde_json::to_string(&legacy_plan).expect("serialize legacy Plan");
         let legacy = rusqlite::Connection::open(&database_path).expect("open legacy database");
         legacy
-            .execute("DELETE FROM schema_migrations WHERE version IN (3, 4)", [])
+            .execute(
+                "DELETE FROM schema_migrations WHERE version IN (3, 4, 5)",
+                [],
+            )
             .expect("remove migration marker");
         for (job_id, output) in [(first_id, &first_output), (second_id, &second_output)] {
             legacy

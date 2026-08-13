@@ -17,9 +17,10 @@ use formatwright_core::{
     FolderMappingEntry, IntegrityReport, JobCreateRequest, JobExecutionService, JobQueryPage,
     JobRecord, JobSelectionQuery, JobState, JobStateCount, MaintenanceService, MaintenanceStatus,
     PRESET_SCHEMA_VERSION, Plan, PlanRequest, PresetLibrary, Probe, QueueRunReport,
-    QueueWindowControl, ReportService, SelectionSnapshot, SqliteJobStore, StateBundleBackupReport,
-    StateBundleOptions, StateBundlePreflightReport, ValidationReport, VerifiedEnginePack,
-    activate_engine_pack, capability_snapshot_for_input, cleanup_staged_output, prepare_conversion,
+    QueueWindowControl, ReportService, RevalidationService, SelectionSnapshot, SqliteJobStore,
+    StateBundleBackupReport, StateBundleOptions, StateBundlePreflightReport, ValidationReport,
+    VerifiedEnginePack, activate_engine_pack, capability_snapshot_for_input, cleanup_staged_output,
+    prepare_conversion,
 };
 use queue_bridge::{DEFAULT_BATCH_JOBS, DEFAULT_BENCHMARK_JOBS, QueueBatchIter};
 use serde::{Deserialize, Serialize};
@@ -43,6 +44,7 @@ struct DesktopState {
     startup_recovery: DesktopStartupRecovery,
     operation_gate: Mutex<DesktopOperationGate>,
     folder_previews: Mutex<HashMap<Uuid, DesktopFolderPreviewCache>>,
+    revalidations: Mutex<HashSet<Uuid>>,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -149,6 +151,31 @@ struct DesktopFolderQueueResult {
 struct DesktopOperationLease<'a> {
     gate: &'a Mutex<DesktopOperationGate>,
     exclusive: bool,
+}
+
+struct DesktopRevalidationLease<'a> {
+    active: &'a Mutex<HashSet<Uuid>>,
+    job_id: Uuid,
+}
+
+impl Drop for DesktopRevalidationLease<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut active) = self.active.lock() {
+            active.remove(&self.job_id);
+        }
+    }
+}
+
+fn acquire_revalidation(
+    active: &Mutex<HashSet<Uuid>>,
+    job_id: Uuid,
+) -> Result<DesktopRevalidationLease<'_>, String> {
+    let mut current = lock(active)?;
+    if !current.insert(job_id) {
+        return Err("this job is already being revalidated".to_owned());
+    }
+    drop(current);
+    Ok(DesktopRevalidationLease { active, job_id })
 }
 
 impl Drop for DesktopOperationLease<'_> {
@@ -1063,6 +1090,12 @@ fn get_desktop_report(
     job_id: String,
 ) -> Result<Option<ValidationReport>, String> {
     let job_id = Uuid::parse_str(&job_id).map_err(|error| error.to_string())?;
+    if let Some(record) = lock(&state.store)?
+        .latest_revalidation(job_id)
+        .map_err(serialize_error)?
+    {
+        return Ok(Some(record.report));
+    }
     ReportService::new(&state.reports_directory)
         .read(job_id)
         .map_err(serialize_error)
@@ -1077,10 +1110,17 @@ fn export_desktop_report(
     redact_paths: Option<bool>,
 ) -> Result<u64, String> {
     let job_id = Uuid::parse_str(&job_id).map_err(|error| error.to_string())?;
-    let report = ReportService::new(&state.reports_directory)
-        .read(job_id)
+    let report = if let Some(record) = lock(&state.store)?
+        .latest_revalidation(job_id)
         .map_err(serialize_error)?
-        .ok_or_else(|| serialize_error(desktop_missing_job_artifact("ValidationReport")))?;
+    {
+        record.report
+    } else {
+        ReportService::new(&state.reports_directory)
+            .read(job_id)
+            .map_err(serialize_error)?
+            .ok_or_else(|| serialize_error(desktop_missing_job_artifact("ValidationReport")))?
+    };
     let report = report_for_export(report, redact_paths.unwrap_or(true));
     let bytes = serde_json::to_vec_pretty(&report).map_err(|error| {
         serialize_error(desktop_export_error(
@@ -1135,6 +1175,59 @@ fn reveal_desktop_job_output(
         .map_err(serialize_error)?
         .ok_or_else(|| serialize_error(desktop_missing_job_artifact("job")))?;
     reveal_existing_output(&job.output_path).map_err(serialize_error)
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+async fn revalidate_desktop_job(
+    state: tauri::State<'_, DesktopState>,
+    job_id: String,
+) -> Result<ValidationReport, String> {
+    let _operation = acquire_active_operation(&state.operation_gate)?;
+    let job_id = Uuid::parse_str(&job_id).map_err(|error| error.to_string())?;
+    let _revalidation = acquire_revalidation(&state.revalidations, job_id)?;
+    let details = lock(&state.store)?
+        .get_job_details(job_id)
+        .map_err(serialize_error)?
+        .ok_or_else(|| serialize_error(desktop_missing_job_artifact("job")))?;
+    if !matches!(
+        details.job.state,
+        JobState::Completed | JobState::Warning | JobState::Failed
+    ) {
+        return Err(serialize_error(desktop_export_error(
+            formatwright_core::ErrorCode::PolicyBlocked,
+            "Only completed, warning, or validation-failed jobs can be revalidated",
+            "Finish the conversion successfully before running validation-only.",
+            None,
+        )));
+    }
+    let original_report = ReportService::new(&state.reports_directory)
+        .read(job_id)
+        .map_err(serialize_error)?
+        .ok_or_else(|| serialize_error(desktop_missing_job_artifact("ValidationReport")))?;
+    if original_report.plan_hash != details.job.plan_hash
+        || details.plan.plan_hash != details.job.plan_hash
+    {
+        return Err(serialize_error(desktop_export_error(
+            formatwright_core::ErrorCode::InputChanged,
+            "Stored conversion evidence does not match the immutable Plan",
+            "Run an integrity check and restore a consistent application-state backup.",
+            None,
+        )));
+    }
+    let report = RevalidationService::revalidate(
+        &details.job.input_path,
+        &details.job.output_path,
+        &details.plan,
+        job_id,
+        CancellationToken::new(),
+    )
+    .await
+    .map_err(serialize_error)?;
+    lock(&state.store)?
+        .record_revalidation(job_id, &report)
+        .map_err(serialize_error)?;
+    Ok(report)
 }
 
 #[tauri::command]
@@ -1982,6 +2075,7 @@ fn setup_desktop(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>>
         startup_recovery,
         operation_gate: Mutex::new(DesktopOperationGate::default()),
         folder_previews: Mutex::new(HashMap::new()),
+        revalidations: Mutex::new(HashSet::new()),
     });
     Ok(())
 }
@@ -2028,6 +2122,7 @@ pub fn run() {
             export_desktop_report,
             export_desktop_recipe,
             reveal_desktop_job_output,
+            revalidate_desktop_job,
             list_desktop_presets,
             save_desktop_preset,
             delete_desktop_preset,

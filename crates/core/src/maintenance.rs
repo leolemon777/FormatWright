@@ -12,7 +12,7 @@ use uuid::Uuid;
 use crate::error::{ErrorCode, FormatWrightError, Result, Stage};
 use crate::job_store::SqliteJobStore;
 
-pub(crate) const DATABASE_SCHEMA_VERSION: i64 = 4;
+pub(crate) const DATABASE_SCHEMA_VERSION: i64 = 5;
 const BACKUP_PAGES_PER_STEP: i32 = 128;
 const BACKUP_STEP_PAUSE: Duration = Duration::from_millis(5);
 const BACKUP_BUSY_TIMEOUT: Duration = Duration::from_secs(30);
@@ -633,6 +633,9 @@ fn application_issues(connection: &Connection) -> Result<Vec<String>> {
          )",
         false,
     )?;
+    if table_exists(connection, "job_revalidations")? {
+        append_revalidation_issues(connection, &mut issues)?;
+    }
     append_count_issue(
         connection,
         &mut issues,
@@ -717,6 +720,53 @@ fn application_issues(connection: &Connection) -> Result<Vec<String>> {
     Ok(issues)
 }
 
+fn append_revalidation_issues(connection: &Connection, issues: &mut Vec<String>) -> Result<()> {
+    let mut statement = connection
+        .prepare(
+            "SELECT revalidation.id, revalidation.job_id, revalidation.status,
+                    revalidation.report_json, jobs.state, jobs.plan_hash
+             FROM job_revalidations AS revalidation
+             JOIN jobs ON jobs.id = revalidation.job_id",
+        )
+        .map_err(storage_error)?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, String>(5)?,
+            ))
+        })
+        .map_err(storage_error)?;
+    for row in rows {
+        let (id, job_id, status, report_json, job_state, plan_hash) = row.map_err(storage_error)?;
+        let valid = serde_json::from_str::<crate::domain::ValidationReport>(&report_json)
+            .is_ok_and(|report| {
+                report.job_id.to_string() == job_id
+                    && report.plan_hash == plan_hash
+                    && validation_status_name(report.status) == status
+            });
+        if !matches!(job_state.as_str(), "completed" | "warning" | "failed") || !valid {
+            issues.push(format!(
+                "revalidation {id} has inconsistent job/report identity"
+            ));
+        }
+    }
+    Ok(())
+}
+
+const fn validation_status_name(status: crate::domain::ValidationStatus) -> &'static str {
+    match status {
+        crate::domain::ValidationStatus::Pass => "pass",
+        crate::domain::ValidationStatus::Warning => "warning",
+        crate::domain::ValidationStatus::Fail => "fail",
+        crate::domain::ValidationStatus::Unknown => "unknown",
+    }
+}
+
 fn append_count_issue(
     connection: &Connection,
     issues: &mut Vec<String>,
@@ -737,16 +787,7 @@ fn append_count_issue(
 }
 
 fn schema_version(connection: &Connection) -> Result<i64> {
-    let has_migrations = connection
-        .query_row(
-            "SELECT EXISTS(
-                SELECT 1 FROM sqlite_schema
-                WHERE type = 'table' AND name = 'schema_migrations'
-            )",
-            [],
-            |row| row.get::<_, bool>(0),
-        )
-        .map_err(storage_error)?;
+    let has_migrations = table_exists(connection, "schema_migrations")?;
     if !has_migrations {
         return Ok(0);
     }
@@ -756,6 +797,19 @@ fn schema_version(connection: &Connection) -> Result<i64> {
         })
         .map_err(storage_error)
         .map(Option::unwrap_or_default)
+}
+
+fn table_exists(connection: &Connection, table: &str) -> Result<bool> {
+    connection
+        .query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM sqlite_schema
+                WHERE type = 'table' AND name = ?1
+            )",
+            [table],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(storage_error)
 }
 
 fn ensure_supported_schema(version: i64) -> Result<()> {
@@ -1063,12 +1117,18 @@ fn maintenance_error(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::fs;
 
     use rusqlite::Connection;
     use tempfile::tempdir;
+    use uuid::Uuid;
 
     use super::{DATABASE_SCHEMA_VERSION, MaintenanceService};
+    use crate::domain::{
+        ArtifactSummary, ChangeSet, JobState, NetworkPolicy, Plan, ReportRedaction, SCHEMA_VERSION,
+        ValidationReport, ValidationStatus,
+    };
     use crate::job_store::SqliteJobStore;
 
     #[test]
@@ -1222,6 +1282,89 @@ mod tests {
     }
 
     #[test]
+    fn application_integrity_detects_tampered_revalidation_evidence() {
+        let directory = tempdir().expect("temp directory");
+        let database = directory.path().join("jobs.sqlite3");
+        let mut store = SqliteJobStore::open(&database).expect("initialize database");
+        let mut plan = Plan {
+            schema_version: SCHEMA_VERSION,
+            plan_id: Uuid::new_v4(),
+            plan_hash: String::new(),
+            input_fingerprint: "fwfp-v1:maintenance".to_owned(),
+            target_format: "mp4".to_owned(),
+            constraints: BTreeMap::new(),
+            steps: Vec::new(),
+            changes: ChangeSet::default(),
+            validators: Vec::new(),
+            network_policy: NetworkPolicy::Deny,
+            output_path: Some(directory.path().join("output.mp4")),
+            estimated_output_bytes: None,
+        };
+        plan.plan_hash = crate::planner::deterministic_plan_hash(&plan).expect("plan hash");
+        let job = store
+            .create_job(
+                directory.path().join("input.mkv"),
+                directory.path().join("output.mp4"),
+                &plan,
+            )
+            .expect("job");
+        store
+            .transition(job.id, JobState::Running, "ENGINE_STARTED")
+            .expect("running");
+        store
+            .transition(job.id, JobState::Validating, "ENGINE_FINISHED")
+            .expect("validating");
+        store
+            .transition(job.id, JobState::Completed, "VALIDATION_FINISHED")
+            .expect("completed");
+        let artifact = ArtifactSummary {
+            display_path: None,
+            format_id: "mp4".to_owned(),
+            size_bytes: 1,
+            fast_fingerprint: "fwfp-v1:maintenance".to_owned(),
+            full_blake3: None,
+        };
+        store
+            .record_revalidation(
+                job.id,
+                &ValidationReport {
+                    schema_version: SCHEMA_VERSION,
+                    report_id: Uuid::new_v4(),
+                    job_id: job.id,
+                    plan_hash: plan.plan_hash,
+                    status: ValidationStatus::Pass,
+                    input: artifact.clone(),
+                    output: artifact,
+                    engines: Vec::new(),
+                    checks: Vec::new(),
+                    intentional_changes: Vec::new(),
+                    redaction: ReportRedaction {
+                        paths_redacted: true,
+                        metadata_values_redacted: true,
+                    },
+                },
+            )
+            .expect("revalidation");
+        drop(store);
+        let connection = Connection::open(&database).expect("raw database");
+        connection
+            .execute("UPDATE job_revalidations SET status = 'fail'", [])
+            .expect("tamper evidence");
+        drop(connection);
+
+        let report = MaintenanceService::new(&database)
+            .integrity_check()
+            .expect("integrity report");
+        assert!(!report.ok);
+        assert!(
+            report
+                .application_issues
+                .iter()
+                .any(|issue| issue.contains("revalidation"))
+        );
+    }
+
+    #[test]
     fn restore_preflight_migrates_a_copy_without_touching_the_source() {
         let directory = tempdir().expect("temp directory");
         let live = directory.path().join("live.sqlite3");
@@ -1285,7 +1428,8 @@ mod tests {
                  DROP TABLE job_idempotency_keys;
                  DROP TABLE batch_members;
                  DROP TABLE batches;
-                 DELETE FROM schema_migrations WHERE version = 4;",
+                 DROP TABLE job_revalidations;
+                 DELETE FROM schema_migrations WHERE version IN (4, 5);",
             )
             .expect("downgrade fixture to schema v3");
         drop(connection);
@@ -1317,6 +1461,47 @@ mod tests {
     }
 
     #[test]
+    fn opening_v4_database_snapshots_before_revalidation_schema_migration() {
+        let directory = tempdir().expect("temp directory");
+        let database = directory.path().join("jobs.sqlite3");
+        drop(SqliteJobStore::open(&database).expect("initialize database"));
+        let connection = Connection::open(&database).expect("raw database");
+        connection
+            .execute_batch(
+                "PRAGMA foreign_keys = OFF;
+                 DROP TABLE job_revalidations;
+                 DELETE FROM schema_migrations WHERE version = 5;",
+            )
+            .expect("downgrade fixture to schema v4");
+        drop(connection);
+
+        drop(SqliteJobStore::open(&database).expect("migrate v4 database"));
+
+        let backups = directory
+            .path()
+            .join("backups")
+            .read_dir()
+            .expect("backup directory")
+            .map(|entry| entry.expect("backup entry").path())
+            .collect::<Vec<_>>();
+        assert_eq!(backups.len(), 1);
+        assert_eq!(
+            MaintenanceService::new(&backups[0])
+                .status()
+                .expect("snapshot status")
+                .schema_version,
+            4
+        );
+        assert_eq!(
+            MaintenanceService::new(&database)
+                .status()
+                .expect("migrated status")
+                .schema_version,
+            DATABASE_SCHEMA_VERSION
+        );
+    }
+
+    #[test]
     fn restore_preflight_rejects_a_newer_schema() {
         let directory = tempdir().expect("temp directory");
         let live = directory.path().join("live.sqlite3");
@@ -1326,7 +1511,7 @@ mod tests {
         let connection = Connection::open(&newer).expect("newer connection");
         connection
             .execute(
-                "INSERT INTO schema_migrations(version, applied_unix_ms) VALUES (5, 0)",
+                "INSERT INTO schema_migrations(version, applied_unix_ms) VALUES (6, 0)",
                 [],
             )
             .expect("newer marker");

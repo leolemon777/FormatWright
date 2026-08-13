@@ -25,7 +25,7 @@ mod workflow;
 pub use application::{
     BulkJobService, ConversionRunResult, ConversionService, FolderBatchService, FolderDiskBudget,
     FolderMappingEntry, FolderMappingPlan, JobExecutionService, MAX_FOLDER_BATCH_FILES,
-    QueueRunReport, QueueWindowControl, ReportService,
+    QueueRunReport, QueueWindowControl, ReportService, RevalidationService,
 };
 pub use application_state::{
     APPLICATION_SETTINGS_SCHEMA_VERSION, APPLICATION_STATE_BUNDLE_SCHEMA_VERSION,
@@ -60,7 +60,7 @@ pub use inspect::inspect_media;
 pub use job_store::{
     BatchRecord, BulkActionReport, BulkJobAction, IdempotentJobResult, JobCreateRequest,
     JobDetails, JobEventRecord, JobProgress, JobQueryPage, JobRecord, JobSelectionQuery,
-    JobStateCount, SelectionSnapshot, SqliteJobStore,
+    JobStateCount, RevalidationRecord, SelectionSnapshot, SqliteJobStore,
 };
 pub use maintenance::{
     BackupReport, CompactReport, IntegrityReport, MaintenanceService, MaintenanceStatus,

@@ -692,7 +692,7 @@ async fn wait_for_regular_file(
     }
 }
 
-async fn render_office_pdf_for_validation(
+pub(crate) async fn render_office_pdf_for_validation(
     pdf: &Path,
     probe: &Probe,
     step: &crate::domain::PlanStep,
