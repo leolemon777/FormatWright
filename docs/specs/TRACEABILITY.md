@@ -74,6 +74,8 @@ The immediate-writer reservation/transition races and cross-platform no-clobber 
 
 The schema v4 durable batch, idempotency, stable selection, audited bulk-action, migration, CLI E2E, and Desktop surface evidence is in `docs/testing/BATCH_SELECTION_BULK.md`.
 
+The single Core planner, immediate conversion lifecycle, bounded atomic report persistence, CLI/Desktop convergence, and disk E2E evidence is in `docs/testing/CONVERSION_REPORT_SERVICE.md`.
+
 ## 4. Status values
 
 - Not started

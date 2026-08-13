@@ -21,7 +21,10 @@ pub mod structured;
 pub mod validation;
 mod workflow;
 
-pub use application::{BulkJobService, JobExecutionService, QueueRunReport, QueueWindowControl};
+pub use application::{
+    BulkJobService, ConversionRunResult, ConversionService, JobExecutionService, QueueRunReport,
+    QueueWindowControl, ReportService,
+};
 pub use capabilities::{
     CapabilitySnapshot, RouteAvailability, capability_snapshot_for_input, ensure_route_available,
 };

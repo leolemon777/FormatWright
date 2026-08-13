@@ -18,7 +18,7 @@
 - **未开始**：只有规格或方向，没有可运行实现。
 - **发布阻断**：不完成就不能发布 Public Beta；不是一般优化项。
 
-当前产品结论：**FormatWright 已具备 Windows 自包含开发候选：Release 内嵌并首次启动安装 PDF/Media Starter，生产只解析激活 pack 的精确路径，UI 与后端共同按 capability snapshot 门控；真实 PDF→PNG/JPG、GIF 与结构化链路已在本机通过；R-001 至 R-007 与 R-010 已关闭；SQLite MaintenanceService、v4 持久批次/幂等键/稳定 Selection/Bulk Action 审计，以及 CLI/Desktop 批量入口已完成。** 但这仍不是 Public Beta：R-008/R-009 尚缺离线干净虚拟机、完整引擎 SBOM/许可证与源码义务、可信签名/吊销、升级回滚和正式代码签名证据；Gate 1 的应用状态整包与 Conversion/Report Service、Gate 2–5 仍未完成。不得用于唯一副本或不可替代数据，也不得宣称“已认证”或“正式发布”。
+当前产品结论：**FormatWright 已具备 Windows 自包含开发候选：Release 内嵌并首次启动安装 PDF/Media Starter，生产只解析激活 pack 的精确路径，UI 与后端共同按 capability snapshot 门控；真实 PDF→PNG/JPG、GIF 与结构化链路已在本机通过；R-001 至 R-007 与 R-010 已关闭；SQLite MaintenanceService、v4 持久批次/幂等键/稳定 Selection/Bulk Action 审计、共享 ConversionService/ReportService，以及 CLI/Desktop 批量入口已完成。** 但这仍不是 Public Beta：R-008/R-009 尚缺离线干净虚拟机、完整引擎 SBOM/许可证与源码义务、可信签名/吊销、升级回滚和正式代码签名证据；Gate 1 的应用状态整包与压力证据、Gate 2–5 仍未完成。不得用于唯一副本或不可替代数据，也不得宣称“已认证”或“正式发布”。
 
 ### 1.1 近期进度快照（2026-08-12）
 
@@ -32,7 +32,7 @@
 - [x] Desktop 接入同一执行器：`queue_desktop_conversion`、`run_desktop_queue_window`、`pause_desktop_queue_window`（finish-current / immediate）、`cancel_desktop_queue_window`；Convert「加入队列」、Jobs「运行 / 完成当前后暂停 / 立即停止」。
 - [x] 队列窗口通过 `run_window_observed` 在终态前提交 ValidationReport 文件（Desktop `reports/`）。
 - [x] Core `QueueWindowControl`：finish-current 只停准入；immediate 同时取消活跃 worker。
-- [x] 2026-08-12 最新验证：142 项普通 Rust 测试、6 项前端测试、TypeScript、生产构建、Rustfmt、Clippy、仓库合同与 pnpm production audit 通过；10k release test 按设计默认忽略。
+- [x] 2026-08-12 最新验证：149 项普通 Rust 测试、6 项前端测试、TypeScript、生产构建、Rustfmt、Clippy、仓库合同与 pnpm production audit 通过；10k release test 按设计默认忽略。
 - [x] 初次审查确认仓库没有提交；已用验证后的完整快照建立首个可回滚 Git 基线。
 - [x] 建立首个 Git 基线 `412c475`；Release/Development 引擎隔离提交 `7782e47`。
 - [x] 实现并验证 Release 精确 pack 路径、Windows 脚本包装拒绝、Desktop/Core capability snapshot 双重门控。
@@ -46,6 +46,7 @@
 - [x] SQLite schema v4：持久 Batch、任务幂等键、最多 100,000 项的稳定 Selection Snapshot、逐任务 Bulk Action 审计；v3 migration 前自动快照与计数不变量检查通过。
 - [x] CLI `jobs batches|select|selection|bulk` 与 Desktop 筛选后批量 Retry/Resume/Cancel 复用 `BulkJobService`；`batch-images` 返回持久 `batch_id`。
 - [x] CLI `convert --queue-only --idempotency-key` 与 Desktop 入队重试使用原子幂等入队；两个独立连接并发重放最终只有一个 Queued Job。
+- [x] Core `ConversionService` 与 `ReportService` 统一 CLI/Desktop 即时转换和所有 CLI/Desktop 队列报告；CLI 重复 Planner 已删除，报告在终态前原子持久化。
 
 **计划完成（按 Gate 顺序，尚未勾选为完成）：**
 
@@ -55,7 +56,7 @@
 | 2 | 关闭 R-008/R-009：Starter 引擎包、Release 精确解析、能力门控、干净机离线真实转换 | Gate U | 实现与本机 E2E 完成；认证/干净机待完成 |
 | 3 | 关闭审查 P1：worker 失败收口、Plan hash 批准、报告/终态顺序、immediate pause 可恢复 | Gate 1 | R-001/R-002/R-003/R-004 已关闭 |
 | 4 | 补 Windows 路径预约规范化、运行中 pause/failure-injection 测试、取消桥接任务生命周期 | Gate 1 | R-005/R-006 已关闭 |
-| 5 | 抽取完整 `ConversionService` 和 `ReportService`；删除入口层重复编排 | Gate 1 | 部分 |
+| 5 | 抽取完整 `ConversionService` 和 `ReportService`；删除入口层重复编排 | Gate 1 | 核心生命周期完成；revalidate/export 归 Gate 2 |
 | 6 | Desktop 恢复横幅、批量取消/重试、实时队列读取 | Gate 1 / 2 | 实时读取/分页/入队与稳定筛选批量动作完成；恢复横幅待完成 |
 | 7 | 版本化 migration、备份/恢复/完整性检查，形成 Windows 长期自用稳定版 | Gate 1 / 4 | SQLite slice 完成；应用状态整包、Desktop、干净机升级/回滚待完成 |
 | 8 | batch/selection、10k 混合负载、公平性/延迟/RSS/WAL；拆分 `runner.rs` | Gate 1 | batch/selection/bulk、多连接预约/transition 与 no-clobber commit 完成；10k mixed/拆分待完成 |
@@ -70,7 +71,7 @@
 
 | 阶段 | 开发状态 | 已有成果 | 未满足的退出条件 |
 |---|---|---|---|
-| Phase 0 基础 | 已完成 | Monorepo、Apache-2.0、6 个公共 Schema、8 个 ADR、三平台 CI 配置、贡献/安全/隐私文档 | 名称/商标、最低 OS、签名账户等产品决策仍需冻结 |
+| Phase 0 基础 | 已完成 | Monorepo、Apache-2.0、6 个公共 Schema、9 个 ADR、三平台 CI 配置、贡献/安全/隐私文档 | 名称/商标、最低 OS、签名账户等产品决策仍需冻结 |
 | Phase 1 架构 Spike | Windows 已完成；跨平台部分完成 | 安全子进程、10 GiB 稀疏文件、partial/原子提交、SQLite 恢复、10k WebView 投影、引擎 Manifest | 物理 10 GiB、macOS/Linux 真实进程树与引擎分发认证 |
 | Phase 2 Core + CLI Alpha | Windows 自包含候选完成；认证未完成 | Inspect/Plan/Convert/Batch/Doctor/Jobs/Engines；Starter PDF/Media；能力门控；12 条工作流均有开发环境实验路径 | R-008/R-009 干净机/供应链关闭证据、完整语料与跨平台工作流认证 |
 | Phase 3 队列/恢复/质量 | Windows 开发门槛完成；长期并发待修 | 10k 持久任务与真实转换、确定性资源调度、可恢复暂停/恢复/重试、混合负载 RSS/WAL 证据、CLI/Desktop 已委托 `JobExecutionService` | Windows 路径身份、长生命周期取消、多连接预约竞态、10k 混合负载、公平性/延迟、跨平台恢复 |
@@ -88,7 +89,7 @@
 - [x] Apache-2.0、SECURITY、PRIVACY、CONTRIBUTING、用户指南和故障排查。
 - [x] Probe、Plan、JobEvent、ValidationReport、EngineManifest、PresetLibrary 六个 JSON Schema v1。
 - [x] Rust 实例对公共 Schema 的合同测试，顶层未知字段拒绝。
-- [x] ADR-0001 至 ADR-0008：单 Core 多入口、子进程边界、SQLite 恢复、认证引擎包、有界 UI 投影、跨平台进程树、事务式 SQLite 维护、持久批次/Selection/Bulk Action。
+- [x] ADR-0001 至 ADR-0009：单 Core 多入口、子进程边界、SQLite 恢复、认证引擎包、有界 UI 投影、跨平台进程树、事务式 SQLite 维护、持久批次/Selection/Bulk Action、共享转换/报告生命周期。
 - [x] Windows/Linux/macOS CI 工作流已配置；Linux 额外执行依赖审计、许可证/来源策略、SBOM 和 MSRV 1.88。
 - [x] Dependabot、定时 fuzz、手动 unsigned Windows release-candidate workflow。
 
@@ -154,7 +155,7 @@
 
 - [x] `cargo fmt --all --check`。
 - [x] `cargo clippy --workspace --all-targets --all-features -- -D warnings`。
-- [x] 142 项普通 Rust 测试通过（118 Core、7 Schema、13 Desktop、4 Engine SDK）；另有 1 项昂贵的 10k 发布测试按设计默认忽略，已有显式 release 运行证据。
+- [x] 149 项普通 Rust 测试通过（125 Core、7 Schema、13 Desktop、4 Engine SDK）；另有 1 项昂贵的 10k 发布测试按设计默认忽略，已有显式 release 运行证据。
 - [x] 6 项前端测试、TypeScript check 和生产构建通过。
 - [x] Rust 1.88 MSRV 全 workspace locked check 通过。
 - [x] 6 个 Schema、12 个黄金工作流和必需文件的仓库合同检查通过。
@@ -549,11 +550,11 @@ API 不直接接受宿主任意路径。请求引用预先授权的 workspace/ro
 
 ### Gate 1：共享应用服务与队列可靠性（1–2 周）
 
-- [x] 抽取 `JobExecutionService`（CLI + Desktop 窗口执行 + ValidationReport 观察回调 + `QueueWindowControl` 两种 pause）；`ConversionService` 仍为 `workflow::prepare_conversion`，CLI 本地重复实现尚未删除。
+- [x] 抽取 `JobExecutionService`、`ConversionService` 与 `ReportService`：CLI/Desktop 即时/队列共享 Planner、执行状态与 report-before-terminal；CLI 本地重复 Planner 已删除。
 - [x] 依次关闭 R-001 至 R-006：六项均已按顺序关闭，每项有失败注入、运行中或并发回归证据。
 - [x] 关闭 R-007：Desktop 队列窗口不再占走唯一 Store，运行中实时 list/paging/queue-only 与 lease 清理回归通过。
 - [x] 引入 `MaintenanceService` SQLite 最小切片：一致性检查、在线安全备份、恢复到临时副本、migration 前自动快照和五份保留；应用状态整包/Desktop 可取消入口待后续。
-- [ ] Desktop 恢复横幅、批量取消/重试。
+- [ ] Desktop 恢复横幅；批量取消/恢复/重试已完成。
 - [x] 多连接 reservation/transition race 与提交前 destination race：独立连接并发测试和统一 no-clobber 文件/目录 publish 回归通过；多进程 soak 留作 release evidence。
 - [x] 加入 batch/selection model、稳定分页与批量动作事件；保留策略/审计浏览器归 Gate 2。
 - [ ] 10k 混合 workload、公平性/延迟/资源/DB 基线。
@@ -561,7 +562,7 @@ API 不直接接受宿主任意路径。请求引用预先授权的 workspace/ro
 
 退出：CLI/Desktop 对同一队列产生一致状态；预览 Plan 与执行 hash 相同；崩溃/取消/持久化失败/竞态无假成功、无静默覆盖、无遗失预约；备份可在干净数据库上完成恢复演练。
 
-下一工程里程碑：**R-001 至 R-007、SQLite MaintenanceService、多连接 reservation/transition、no-clobber commit 与 batch/selection/bulk actions 已完成；按 Conversion/Report Service → 应用状态整包 → 多进程 soak/10k mixed 的顺序完成 Gate 1，不得在可靠性和发布阻断前继续堆新格式。**
+下一工程里程碑：**R-001 至 R-007、共享 Conversion/Report/JobExecution/Maintenance Service、多连接 reservation/transition、no-clobber commit 与 batch/selection/bulk actions 已完成；按应用状态整包 → 多进程 soak/10k mixed 的顺序完成 Gate 1，不得在可靠性和发布阻断前继续堆新格式。**
 
 ### Gate 2：Desktop Beta 功能闭环（1–2 周）
 
@@ -643,14 +644,14 @@ API 不直接接受宿主任意路径。请求引用预先授权的 workspace/ro
 | 每条都有 Inspect/Plan/Execute/Validate | 部分完成 | 完整 required validator/语料，无 Unknown 冒充 Pass |
 | 10 GiB | 部分完成 | Windows 稀疏门禁过；补物理与跨平台 |
 | 10,000 队列 | 部分完成 | DB/真实结构化过；补完整 mixed/cross-platform |
-| pause/resume/cancel/retry | 部分完成 | CLI/批量与共享执行器、Desktop 可恢复 immediate pause 与单任务 Resume/Retry 已接；补 finish-current 长生命周期回归、恢复横幅和批量 retry |
+| pause/resume/cancel/retry | 部分完成 | CLI/批量与共享执行器、Desktop 可恢复 immediate pause、单任务与稳定选择批量动作已接；补恢复横幅和发布平台证据 |
 | 强退恢复 | 部分完成 | Windows 通用路径过；补各平台/批次竞态 |
 | remux 优先 | 已完成（已覆盖路径） | 发布语料复跑 |
-| 成功任务均有报告 | 部分完成 | 关闭 R-003；所有 Certified 路径 100% 报告且报告/终态顺序可恢复 |
+| 成功任务均有报告 | 已完成（实现） | 即时/队列/image batch 共用 ReportService；所有 Certified 路径继续做语料/平台复跑 |
 | 无静默覆盖 | 已完成（当前策略） | 提交竞态/三平台复跑 |
 | 默认零网络 | 部分完成 | 策略+观测过；补 OS 强制隔离 |
 | Windows/macOS/Linux CI | 部分完成 | workflow 已配置；真实全矩阵绿 |
-| GUI/CLI 共用 Core | 部分完成 | CLI/Desktop 单任务和持久队列已接 Core；补完整 Conversion/Report/Maintenance Service，API/MCP 继续遵守 |
+| GUI/CLI 共用 Core | 已完成（现有入口） | Planner、Conversion/Report/JobExecution/Maintenance/Bulk Service 共用；未来 API/MCP 必须继续遵守 |
 | 包/SBOM/hash/licenses | 部分完成 | 应用 unsigned shell 过；补 Starter engine artifacts、最终签名三平台与干净机真实转换 |
 | 文档齐全 | 开发文档完成 | changelog/migration/最终支持矩阵 |
 | 无 P0/P1 | 未证明 | 缺陷台账、RC 审计、Beta 验证 |
@@ -753,7 +754,7 @@ API 不直接接受宿主任意路径。请求引用预先授权的 workspace/ro
 
 ### 第 1 周：基线与 Windows 可用纵向闭环
 
-- [x] 创建 Git 基线；此后普通基线已增长到 142 Rust + 6 TS 并保持通过。
+- [x] 创建 Git 基线；此后普通基线已增长到 149 Rust + 6 TS 并保持通过。
 - [ ] 为 R-008/R-009 写失败测试并冻结 Starter pack、许可证与 Release locator 决策：实现与定位决策已完成，许可证/签名认证待冻结。
 - [x] 实现 Core/PDF/Media pack staging、版本化安装/激活和 capability snapshot；UI 与后端按能力门控。
 - 在无系统引擎、污染 PATH、完全离线的干净 Windows VM 完成 Starter 三条 smoke；把产物与日志存入 release evidence。
@@ -772,7 +773,7 @@ API 不直接接受宿主任意路径。请求引用预先授权的 workspace/ro
 
 ### 第 3–4 周：长期数据与共享服务
 
-- 抽取 `ConversionService`、`ReportService`；最小 SQLite `MaintenanceService` 已完成。
+- [x] 抽取 `ConversionService`、`ReportService` 与 SQLite `MaintenanceService`；所有现有 CLI/Desktop 即时/队列报告已接入。
 - 建立单 writer/只读连接模型，使队列运行时仍可查询和入队。
 - 版本化 SQLite/Presets/Engine Registry migrations。
 - SQLite 备份、恢复、integrity-check、migration 前快照与保留策略已完成；继续实现应用状态整包。

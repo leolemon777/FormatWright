@@ -9,11 +9,11 @@ use std::time::Instant;
 
 use formatwright_core::{
     BatchRecord, BulkActionReport, BulkJobAction, BulkJobService, CapabilitySnapshot,
-    ConversionPreset, DoctorReport, EngineDiscoveryPolicy, ExecutionMilestone, JobExecutionService,
+    ConversionPreset, ConversionService, DoctorReport, EngineDiscoveryPolicy, JobExecutionService,
     JobRecord, JobSelectionQuery, JobState, PRESET_SCHEMA_VERSION, Plan, PlanRequest,
-    PresetLibrary, Probe, QueueRunReport, QueueWindowControl, SelectionSnapshot, SqliteJobStore,
-    ValidationReport, ValidationStatus, VerifiedEnginePack, activate_engine_pack,
-    capability_snapshot_for_input, execute_plan_observed, prepare_conversion,
+    PresetLibrary, Probe, QueueRunReport, QueueWindowControl, ReportService, SelectionSnapshot,
+    SqliteJobStore, ValidationReport, VerifiedEnginePack, activate_engine_pack,
+    capability_snapshot_for_input, prepare_conversion,
 };
 use queue_bridge::{DEFAULT_BATCH_JOBS, DEFAULT_BENCHMARK_JOBS, QueueBatchIter};
 use serde::{Deserialize, Serialize};
@@ -252,62 +252,40 @@ async fn run_desktop_conversion(
     request: DesktopConversionRequest,
 ) -> Result<DesktopRunResult, String> {
     let (probe, plan, validation_engine) = prepare_approved_desktop_conversion(&request).await?;
-    let job = {
-        let mut guard = lock(&state.store)?;
-        guard
-            .create_job(&request.input_path, &request.output_path, &plan)
-            .and_then(|job| guard.transition(job.id, JobState::Running, "DESKTOP_ENGINE_STARTED"))
-            .map_err(serialize_error)?
-    };
     let cancellation = CancellationToken::new();
-    lock(&state.cancellations)?.insert(job.id, cancellation.clone());
-    let _ = window.emit("formatwright://job-updated", &job);
-    let state_for_observer = &state;
-    let execution = execute_plan_observed(
+    let cancellation_slot = &state.cancellations;
+    let job_id = Mutex::new(None);
+    let mut execution_store =
+        SqliteJobStore::open(&state.job_database_path).map_err(serialize_error)?;
+    let result = ConversionService::run_prepared(
+        &mut execution_store,
+        &ReportService::new(&state.reports_directory),
         &probe,
         &plan,
         &validation_engine,
-        job.id,
-        cancellation,
-        move |milestone| {
-            if milestone == ExecutionMilestone::EngineFinished {
-                let mut guard = lock_core_store(&state_for_observer.store)?;
-                guard.transition(job.id, JobState::Validating, "DESKTOP_VALIDATION_STARTED")?;
+        &plan.plan_hash,
+        cancellation.clone(),
+        |job| {
+            if job.state == JobState::Running {
+                if let Ok(mut current) = job_id.lock() {
+                    *current = Some(job.id);
+                }
+                if let Ok(mut tokens) = cancellation_slot.lock() {
+                    tokens.insert(job.id, cancellation.clone());
+                }
             }
-            Ok(())
+            let _ = window.emit("formatwright://job-updated", job);
         },
     )
-    .await;
-    lock(&state.cancellations)?.remove(&job.id);
-    match execution {
-        Ok(result) => {
-            let job = {
-                let mut guard = lock(&state.store)?;
-                persist_report_before_terminal(
-                    &mut guard,
-                    &state.reports_directory,
-                    job.id,
-                    &result.report,
-                )?
-            };
-            let _ = window.emit("formatwright://job-updated", &job);
-            Ok(DesktopRunResult {
-                job,
-                report: result.report,
-            })
-        }
-        Err(error) => {
-            let final_state = if error.code == formatwright_core::ErrorCode::Cancelled {
-                JobState::Cancelled
-            } else {
-                JobState::Failed
-            };
-            if let Ok(mut store) = state.store.lock() {
-                let _ = store.transition(job.id, final_state, "DESKTOP_CONVERSION_FAILED");
-            }
-            Err(serialize_error(error))
-        }
+    .await
+    .map_err(serialize_error);
+    if let Some(job_id) = *lock(&job_id)? {
+        lock(&state.cancellations)?.remove(&job_id);
     }
+    result.map(|result| DesktopRunResult {
+        job: result.job,
+        report: result.report,
+    })
 }
 
 #[tauri::command]
@@ -375,15 +353,9 @@ async fn run_desktop_queue_window(
         parallel,
         control,
         |job_id, validation| {
-            save_report(&reports_directory, job_id, validation).map_err(|message| {
-                formatwright_core::FormatWrightError::new(
-                    formatwright_core::ErrorCode::StorageFailed,
-                    formatwright_core::Stage::Validate,
-                    "Unable to persist ValidationReport for a queued job",
-                    "Check the application reports directory and retry the queue window.",
-                )
-                .with_diagnostic(message)
-            })
+            ReportService::new(&reports_directory)
+                .save(job_id, validation)
+                .map(drop)
         },
     )
     .await;
@@ -563,7 +535,9 @@ fn get_desktop_report(
     job_id: String,
 ) -> Result<Option<ValidationReport>, String> {
     let job_id = Uuid::parse_str(&job_id).map_err(|error| error.to_string())?;
-    read_report(&state.reports_directory, job_id)
+    ReportService::new(&state.reports_directory)
+        .read(job_id)
+        .map_err(serialize_error)
 }
 
 #[tauri::command]
@@ -650,125 +624,9 @@ fn lock<T>(mutex: &Mutex<T>) -> Result<std::sync::MutexGuard<'_, T>, String> {
         .map_err(|_| "desktop state lock was poisoned".to_owned())
 }
 
-fn lock_core_store(
-    mutex: &Mutex<SqliteJobStore>,
-) -> formatwright_core::Result<std::sync::MutexGuard<'_, SqliteJobStore>> {
-    mutex.lock().map_err(|_| {
-        formatwright_core::FormatWrightError::new(
-            formatwright_core::ErrorCode::Internal,
-            formatwright_core::Stage::Store,
-            "Desktop state lock was poisoned",
-            "Restart FormatWright and retry.",
-        )
-    })
-}
-
 #[allow(clippy::needless_pass_by_value)]
 fn serialize_error(error: formatwright_core::FormatWrightError) -> String {
     serde_json::to_string(&error).unwrap_or_else(|_| error.to_string())
-}
-
-fn report_path(directory: &std::path::Path, job_id: Uuid) -> PathBuf {
-    directory.join(format!("{job_id}.json"))
-}
-
-fn save_report(
-    directory: &std::path::Path,
-    job_id: Uuid,
-    report: &ValidationReport,
-) -> Result<(), String> {
-    if report.job_id != job_id {
-        return Err("ValidationReport job ID does not match its destination".to_owned());
-    }
-    std::fs::create_dir_all(directory).map_err(|error| error.to_string())?;
-    let destination = report_path(directory, job_id);
-    let nonce = Uuid::new_v4();
-    let partial = directory.join(format!(".{job_id}.{nonce}.partial"));
-    let backup = directory.join(format!(".{job_id}.backup"));
-    if !destination.exists() && backup.is_file() {
-        std::fs::rename(&backup, &destination).map_err(|error| error.to_string())?;
-    } else if destination.is_file() && backup.is_file() {
-        std::fs::remove_file(&backup).map_err(|error| error.to_string())?;
-    }
-    let bytes = serde_json::to_vec_pretty(report).map_err(|error| error.to_string())?;
-    if let Err(error) = std::fs::write(&partial, bytes) {
-        let _ = std::fs::remove_file(&partial);
-        return Err(error.to_string());
-    }
-    if destination.is_file()
-        && let Err(error) = std::fs::rename(&destination, &backup)
-    {
-        let _ = std::fs::remove_file(&partial);
-        return Err(error.to_string());
-    }
-    if let Err(error) = std::fs::rename(&partial, &destination) {
-        let _ = std::fs::remove_file(&partial);
-        if backup.is_file() && !destination.exists() {
-            let _ = std::fs::rename(&backup, &destination);
-        }
-        return Err(error.to_string());
-    }
-    if backup.is_file() {
-        let _ = std::fs::remove_file(backup);
-    }
-    Ok(())
-}
-
-fn persist_report_before_terminal(
-    store: &mut SqliteJobStore,
-    reports_directory: &Path,
-    job_id: Uuid,
-    report: &ValidationReport,
-) -> Result<JobRecord, String> {
-    if let Err(report_error) = save_report(reports_directory, job_id, report) {
-        let recovery_error = store
-            .get_job(job_id)
-            .and_then(|job| {
-                if job.is_some_and(|job| {
-                    matches!(job.state, JobState::Running | JobState::Validating)
-                }) {
-                    store
-                        .transition(job_id, JobState::Interrupted, "REPORT_PERSIST_FAILED")
-                        .map(drop)
-                } else {
-                    Ok(())
-                }
-            })
-            .err()
-            .map(|error| format!("; recovery transition also failed: {error}"))
-            .unwrap_or_default();
-        return Err(serialize_error(
-            formatwright_core::FormatWrightError::new(
-                formatwright_core::ErrorCode::StorageFailed,
-                formatwright_core::Stage::Validate,
-                "Unable to persist ValidationReport before terminal job state",
-                "Check the reports directory, then retry or resume the interrupted job.",
-            )
-            .with_diagnostic(format!("{report_error}{recovery_error}")),
-        ));
-    }
-    let final_state = match report.status {
-        ValidationStatus::Pass => JobState::Completed,
-        ValidationStatus::Warning | ValidationStatus::Unknown => JobState::Warning,
-        ValidationStatus::Fail => JobState::Failed,
-    };
-    store
-        .transition(job_id, final_state, "DESKTOP_CONVERSION_FINISHED")
-        .map_err(serialize_error)
-}
-
-fn read_report(
-    directory: &std::path::Path,
-    job_id: Uuid,
-) -> Result<Option<ValidationReport>, String> {
-    let path = report_path(directory, job_id);
-    if !path.is_file() {
-        return Ok(None);
-    }
-    let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
-    serde_json::from_slice(&bytes)
-        .map(Some)
-        .map_err(|error| error.to_string())
 }
 
 fn read_preset_library(path: &Path) -> Result<PresetLibrary, String> {
@@ -1106,15 +964,15 @@ mod tests {
     use formatwright_core::{
         ArtifactSummary, ChangeSet, ConversionPreset, JobState, NetworkPolicy,
         PRESET_SCHEMA_VERSION, Plan, PlanRequest, PresetLibrary, QueueWindowControl,
-        ReportRedaction, SqliteJobStore, ValidationReport, ValidationStatus,
+        ReportRedaction, ReportService, SqliteJobStore, ValidationReport, ValidationStatus,
     };
     use uuid::Uuid;
 
     use super::{
         DesktopConversionRequest, DesktopEngineRegistryEntry, acquire_queue_window, backup_path,
         bundled_manifest_paths, load_preset_library, persist_preset_library,
-        persist_report_before_terminal, prepare_approved_desktop_conversion, read_report,
-        registered_manifest_paths, requeue_job, run_queue_window_on_database, save_report,
+        prepare_approved_desktop_conversion, registered_manifest_paths, requeue_job,
+        run_queue_window_on_database,
     };
 
     fn plan(output_path: PathBuf) -> Plan {
@@ -1238,15 +1096,13 @@ mod tests {
     fn report_replacement_is_atomic_and_leaves_only_the_active_report() {
         let directory = tempdir().expect("temporary reports");
         let job_id = Uuid::new_v4();
+        let service = ReportService::new(directory.path());
         let first = report(job_id, ValidationStatus::Pass);
-        save_report(directory.path(), job_id, &first).expect("write first report");
+        service.save(job_id, &first).expect("write first report");
         let second = report(job_id, ValidationStatus::Warning);
-        save_report(directory.path(), job_id, &second).expect("replace report");
+        service.save(job_id, &second).expect("replace report");
 
-        assert_eq!(
-            read_report(directory.path(), job_id).expect("read report"),
-            Some(second)
-        );
+        assert_eq!(service.read(job_id).expect("read report"), Some(second));
         assert_eq!(
             fs::read_dir(directory.path())
                 .expect("read report directory")
@@ -1260,19 +1116,19 @@ mod tests {
     fn report_write_recovers_an_interrupted_replacement_backup() {
         let directory = tempdir().expect("temporary reports");
         let job_id = Uuid::new_v4();
+        let service = ReportService::new(directory.path());
         let first = report(job_id, ValidationStatus::Pass);
-        save_report(directory.path(), job_id, &first).expect("write first report");
-        let destination = super::report_path(directory.path(), job_id);
+        service.save(job_id, &first).expect("write first report");
+        let destination = directory.path().join(format!("{job_id}.json"));
         let backup = directory.path().join(format!(".{job_id}.backup"));
         fs::rename(&destination, &backup).expect("simulate interrupted replacement");
 
         let second = report(job_id, ValidationStatus::Warning);
-        save_report(directory.path(), job_id, &second).expect("recover and replace report");
+        service
+            .save(job_id, &second)
+            .expect("recover and replace report");
 
-        assert_eq!(
-            read_report(directory.path(), job_id).expect("read report"),
-            Some(second)
-        );
+        assert_eq!(service.read(job_id).expect("read report"), Some(second));
         assert!(!backup.exists());
     }
 
@@ -1284,15 +1140,20 @@ mod tests {
         let blocked_reports = suite.path().join("reports-is-a-file");
         fs::write(&blocked_reports, b"not a directory").expect("write blocking file");
 
-        let error = persist_report_before_terminal(
-            &mut store,
-            &blocked_reports,
-            job_id,
-            &report(job_id, ValidationStatus::Pass),
-        )
-        .expect_err("report persistence must fail");
+        let error = ReportService::new(&blocked_reports)
+            .persist_before_terminal(
+                &mut store,
+                job_id,
+                &report(job_id, ValidationStatus::Pass),
+                "DESKTOP_CONVERSION_FINISHED",
+            )
+            .expect_err("report persistence must fail");
 
-        assert!(error.contains("Unable to persist ValidationReport"));
+        assert!(
+            error
+                .message
+                .contains("Unable to persist or read ValidationReport")
+        );
         let details = store
             .get_job_details(job_id)
             .expect("read details")
@@ -1312,12 +1173,19 @@ mod tests {
         let job_id = validating_job(&mut store, suite.path());
         let validation = report(job_id, ValidationStatus::Pass);
 
-        let job = persist_report_before_terminal(&mut store, &reports, job_id, &validation)
+        let report_service = ReportService::new(&reports);
+        let job = report_service
+            .persist_before_terminal(
+                &mut store,
+                job_id,
+                &validation,
+                "DESKTOP_CONVERSION_FINISHED",
+            )
             .expect("persist and finish");
 
         assert_eq!(job.state, JobState::Completed);
         assert_eq!(
-            read_report(&reports, job_id).expect("read report"),
+            report_service.read(job_id).expect("read report"),
             Some(validation)
         );
     }

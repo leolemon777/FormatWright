@@ -8,15 +8,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use clap::{Parser, Subcommand, ValueEnum};
 use formatwright_core::{
-    BulkJobAction, BulkJobService, EngineIdentity, ErrorCode, ExecutionMilestone,
-    FormatWrightError, JobCreateRequest, JobExecutionService, JobRecord, JobSelectionQuery,
-    JobState, MaintenanceService, Plan, PlanRequest, Probe, SqliteJobStore, ValidationStatus,
-    cleanup_staged_output, doctor, execute_plan_observed, identify_artifact,
-    inspect_builtin_engine, inspect_document, inspect_engine, inspect_media, inspect_office,
+    BulkJobAction, BulkJobService, ConversionService, EngineIdentity, ErrorCode,
+    ExecutionMilestone, FormatWrightError, JobCreateRequest, JobExecutionService, JobRecord,
+    JobSelectionQuery, JobState, MaintenanceService, Plan, PlanRequest, Probe, QueueWindowControl,
+    ReportService, SqliteJobStore, cleanup_staged_output, doctor, execute_plan_observed,
+    identify_artifact, inspect_document, inspect_engine, inspect_media, inspect_office,
     inspect_pdf, inspect_structured, office_format_hint, pdf_format_hint, plan_conversion,
-    plan_heic_conversion, plan_markup_to_docx, plan_markup_to_pdf, plan_metadata_clean,
-    plan_office_to_pdf, plan_pdf_render, plan_structured_conversion, resolve_output_path,
-    staged_output_candidates, structured_format_hint, verify_engine_pack,
+    plan_metadata_clean, prepare_conversion, resolve_output_path, staged_output_candidates,
+    structured_format_hint, verify_engine_pack,
 };
 use serde::Serialize;
 use tokio_util::sync::CancellationToken;
@@ -875,16 +874,22 @@ async fn run(cli: Cli) -> Result<(), FormatWrightError> {
                     print_job_action(&job, cli.json)
                 }
                 JobsCommand::Run { limit, parallel } => {
-                    let cancellation = CancellationToken::new();
-                    let signal = cancellation.clone();
+                    let control = QueueWindowControl::new();
+                    let signal = control.clone();
                     tokio::spawn(async move {
                         if tokio::signal::ctrl_c().await.is_ok() {
-                            signal.cancel();
+                            signal.pause_immediate();
                         }
                     });
-                    let report =
-                        JobExecutionService::run_window(&mut store, limit, parallel, cancellation)
-                            .await?;
+                    let reports = ReportService::new(default_reports_directory(&database_path));
+                    let report = JobExecutionService::run_window_observed(
+                        &mut store,
+                        limit,
+                        parallel,
+                        control,
+                        |job_id, validation| reports.save(job_id, validation).map(drop),
+                    )
+                    .await?;
                     if cli.json {
                         print_json(&report)
                     } else {
@@ -1074,9 +1079,7 @@ async fn execute_stored_plan(
 ) -> Result<(), FormatWrightError> {
     let database_path = state_db.unwrap_or_else(default_state_db);
     let mut store = open_job_store(&database_path)?;
-    let resolved_output = resolve_output_path(plan)?;
-    let job = store.create_job(&probe.artifact.canonical_path, &resolved_output, plan)?;
-    store.transition(job.id, JobState::Running, "ENGINE_STARTED")?;
+    let reports = ReportService::new(default_reports_directory(&database_path));
 
     let cancellation = CancellationToken::new();
     let signal_token = cancellation.clone();
@@ -1092,27 +1095,19 @@ async fn execute_stored_plan(
             timeout_token.cancel();
         });
     }
-    let result = execute_plan_observed(
+    let result = ConversionService::run_prepared(
+        &mut store,
+        &reports,
         probe,
         plan,
         validation_engine,
-        job.id,
+        &plan.plan_hash,
         cancellation,
-        |milestone| match milestone {
-            ExecutionMilestone::EngineFinished => store
-                .transition(job.id, JobState::Validating, "ENGINE_FINISHED")
-                .map(|_| ()),
-        },
+        |_| {},
     )
     .await;
     match result {
         Ok(result) => {
-            let final_state = match result.report.status {
-                ValidationStatus::Pass => JobState::Completed,
-                ValidationStatus::Warning | ValidationStatus::Unknown => JobState::Warning,
-                ValidationStatus::Fail => JobState::Failed,
-            };
-            store.transition(job.id, final_state, "VALIDATION_FINISHED")?;
             if json {
                 print_json(&result.report)?;
             } else {
@@ -1122,15 +1117,7 @@ async fn execute_stored_plan(
             }
             Ok(())
         }
-        Err(error) => {
-            let state = if error.code == ErrorCode::Cancelled {
-                JobState::Cancelled
-            } else {
-                JobState::Failed
-            };
-            let _ = store.transition(job.id, state, "EXECUTION_STOPPED");
-            Err(error)
-        }
+        Err(error) => Err(error),
     }
 }
 
@@ -1290,6 +1277,7 @@ async fn run_image_batch(
     }
     let database_path = state_db.unwrap_or_else(default_state_db);
     let mut store = open_job_store(&database_path)?;
+    let reports = ReportService::new(default_reports_directory(&database_path));
     let (batch_id, jobs) = if requests.is_empty() {
         (None, Vec::new())
     } else {
@@ -1361,20 +1349,27 @@ async fn run_image_batch(
         )
         .await;
         match result {
-            Ok(result) => match result.report.status {
-                ValidationStatus::Pass => {
-                    store.transition(job.id, JobState::Completed, "VALIDATION_FINISHED")?;
-                    completed = completed.saturating_add(1);
+            Ok(result) => {
+                let terminal = reports.persist_before_terminal(
+                    &mut store,
+                    job.id,
+                    &result.report,
+                    "VALIDATION_FINISHED",
+                )?;
+                match terminal.state {
+                    JobState::Completed => completed = completed.saturating_add(1),
+                    JobState::Warning => warning = warning.saturating_add(1),
+                    JobState::Failed => failed = failed.saturating_add(1),
+                    _ => {
+                        return Err(FormatWrightError::new(
+                            ErrorCode::Internal,
+                            formatwright_core::Stage::Store,
+                            "Report persistence produced a non-terminal batch state",
+                            "Run jobs recover and inspect the affected job.",
+                        ));
+                    }
                 }
-                ValidationStatus::Warning | ValidationStatus::Unknown => {
-                    store.transition(job.id, JobState::Warning, "VALIDATION_FINISHED")?;
-                    warning = warning.saturating_add(1);
-                }
-                ValidationStatus::Fail => {
-                    store.transition(job.id, JobState::Failed, "VALIDATION_FINISHED")?;
-                    failed = failed.saturating_add(1);
-                }
-            },
+            }
             Err(error) => {
                 if error.code == ErrorCode::Cancelled {
                     store.transition(job.id, JobState::Cancelled, "BATCH_CANCELLED")?;
@@ -1547,120 +1542,6 @@ fn batch_output_key(path: &Path) -> String {
     } else {
         rendered
     }
-}
-
-async fn prepare_conversion(
-    input: &Path,
-    request: &PlanRequest,
-) -> Result<(Probe, Plan, EngineIdentity), FormatWrightError> {
-    if is_structured_target(&request.target_format) {
-        let probe = inspect_structured(input).await?;
-        let engine = inspect_builtin_engine("formatwright.structured").await?;
-        let plan = plan_structured_conversion(&probe, request, &engine)?;
-        return Ok((probe, plan, engine));
-    }
-    if request
-        .target_format
-        .trim()
-        .trim_start_matches('.')
-        .eq_ignore_ascii_case("docx")
-    {
-        let probe = inspect_document(input).await?;
-        let pandoc = inspect_engine("pandoc").await?;
-        let output = request.output_path.clone().ok_or_else(|| {
-            FormatWrightError::new(
-                ErrorCode::InputInvalid,
-                formatwright_core::Stage::Plan,
-                "DOCX conversion requires an output path",
-                "Choose an output path.",
-            )
-        })?;
-        let plan = plan_markup_to_docx(&probe, output, &pandoc)?;
-        return Ok((probe, plan, pandoc));
-    }
-    if request
-        .target_format
-        .trim()
-        .trim_start_matches('.')
-        .eq_ignore_ascii_case("pdf")
-        && office_format_hint(input)?.is_some()
-    {
-        let probe = inspect_office(input).await?;
-        let soffice = inspect_engine("soffice").await?;
-        let pdftoppm = inspect_engine("pdftoppm").await?;
-        let pdfinfo = inspect_engine("pdfinfo").await?;
-        let output = request.output_path.clone().ok_or_else(|| {
-            FormatWrightError::new(
-                ErrorCode::InputInvalid,
-                formatwright_core::Stage::Plan,
-                "Office-to-PDF conversion requires an output path",
-                "Choose an output path.",
-            )
-        })?;
-        let plan = plan_office_to_pdf(&probe, output, &soffice, &pdfinfo, &pdftoppm)?;
-        return Ok((probe, plan, pdfinfo));
-    }
-    if request
-        .target_format
-        .trim()
-        .trim_start_matches('.')
-        .eq_ignore_ascii_case("pdf")
-    {
-        match inspect_document(input).await {
-            Ok(probe) if matches!(probe.format.id.as_str(), "markdown" | "html") => {
-                let pandoc = inspect_engine("pandoc").await?;
-                let soffice = inspect_engine("soffice").await?;
-                let pdfinfo = inspect_engine("pdfinfo").await?;
-                let pdftoppm = inspect_engine("pdftoppm").await?;
-                let output = request.output_path.clone().ok_or_else(|| {
-                    FormatWrightError::new(
-                        ErrorCode::InputInvalid,
-                        formatwright_core::Stage::Plan,
-                        "Markup-to-PDF conversion requires an output path",
-                        "Choose an output path.",
-                    )
-                })?;
-                let plan =
-                    plan_markup_to_pdf(&probe, output, &pandoc, &soffice, &pdfinfo, &pdftoppm)?;
-                return Ok((probe, plan, pdfinfo));
-            }
-            Ok(_) | Err(_) => {}
-        }
-    }
-    if pdf_format_hint(input)? {
-        let pdfinfo = inspect_engine("pdfinfo").await?;
-        let pdftoppm = inspect_engine("pdftoppm").await?;
-        let ffprobe = inspect_engine("ffprobe").await?;
-        let probe = inspect_pdf(input, &pdfinfo).await?;
-        let plan = plan_pdf_render(&probe, request, &pdftoppm)?;
-        return Ok((probe, plan, ffprobe));
-    }
-    let ffprobe = inspect_engine("ffprobe").await?;
-    let probe = inspect_media(input, &ffprobe).await?;
-    let normalized_target = request
-        .target_format
-        .trim()
-        .trim_start_matches('.')
-        .to_ascii_lowercase();
-    if probe.format.id == "heic" && matches!(normalized_target.as_str(), "jpg" | "jpeg" | "png") {
-        let heif_convert = inspect_engine("heif-convert").await?;
-        let plan = plan_heic_conversion(&probe, request, &heif_convert)?;
-        return Ok((probe, plan, ffprobe));
-    }
-    let ffmpeg = inspect_engine("ffmpeg").await?;
-    let plan = plan_conversion(&probe, request, &ffmpeg)?;
-    Ok((probe, plan, ffprobe))
-}
-
-fn is_structured_target(target: &str) -> bool {
-    matches!(
-        target
-            .trim()
-            .trim_start_matches('.')
-            .to_ascii_lowercase()
-            .as_str(),
-        "csv" | "json" | "yaml" | "yml" | "xml"
-    )
 }
 
 fn is_document_path(path: &Path) -> bool {
@@ -1869,4 +1750,12 @@ fn default_state_db() -> PathBuf {
             .join("jobs.sqlite3");
     }
     PathBuf::from(".formatwright-jobs.sqlite3")
+}
+
+fn default_reports_directory(database_path: &Path) -> PathBuf {
+    database_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
+        .join("reports")
 }

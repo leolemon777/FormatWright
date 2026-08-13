@@ -57,6 +57,8 @@ Automation may add `convert ... --queue-only --idempotency-key KEY`. Repeating t
 
 `jobs select` freezes the ordered matching job IDs before a bulk action. `jobs bulk` rechecks each current state and reports transitioned, state-skipped, and output-conflict-skipped counts; completed jobs are never silently retried. The Desktop Jobs page uses the same snapshot-and-action path for its filtered bulk buttons. `batch-images` reports a durable batch ID that can be listed with `jobs batches`.
 
+Every successful immediate conversion, `jobs run` item, and image-batch item stores `reports/JOB_ID.json` beside the selected SQLite state database before recording its terminal state. Desktop uses its application-data Reports directory. A missing or invalid report is a recovery problem, not a successful conversion claim.
+
 `maintenance restore BACKUP` validates and migrates a temporary copy only. Stop queue execution, close other FormatWright processes, review that preflight, and rerun with `--yes` to replace the live database transactionally. Confirmed restore and compact create automatic safety snapshots under the state database's `backups` directory; the five newest automatic snapshots are retained. Manual backup never overwrites an existing destination. This Alpha slice covers SQLite; presets, settings, engine registry identity, and optional reports are not yet packaged into one application-state backup.
 
 ## Supported development workflows

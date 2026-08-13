@@ -6,7 +6,7 @@
 
 ## Claim under test
 
-The durable queue scheduling loop that previously lived only in the CLI now executes through `formatwright_core::JobExecutionService::run_window`. CLI `jobs run` retains argument parsing, Ctrl+C cancellation wiring, and JSON/text report printing. Core does not depend on Clap, Tauri, React, or Axum.
+The durable queue scheduling loop that previously lived only in the CLI now executes through `formatwright_core::JobExecutionService`. CLI `jobs run` retains argument parsing, Ctrl+C wiring, and JSON/text printing; it passes `ReportService::save` to `run_window_observed`, so reports precede terminal states. Core does not depend on Clap, Tauri, React, or Axum.
 
 ## Contract preserved
 
@@ -55,7 +55,7 @@ As of 2026-08-11 the Tauri surface also calls `JobExecutionService`:
 - `requeue_desktop_job` → Resume for `Interrupted`/`Blocked`, Retry for `Failed`/`Cancelled`; other states are rejected
 - A RAII queue-window lease keeps exactly one Desktop runner active and clears the control slot if the command succeeds, errors, panics, or its future is dropped
 
-Known gaps: recovery banner and bulk retry UI are not implemented.
+Stable-selection bulk retry/resume/cancel is now implemented. Recovery banner remains open.
 
 ## Pause semantics
 
@@ -66,7 +66,6 @@ Known gaps: recovery banner and bulk retry UI are not implemented.
 
 ## Remaining work
 
-- Desktop recovery banner and bulk retry (single-job Resume/Retry and live enqueue are implemented)
-- ConversionService extraction / remove CLI duplicate `prepare_conversion`
-- Multi-connection reservation races and 10k mixed workload certification
+- Desktop recovery banner, batch browser, and virtualized query view
+- Multi-process soak and 10k mixed workload certification (independent-connection reservation/transition races already pass)
 - Cross-platform release certification of real adapter process trees (the Windows unit fixture and existing FFmpeg sandbox are development evidence)
