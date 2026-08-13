@@ -4,22 +4,25 @@ use std::collections::HashSet;
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use clap::{Parser, Subcommand};
 use formatwright_core::{
     EngineIdentity, ErrorCode, ExecutionMilestone, FormatWrightError, JobCreateRequest,
-    JobExecutionService, JobRecord, JobState, Plan, PlanRequest, Probe, SqliteJobStore,
-    ValidationStatus, cleanup_staged_output, doctor, execute_plan_observed, identify_artifact,
-    inspect_builtin_engine, inspect_document, inspect_engine, inspect_media, inspect_office,
-    inspect_pdf, inspect_structured, office_format_hint, pdf_format_hint, plan_conversion,
-    plan_heic_conversion, plan_markup_to_docx, plan_markup_to_pdf, plan_metadata_clean,
-    plan_office_to_pdf, plan_pdf_render, plan_structured_conversion, resolve_output_path,
-    staged_output_candidates, structured_format_hint, verify_engine_pack,
+    JobExecutionService, JobRecord, JobState, MaintenanceService, Plan, PlanRequest, Probe,
+    SqliteJobStore, ValidationStatus, cleanup_staged_output, doctor, execute_plan_observed,
+    identify_artifact, inspect_builtin_engine, inspect_document, inspect_engine, inspect_media,
+    inspect_office, inspect_pdf, inspect_structured, office_format_hint, pdf_format_hint,
+    plan_conversion, plan_heic_conversion, plan_markup_to_docx, plan_markup_to_pdf,
+    plan_metadata_clean, plan_office_to_pdf, plan_pdf_render, plan_structured_conversion,
+    resolve_output_path, staged_output_candidates, structured_format_hint, verify_engine_pack,
 };
 use serde::Serialize;
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
+
+static ERROR_OUTPUT_ALREADY_RENDERED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Parser)]
 #[command(
@@ -231,6 +234,11 @@ enum Command {
         #[command(subcommand)]
         command: EnginesCommand,
     },
+    /// Inspect, back up, restore, and compact the durable local state database.
+    Maintenance {
+        #[command(subcommand)]
+        command: MaintenanceCommand,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -309,6 +317,29 @@ enum EnginesCommand {
     },
 }
 
+#[derive(Debug, Subcommand)]
+enum MaintenanceCommand {
+    /// Show schema, size, queue counts, journal mode, and full integrity status.
+    Status,
+    /// Create a validated `SQLite` online backup without overwriting an existing file.
+    Backup {
+        #[arg(value_name = "OUTPUT")]
+        output: PathBuf,
+    },
+    /// Run full `SQLite`, foreign-key, and `FormatWright` queue-invariant checks.
+    IntegrityCheck,
+    /// Validate a backup on a migrated temporary copy; pass --yes to restore it.
+    Restore {
+        #[arg(value_name = "BACKUP")]
+        backup: PathBuf,
+
+        #[arg(long, help = "Replace the live database after a successful preflight")]
+        yes: bool,
+    },
+    /// Take a safety snapshot and compact the live database with VACUUM.
+    Compact,
+}
+
 #[tokio::main]
 async fn main() -> ExitCode {
     let cli = Cli::parse();
@@ -318,9 +349,12 @@ async fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             if json {
-                let rendered = serde_json::to_string_pretty(&error)
-                    .unwrap_or_else(|_| format!(r#"{{"code":"INTERNAL","message":"{error}"}}"#));
-                println!("{rendered}");
+                if !ERROR_OUTPUT_ALREADY_RENDERED.load(Ordering::Relaxed) {
+                    let rendered = serde_json::to_string_pretty(&error).unwrap_or_else(|_| {
+                        format!(r#"{{"code":"INTERNAL","message":"{error}"}}"#)
+                    });
+                    println!("{rendered}");
+                }
             } else {
                 eprintln!("error [{}]: {}", error.code, error.message);
                 eprintln!("action: {}", error.user_action);
@@ -705,6 +739,117 @@ async fn run(cli: Cli) -> Result<(), FormatWrightError> {
                 }
             }
         },
+        Command::Maintenance { command } => {
+            let database_path = cli.state_db.unwrap_or_else(default_state_db);
+            let service = MaintenanceService::new(&database_path);
+            match command {
+                MaintenanceCommand::Status => {
+                    let status = service.status()?;
+                    if cli.json {
+                        print_json(&status)
+                    } else {
+                        println!("database: {}", status.database_path.display());
+                        println!("size: {} bytes", status.size_bytes);
+                        println!(
+                            "schema: v{} (supported v{})",
+                            status.schema_version, status.supported_schema_version
+                        );
+                        println!("journal: {}", status.journal_mode);
+                        println!("jobs: {}", status.job_count);
+                        println!("active jobs: {}", status.active_job_count);
+                        println!(
+                            "integrity: {}",
+                            if status.integrity_ok { "ok" } else { "failed" }
+                        );
+                        Ok(())
+                    }
+                }
+                MaintenanceCommand::Backup { output } => {
+                    let report = service.backup(output)?;
+                    if cli.json {
+                        print_json(&report)
+                    } else {
+                        println!("backup: {}", report.backup_path.display());
+                        println!("size: {} bytes", report.size_bytes);
+                        println!("sha256: {}", report.sha256);
+                        println!("schema: v{}", report.schema_version);
+                        Ok(())
+                    }
+                }
+                MaintenanceCommand::IntegrityCheck => {
+                    let report = service.integrity_check()?;
+                    if cli.json {
+                        print_json(&report)?;
+                    } else {
+                        println!("integrity: {}", if report.ok { "ok" } else { "failed" });
+                        for message in &report.sqlite_messages {
+                            println!("sqlite: {message}");
+                        }
+                        for violation in &report.foreign_key_violations {
+                            println!("foreign key: {violation}");
+                        }
+                        for issue in &report.application_issues {
+                            println!("application: {issue}");
+                        }
+                    }
+                    if report.ok {
+                        Ok(())
+                    } else {
+                        if cli.json {
+                            ERROR_OUTPUT_ALREADY_RENDERED.store(true, Ordering::Relaxed);
+                        }
+                        Err(FormatWrightError::new(
+                            ErrorCode::StorageFailed,
+                            formatwright_core::Stage::Store,
+                            "The state database failed integrity checks",
+                            "Keep the database unchanged and restore a validated backup.",
+                        ))
+                    }
+                }
+                MaintenanceCommand::Restore { backup, yes } => {
+                    if yes {
+                        let report = service.restore(&backup)?;
+                        if cli.json {
+                            print_json(&report)
+                        } else {
+                            println!("restored: {}", report.database_path.display());
+                            println!("source: {}", report.restored_from.display());
+                            if let Some(safety_backup) = report.safety_backup {
+                                println!("safety backup: {}", safety_backup.display());
+                            }
+                            println!("schema: v{}", report.schema_version);
+                            println!("integrity: ok");
+                            Ok(())
+                        }
+                    } else {
+                        let report = service.restore_preflight(&backup)?;
+                        if cli.json {
+                            print_json(&report)
+                        } else {
+                            println!("restore preflight: ok");
+                            println!("source schema: v{}", report.source_schema_version);
+                            println!("restored schema: v{}", report.restored_schema_version);
+                            println!("migration required: {}", report.migration_required);
+                            println!("no live data changed; rerun with --yes to restore");
+                            Ok(())
+                        }
+                    }
+                }
+                MaintenanceCommand::Compact => {
+                    let report = service.compact()?;
+                    if cli.json {
+                        print_json(&report)
+                    } else {
+                        println!("database: {}", report.database_path.display());
+                        println!("before: {} bytes", report.size_before_bytes);
+                        println!("after: {} bytes", report.size_after_bytes);
+                        println!("reclaimed: {} bytes", report.reclaimed_bytes);
+                        println!("integrity: ok");
+                        Ok(())
+                    }
+                }
+            }
+        }
     }
 }
 

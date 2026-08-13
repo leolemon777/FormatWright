@@ -9,6 +9,7 @@ use uuid::Uuid;
 
 use crate::domain::{JobState, Plan, SCHEMA_VERSION};
 use crate::error::{ErrorCode, FormatWrightError, Result, Stage};
+use crate::maintenance::automatic_snapshot_before_migration;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct JobRecord {
@@ -69,6 +70,12 @@ impl SqliteJobStore {
     ///
     /// Returns a storage error when the database cannot open or migrate the file.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
+        let path = path.as_ref();
+        automatic_snapshot_before_migration(path)?;
+        Self::open_for_restore_staging(path)
+    }
+
+    pub(crate) fn open_for_restore_staging(path: impl AsRef<Path>) -> Result<Self> {
         let connection = Connection::open(path).map_err(storage_error)?;
         connection
             .busy_timeout(Duration::from_secs(5))
@@ -1560,6 +1567,10 @@ mod tests {
             .join("..")
             .join("result.mp4");
         let second_output = directory.path().join("FUTURE").join("RESULT.MP4");
+        let mut legacy_plan = plan();
+        legacy_plan.plan_hash =
+            crate::planner::deterministic_plan_hash(&legacy_plan).expect("hash legacy Plan");
+        let legacy_plan_json = serde_json::to_string(&legacy_plan).expect("serialize legacy Plan");
         let legacy = rusqlite::Connection::open(&database_path).expect("open legacy database");
         legacy
             .execute("DELETE FROM schema_migrations WHERE version = 3", [])
@@ -1570,8 +1581,13 @@ mod tests {
                     "INSERT INTO jobs(
                         id, state, input_path, output_path, plan_hash, plan_json,
                         sequence, created_unix_ms, updated_unix_ms
-                     ) VALUES (?1, 'planned', 'input.mkv', ?2, 'blake3:test', '{}', 0, 1, 1)",
-                    rusqlite::params![job_id.to_string(), output.to_string_lossy()],
+                     ) VALUES (?1, 'planned', 'input.mkv', ?2, ?3, ?4, 0, 1, 1)",
+                    rusqlite::params![
+                        job_id.to_string(),
+                        output.to_string_lossy(),
+                        legacy_plan.plan_hash,
+                        legacy_plan_json
+                    ],
                 )
                 .expect("insert legacy job");
             legacy
@@ -1582,12 +1598,20 @@ mod tests {
                     rusqlite::params![output.to_string_lossy(), job_id.to_string()],
                 )
                 .expect("insert legacy reservation");
+            legacy
+                .execute(
+                    "INSERT INTO job_events(
+                        job_id, sequence, previous_state, next_state, code, timestamp_unix_ms
+                     ) VALUES (?1, 0, NULL, 'planned', 'JOB_CREATED', 1)",
+                    [job_id.to_string()],
+                )
+                .expect("insert legacy event");
         }
         drop(legacy);
 
         let error = SqliteJobStore::open(&database_path)
             .expect_err("alias collision must stop the migration");
-        assert_eq!(error.code, ErrorCode::OutputConflict);
+        assert_eq!(error.code, ErrorCode::OutputConflict, "{error:?}");
         let inspected = rusqlite::Connection::open(&database_path).expect("inspect rollback");
         let migration_applied = inspected
             .query_row(

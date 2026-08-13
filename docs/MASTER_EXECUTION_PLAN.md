@@ -1,7 +1,7 @@
 # FormatWright 完成清单、待完成清单与总执行计划
 
 - 状态：持续维护的执行主表
-- 版本：0.3
+- 版本：0.4
 - 更新：2026-08-12
 - 产品范围与发布门槛来源：[`SPEC_PLAN.md`](../SPEC_PLAN.md)
 - 逐需求证据来源：[`docs/specs/TRACEABILITY.md`](specs/TRACEABILITY.md)
@@ -18,7 +18,7 @@
 - **未开始**：只有规格或方向，没有可运行实现。
 - **发布阻断**：不完成就不能发布 Public Beta；不是一般优化项。
 
-当前产品结论：**FormatWright 已具备 Windows 自包含开发候选：Release 内嵌并首次启动安装 PDF/Media Starter，生产只解析激活 pack 的精确路径，UI 与后端共同按 capability snapshot 门控；真实 PDF→PNG/JPG、GIF 与结构化链路已在本机通过；R-001 至 R-007 与 R-010 已关闭，立即暂停可恢复，Win32 输出别名/reparse retarget 会被阻断，队列取消会等待真实进程树收口，运行窗口中仍可读历史、分页和继续入队。** 但这仍不是 Public Beta：R-008/R-009 尚缺离线干净虚拟机、完整引擎 SBOM/许可证与源码义务、可信签名/吊销、升级回滚和正式代码签名证据；Gate 1 的 Maintenance/批量模型与 Gate 2–5 仍未完成。不得用于唯一副本或不可替代数据，也不得宣称“已认证”或“正式发布”。
+当前产品结论：**FormatWright 已具备 Windows 自包含开发候选：Release 内嵌并首次启动安装 PDF/Media Starter，生产只解析激活 pack 的精确路径，UI 与后端共同按 capability snapshot 门控；真实 PDF→PNG/JPG、GIF 与结构化链路已在本机通过；R-001 至 R-007 与 R-010 已关闭；SQLite MaintenanceService 已完成完整性检查、在线备份、隔离恢复预检、显式事务恢复、compact 安全快照和 migration 前五份保留。** 但这仍不是 Public Beta：R-008/R-009 尚缺离线干净虚拟机、完整引擎 SBOM/许可证与源码义务、可信签名/吊销、升级回滚和正式代码签名证据；Gate 1 的应用状态整包、批次模型与 Gate 2–5 仍未完成。不得用于唯一副本或不可替代数据，也不得宣称“已认证”或“正式发布”。
 
 ### 1.1 近期进度快照（2026-08-12）
 
@@ -32,13 +32,15 @@
 - [x] Desktop 接入同一执行器：`queue_desktop_conversion`、`run_desktop_queue_window`、`pause_desktop_queue_window`（finish-current / immediate）、`cancel_desktop_queue_window`；Convert「加入队列」、Jobs「运行 / 完成当前后暂停 / 立即停止」。
 - [x] 队列窗口通过 `run_window_observed` 在终态前提交 ValidationReport 文件（Desktop `reports/`）。
 - [x] Core `QueueWindowControl`：finish-current 只停准入；immediate 同时取消活跃 worker。
-- [x] 2026-08-12 最新验证：118 项普通 Rust 测试、6 项前端测试、TypeScript、生产构建、Rustfmt、Clippy、仓库合同与 pnpm production audit 通过；10k release test 按设计默认忽略。
+- [x] 2026-08-12 最新验证：129 项普通 Rust 测试、6 项前端测试、TypeScript、生产构建、Rustfmt、Clippy、仓库合同与 pnpm production audit 通过；10k release test 按设计默认忽略。
 - [x] 初次审查确认仓库没有提交；已用验证后的完整快照建立首个可回滚 Git 基线。
 - [x] 建立首个 Git 基线 `412c475`；Release/Development 引擎隔离提交 `7782e47`。
 - [x] 实现并验证 Release 精确 pack 路径、Windows 脚本包装拒绝、Desktop/Core capability snapshot 双重门控。
 - [x] 实现可重复 Windows Starter 构建、运行库哈希、版本化 install、原子 active registry 与首次启动激活；PDF/Media 清单验证通过。
 - [x] 真实 15 页 PDF→PNG/JPG、GIF 与结构化 E2E 通过；证据见 `docs/testing/WINDOWS_STARTER.md`。
 - [x] 修复 R-010 Poppler 分数像素向上取整不一致；原失败 PDF 的 PNG/JPG 验证均为 Pass。
+- [x] 新增共享 `MaintenanceService` 与 CLI `maintenance status|backup|restore|integrity-check|compact`；SQLite online backup、完整性/引用不变量、恢复临时副本 migration preflight、显式事务切换与恢复前安全快照已通过磁盘 E2E。
+- [x] `SqliteJobStore::open` 在 v2→v3 migration 前自动创建可验证便携快照，自动快照默认保留 5 份；损坏或新版恢复源不会改变 live DB。
 
 **计划完成（按 Gate 顺序，尚未勾选为完成）：**
 
@@ -50,7 +52,7 @@
 | 4 | 补 Windows 路径预约规范化、运行中 pause/failure-injection 测试、取消桥接任务生命周期 | Gate 1 | R-005/R-006 已关闭 |
 | 5 | 抽取完整 `ConversionService` 和 `ReportService`；删除入口层重复编排 | Gate 1 | 部分 |
 | 6 | Desktop 恢复横幅、批量取消/重试、实时队列读取 | Gate 1 / 2 | 实时读取/分页/入队已完成；横幅与批量动作待完成 |
-| 7 | 版本化 migration、备份/恢复/完整性检查，形成 Windows 长期自用稳定版 | Gate 1 / 4 | 未开始 |
+| 7 | 版本化 migration、备份/恢复/完整性检查，形成 Windows 长期自用稳定版 | Gate 1 / 4 | SQLite slice 完成；应用状态整包、Desktop、干净机升级/回滚待完成 |
 | 8 | batch/selection、10k 混合负载、公平性/延迟/RSS/WAL；拆分 `runner.rs` | Gate 1 | 未开始 |
 | 9 | Desktop Beta 闭环（文件夹、筛选虚拟化、进度、导出、shell 集成、无障碍） | Gate 2 | 未开始 / 部分 |
 | 10 | 引擎签名与格式认证、OS 强制隔离、跨平台、物理 10 GiB | Gate 3 | 未开始 / 部分 |
@@ -81,7 +83,7 @@
 - [x] Apache-2.0、SECURITY、PRIVACY、CONTRIBUTING、用户指南和故障排查。
 - [x] Probe、Plan、JobEvent、ValidationReport、EngineManifest、PresetLibrary 六个 JSON Schema v1。
 - [x] Rust 实例对公共 Schema 的合同测试，顶层未知字段拒绝。
-- [x] ADR-0001 至 ADR-0006：单 Core 多入口、子进程边界、SQLite 恢复、认证引擎包、有界 UI 投影、跨平台进程树。
+- [x] ADR-0001 至 ADR-0007：单 Core 多入口、子进程边界、SQLite 恢复、认证引擎包、有界 UI 投影、跨平台进程树、事务式 SQLite 维护。
 - [x] Windows/Linux/macOS CI 工作流已配置；Linux 额外执行依赖审计、许可证/来源策略、SBOM 和 MSRV 1.88。
 - [x] Dependabot、定时 fuzz、手动 unsigned Windows release-candidate workflow。
 
@@ -94,7 +96,7 @@
 - [x] 子进程只接收类型化 argv，不执行任意 shell 字符串。
 - [x] 超时与取消令牌、Windows 进程树终止、同目录 partial、验证后提交、无静默覆盖。
 - [x] FFmpeg/ffprobe、libheif 开发回退、LibreOffice、Pandoc、Poppler 和 Rust 结构化数据路径。
-- [x] CLI：inspect、plan、convert、batch-images、doctor、jobs list/show/run/cancel/retry/resume/recover、engine pack verify。
+- [x] CLI：inspect、plan、convert、batch-images、doctor、jobs list/show/run/cancel/retry/resume/recover、engine pack verify、maintenance status/backup/restore/integrity-check/compact。
 - [x] `convert --queue-only` 将不可变 Plan 持久化后再由队列执行。
 - [x] GW-01 至 GW-12 均有 Windows 实验性端到端证据；认证边界见格式矩阵。
 
@@ -112,6 +114,7 @@
 - [x] 九任务结构化/图片/视频混合队列观测到两个真实 FFmpeg 进程并发，记录父进程/进程树 RSS 和 WAL 峰值。
 - [x] Ctrl+C 停止新任务准入并取消活跃进程树；`Validating → Cancelled` 有回归测试。
 - [x] 共享 `JobExecutionService::run_window`：CLI `jobs run` 与 Desktop `run_desktop_queue_window` 已委托；两种 pause 控制、失败收口与单任务 Resume/Retry UI 已接入；恢复横幅和批量动作待完成。
+- [x] 共享 `MaintenanceService`：SQLite status、完整性、在线备份、恢复预检/显式恢复、compact、migration 前快照与五份保留；应用状态整包和 Desktop 入口待完成。
 
 ### 3.4 Desktop
 
@@ -143,7 +146,7 @@
 
 - [x] `cargo fmt --all --check`。
 - [x] `cargo clippy --workspace --all-targets --all-features -- -D warnings`。
-- [x] 118 项普通 Rust 测试通过（94 Core、7 Schema、13 Desktop、4 Engine SDK）；另有 1 项昂贵的 10k 发布测试按设计默认忽略，已有显式 release 运行证据。
+- [x] 129 项普通 Rust 测试通过（105 Core、7 Schema、13 Desktop、4 Engine SDK）；另有 1 项昂贵的 10k 发布测试按设计默认忽略，已有显式 release 运行证据。
 - [x] 6 项前端测试、TypeScript check 和生产构建通过。
 - [x] Rust 1.88 MSRV 全 workspace locked check 通过。
 - [x] 6 个 Schema、12 个黄金工作流和必需文件的仓库合同检查通过。
@@ -220,7 +223,7 @@
 - [ ] 可复现 fixture 生成、许可证清单、hash manifest 和外部贡献样本流程。
 - [ ] changelog、迁移说明、issue/bug/RFC 模板、支持矩阵自动校验。
 - [ ] 本地显式导出的诊断包：默认脱敏，用户预览后才写出，不含内容和 metadata value。
-- [ ] `MaintenanceService` 与 CLI：`maintenance status|backup|restore|integrity-check|compact`；应用升级前自动备份，恢复必须在干净副本上验证后再替换。
+- [x] `MaintenanceService` 与 CLI：`maintenance status|backup|restore|integrity-check|compact`；SQLite migration 前自动快照，恢复先在干净副本迁移/验证再以 SQLite 事务切换。应用状态整包与 Desktop 可取消维护仍列为 §20 后续。
 
 ### 4.6 Phase 6/7：Beta 后能力
 
@@ -519,7 +522,7 @@ API 不直接接受宿主任意路径。请求引用预先授权的 workspace/ro
 - [x] 创建首个 Git 基线提交；确认忽略规则不包含源码/配置，并开始使用可回滚的小提交；远端 `main` 保护待托管后配置。
 - [x] 建立 `docs/DEFECT_REGISTER.md`，录入 R-001 至 R-010；owner、修复提交和关闭证据在执行时填写。
 - [ ] 修正全部追踪矩阵旧描述，逐条关联最新 preset/scheduler/security 证据。
-- [ ] ADR-0007：确定性资源调度；ADR-0008：PresetLibrary 与原子迁移。
+- [ ] ADR-0008：确定性资源调度；ADR-0009：PresetLibrary 与原子迁移（ADR-0007 已用于 SQLite MaintenanceService）。
 - [ ] 冻结最低 OS、引擎分发和签名/许可证决策。
 - [ ] 将 release checklist 拆成可执行 issue，并指定 evidence artifact 名称。
 
@@ -541,7 +544,7 @@ API 不直接接受宿主任意路径。请求引用预先授权的 workspace/ro
 - [x] 抽取 `JobExecutionService`（CLI + Desktop 窗口执行 + ValidationReport 观察回调 + `QueueWindowControl` 两种 pause）；`ConversionService` 仍为 `workflow::prepare_conversion`，CLI 本地重复实现尚未删除。
 - [x] 依次关闭 R-001 至 R-006：六项均已按顺序关闭，每项有失败注入、运行中或并发回归证据。
 - [x] 关闭 R-007：Desktop 队列窗口不再占走唯一 Store，运行中实时 list/paging/queue-only 与 lease 清理回归通过。
-- [ ] 引入 `MaintenanceService` 最小切片：一致性检查、在线安全备份、恢复到临时副本、升级前自动快照和保留策略。
+- [x] 引入 `MaintenanceService` SQLite 最小切片：一致性检查、在线安全备份、恢复到临时副本、migration 前自动快照和五份保留；应用状态整包/Desktop 可取消入口待后续。
 - [ ] Desktop 恢复横幅、批量取消/重试。
 - [ ] 多连接 reservation/transition race、提交前 destination race；worker panic 恢复测试已随 R-001 完成。
 - [ ] 加入 batch/selection model、稳定分页与批量动作事件。
@@ -550,7 +553,7 @@ API 不直接接受宿主任意路径。请求引用预先授权的 workspace/ro
 
 退出：CLI/Desktop 对同一队列产生一致状态；预览 Plan 与执行 hash 相同；崩溃/取消/持久化失败/竞态无假成功、无静默覆盖、无遗失预约；备份可在干净数据库上完成恢复演练。
 
-下一工程里程碑：**R-001 至 R-007 状态缺陷已关闭；按 MaintenanceService → 多连接 reservation/commit race → batch/selection/bulk actions → Conversion/Report Service 的顺序完成 Gate 1，不得在可靠性和发布阻断前继续堆新格式。**
+下一工程里程碑：**R-001 至 R-007 与 SQLite MaintenanceService 已完成；按多连接 reservation/commit race → batch/selection/bulk actions → Conversion/Report Service → 应用状态整包的顺序完成 Gate 1，不得在可靠性和发布阻断前继续堆新格式。**
 
 ### Gate 2：Desktop Beta 功能闭环（1–2 周）
 
@@ -742,7 +745,7 @@ API 不直接接受宿主任意路径。请求引用预先授权的 workspace/ro
 
 ### 第 1 周：基线与 Windows 可用纵向闭环
 
-- [x] 创建 Git 基线，当前固定为 101 Rust + 6 TS 普通测试基线。
+- [x] 创建 Git 基线；此后普通基线已增长到 129 Rust + 6 TS 并保持通过。
 - [ ] 为 R-008/R-009 写失败测试并冻结 Starter pack、许可证与 Release locator 决策：实现与定位决策已完成，许可证/签名认证待冻结。
 - [x] 实现 Core/PDF/Media pack staging、版本化安装/激活和 capability snapshot；UI 与后端按能力门控。
 - 在无系统引擎、污染 PATH、完全离线的干净 Windows VM 完成 Starter 三条 smoke；把产物与日志存入 release evidence。
@@ -761,10 +764,10 @@ API 不直接接受宿主任意路径。请求引用预先授权的 workspace/ro
 
 ### 第 3–4 周：长期数据与共享服务
 
-- 抽取 `ConversionService`、`ReportService`、最小 `MaintenanceService`。
+- 抽取 `ConversionService`、`ReportService`；最小 SQLite `MaintenanceService` 已完成。
 - 建立单 writer/只读连接模型，使队列运行时仍可查询和入队。
 - 版本化 SQLite/Presets/Engine Registry migrations。
-- 完成备份、恢复、integrity-check、升级前快照与保留策略。
+- SQLite 备份、恢复、integrity-check、migration 前快照与保留策略已完成；继续实现应用状态整包。
 
 退出：CLI/Desktop 行为等价；旧数据库升级、失败回滚和空机恢复演练通过。
 
@@ -806,9 +809,9 @@ API 不直接接受宿主任意路径。请求引用预先授权的 workspace/ro
 ### 20.1 数据、备份与恢复
 
 - 永不修改或删除用户源文件；输出、应用状态和测试证据使用不同保留策略。
-- 每次 schema migration 前自动创建应用状态快照；默认保留最近 5 个成功快照，并允许用户导出到自选目录。
-- 备份至少覆盖 SQLite（使用在线 backup API/一致性 checkpoint）、presets、engine registry 和设置；报告可配置包含，第三方引擎二进制不盲目复制但必须保存身份与恢复说明。
-- restore 先恢复到临时应用数据目录，运行 migration preflight、`integrity_check` 和引用校验，成功后再原子切换。
+- SQLite 每次 schema migration 前自动创建已验证快照，默认保留最近 5 个；CLI 可将便携 SQLite 备份导出到自选目录。Presets/Engine Registry/Settings 的逐项 migration 前快照仍待统一。
+- SQLite online backup、一致性检查和安全恢复已完成；应用状态整包仍须覆盖 presets、engine registry identity 和设置，报告可配置包含，第三方引擎二进制不盲目复制但必须保存身份与恢复说明。
+- SQLite restore 已先复制到临时库、运行 migration preflight、`integrity_check`/外键/队列引用校验，显式 `--yes` 后以 SQLite backup transaction 切换；完整应用数据目录的原子切换仍待整包实现。
 - 检测非正常退出后运行轻量完整性检查；完整检查、compact 和清理必须显式触发且可取消。
 
 ### 20.2 兼容与弃用

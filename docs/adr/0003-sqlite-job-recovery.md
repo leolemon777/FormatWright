@@ -15,6 +15,8 @@ SQLite in WAL mode stores job identity, plan snapshots, step state, engine ident
 
 All state transitions are transactional and validated by a state machine. One storage actor serializes writes; read models may use separate connections.
 
+Database backup, restore validation, migration snapshots, integrity checks, and compaction are defined by [ADR-0007](0007-transactional-sqlite-maintenance.md).
+
 ## Consequences
 
 - Desktop operation requires no database server.
@@ -31,4 +33,3 @@ All state transitions are transactional and validated by a state machine. One st
 ## Revisit when
 
 The single-machine product has measured write contention that cannot be solved with batching or the self-hosted distributed worker becomes a committed release.
-

@@ -33,6 +33,12 @@ The currently tested development fallback is libheif `heif-convert`. A libvips b
 
 Run `formatwright jobs recover --state-db PATH` after an abnormal CLI exit. Desktop startup performs the equivalent interruption step automatically. Recovery deletes only deterministic staged files belonging to known job IDs and never the selected destination.
 
+## Database integrity and restore
+
+Run `formatwright --state-db PATH maintenance integrity-check` before attempting state repair. The check covers SQLite pages, foreign keys, migrations, queue reservations/events, and stored Plan hashes. Do not delete or recreate the database after a read error.
+
+Create a portable copy with `maintenance backup BACKUP.sqlite3`; an existing backup path is refused. `maintenance restore BACKUP.sqlite3` only validates and migrates a temporary copy. Stop queue execution, close other FormatWright processes, and add `--yes` only after preflight succeeds. A confirmed restore first stores a pre-restore safety snapshot under `backups`. A schema newer than the running application is intentionally refused; install an equal or newer FormatWright release instead of forcing a downgrade.
+
 ## Reports and sensitive paths
 
 Local reports intentionally include paths so recovery is explainable. Metadata values classified private/secret are redacted, but paths are not yet redacted. Do not attach raw reports to public issues; reproduce with a synthetic file and follow `SECURITY.md` for vulnerabilities.

@@ -10,6 +10,7 @@ pub mod error;
 pub mod fingerprint;
 pub mod inspect;
 pub mod job_store;
+pub mod maintenance;
 mod office;
 mod pdf;
 pub mod planner;
@@ -46,6 +47,10 @@ pub use formatwright_engine_sdk::{
 pub use inspect::inspect_media;
 pub use job_store::{
     JobCreateRequest, JobDetails, JobEventRecord, JobProgress, JobRecord, SqliteJobStore,
+};
+pub use maintenance::{
+    BackupReport, CompactReport, IntegrityReport, MaintenanceService, MaintenanceStatus,
+    RestorePreflightReport, RestoreReport,
 };
 pub use office::{inspect_office, office_format_hint, plan_office_to_pdf};
 pub use pdf::{inspect_pdf, pdf_format_hint, plan_pdf_render};

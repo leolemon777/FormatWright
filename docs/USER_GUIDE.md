@@ -40,9 +40,16 @@ formatwright jobs list
 formatwright jobs recover
 formatwright jobs run --limit 100
 formatwright engines verify PACK/manifest.json
+formatwright --state-db PATH maintenance status
+formatwright --state-db PATH maintenance backup BACKUP.sqlite3
+formatwright --state-db PATH maintenance integrity-check
+formatwright --state-db PATH maintenance restore BACKUP.sqlite3
+formatwright --state-db PATH maintenance compact
 ~~~
 
 Add `--json` for machine-readable output and `--state-db PATH` for an explicit durable queue. Use `convert --dry-run` to inspect a Plan without running it. `Ctrl+C` requests cancellation and prevents admission of further queued work.
+
+`maintenance restore BACKUP` validates and migrates a temporary copy only. Stop queue execution, close other FormatWright processes, review that preflight, and rerun with `--yes` to replace the live database transactionally. Confirmed restore and compact create automatic safety snapshots under the state database's `backups` directory; the five newest automatic snapshots are retained. Manual backup never overwrites an existing destination. This Alpha slice covers SQLite; presets, settings, engine registry identity, and optional reports are not yet packaged into one application-state backup.
 
 ## Supported development workflows
 

@@ -16,8 +16,9 @@ FormatWright is under active **Windows development Alpha**. The unsigned Windows
 1. CLI durable-queue execution runs through shared `JobExecutionService` in Core.
 2. Desktop binds execution to the visible Plan hash, persists reports before terminal state, and supports recoverable immediate pause plus per-job Resume/Retry.
 3. Queue execution closes worker/process-tree failures, normalizes Windows output identity, leaves no cancellation-link tasks, and keeps live history/paging/enqueue available through a separate SQLite connection.
+4. Shared SQLite maintenance now provides full integrity checks, validated online WAL-consistent backups, isolated restore preflight, confirmed transactional restore, compaction snapshots, and automatic pre-migration snapshots with five-copy retention.
 
-The next engineering gate adds maintenance/backup/integrity workflows, batch selection and bulk recovery, then completes the wider Desktop Beta surface. Release certification still requires a clean offline Windows VM and the supply-chain work above.
+The next engineering gate adds the application-state bundle, batch selection and bulk recovery, then completes the wider Desktop Beta surface. Release certification still requires a clean offline Windows VM and the supply-chain work above.
 
 ## Product promises
 
@@ -71,6 +72,7 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 cargo run -p formatwright-cli -- doctor
+cargo run -p formatwright-cli -- --state-db PATH maintenance integrity-check
 pnpm --dir apps/desktop test -- --run
 pnpm --dir apps/desktop build
 cargo test -p formatwright-desktop --all-targets
