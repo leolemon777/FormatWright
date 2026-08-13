@@ -18,8 +18,9 @@ FormatWright is under active **Windows development Alpha**. The unsigned Windows
 3. Queue execution closes worker/process-tree failures, normalizes Windows output identity, leaves no cancellation-link tasks, and keeps live history/paging/enqueue available through a separate SQLite connection.
 4. Shared SQLite maintenance now provides full integrity checks, validated online WAL-consistent backups, isolated restore preflight, confirmed transactional restore, compaction snapshots, and automatic pre-migration snapshots with five-copy retention.
 5. SQLite mutations acquire the writer before reading mutable state, and every output family publishes through the same no-clobber filesystem primitive so a late destination cannot be overwritten.
+6. Windows NSIS now owns a classic Explorer file/directory entry; strict local-path parsing and single-instance forwarding pre-fill the existing Convert window without auto-running or starting a competing recovery process.
 
-The next engineering gate adds the application-state bundle, batch selection and bulk recovery, then completes the wider Desktop Beta surface. Release certification still requires a clean offline Windows VM and the supply-chain work above.
+The next engineering gate completes the Desktop accessibility/installed-shell matrix, then moves into format, engine-supply-chain, clean-VM and release certification. Release certification still requires a clean offline Windows VM and the supply-chain work above.
 
 ## Product promises
 

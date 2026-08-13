@@ -1,7 +1,7 @@
 # Application SBOM
 
 - Status: Phase 5 development evidence
-- Updated: 2026-08-10
+- Updated: 2026-08-12
 - Format: SPDX 2.3 JSON
 
 ## Generation
@@ -16,11 +16,11 @@ The output defaults to ignored `dist/sbom.spdx.json`; release CI attaches it rat
 
 ## Recorded Windows evidence
 
-The 2026-08-10 development run after the dependency security update generated 527 unique packages and 1,571 valid relationships. PowerShell independently parsed the JSON and observed:
+The 2026-08-12 development run after adding the pinned Tauri single-instance plugin generated 560 unique packages and 1,726 valid relationships. PowerShell independently parsed the JSON and observed:
 
 ~~~text
 SPDX-2.3
-packages=527 unique_ids=527 relationships=1571 broken_relationships=0
+packages=560 unique_ids=560 relationships=1726 broken_relationships=0
 contains_windows_absolute_path=false
 ~~~
 

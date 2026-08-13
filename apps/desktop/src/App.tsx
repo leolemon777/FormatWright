@@ -83,6 +83,8 @@ type JobRecord = {
   updated_unix_ms: number;
 };
 
+type ShellOpen = { path: string; directory: boolean };
+
 type JobQueryPage = {
   jobs: JobRecord[];
   total: number;
@@ -413,6 +415,36 @@ export default function App() {
       void refreshJobs();
     }).then((dispose) => disposers.push(dispose));
     if ("__TAURI_INTERNALS__" in window) {
+      let consumingShellOpen = false;
+      let shellOpenRequested = false;
+      const consumeShellOpens = async () => {
+        shellOpenRequested = true;
+        if (consumingShellOpen) return;
+        consumingShellOpen = true;
+        try {
+          do {
+            shellOpenRequested = false;
+            while (mounted.current) {
+              const shellOpen = await invoke<ShellOpen | null>("get_desktop_shell_open");
+              if (!shellOpen) break;
+              applyShellOpen(shellOpen);
+            }
+          } while (mounted.current && shellOpenRequested);
+        } catch {
+          // A normal app launch has no shell-selected path.
+        } finally {
+          consumingShellOpen = false;
+        }
+      };
+      void listen<void>("formatwright://shell-open-requested", () => void consumeShellOpens())
+        .then((dispose) => {
+          if (!mounted.current) {
+            dispose();
+            return;
+          }
+          disposers.push(dispose);
+          void consumeShellOpens();
+        });
       void invoke<ApplicationSettings | null>("get_desktop_settings")
         .then(async (settings) => {
           if (!mounted.current) return;
@@ -522,6 +554,18 @@ export default function App() {
     setPreview(null);
     setReport(null);
     setError(null);
+  }
+
+  function applyShellOpen(shellOpen: ShellOpen) {
+    if (shellOpen.directory) {
+      setFolderInputRoot(shellOpen.path);
+      setFolderPreview(null);
+      setConvertMode("folder");
+    } else {
+      selectInput(shellOpen.path);
+      setConvertMode("file");
+    }
+    setTab("convert");
   }
 
   function changeTarget(next: string) {

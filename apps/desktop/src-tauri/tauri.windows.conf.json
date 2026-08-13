@@ -13,7 +13,8 @@
       "nsis": {
         "installMode": "currentUser",
         "languages": ["English", "SimpChinese"],
-        "displayLanguageSelector": true
+        "displayLanguageSelector": true,
+        "installerHooks": "windows-explorer-hooks.nsh"
       }
     }
   }

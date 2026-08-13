@@ -16,6 +16,8 @@
 
 PDF-to-image conversion selects an output directory because every page is rendered. Other current workflows select one output file. Existing destinations are refused; silent overwrite is not supported.
 
+On an installed Windows development build, **Open in FormatWright** is available for files and directories in Explorer's classic context menu (normally **Show more options** on Windows 11). It opens or focuses FormatWright and fills the Convert input; it never starts a conversion without review. Network shares are intentionally rejected by the current local-path policy.
+
 ## Presets
 
 Open **Presets** to name and save the current target, quality, width, DPI, color mode, and compatible-stream policy. Applying a preset updates conversion settings but never stores or changes input/output paths. Edit uses the preset's stable ID; delete requires a second confirmation click.

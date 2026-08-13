@@ -2,7 +2,7 @@
 
 - Status: Phase 4 implementation in progress
 - Version: 0.1
-- Updated: 2026-08-10
+- Updated: 2026-08-12
 
 ## 1. Information architecture
 
@@ -17,7 +17,7 @@ Primary destinations:
 
 The default launch destination is Convert unless interrupted jobs require attention.
 
-The current Windows development slice implements Convert, Jobs, Presets, Engines, Reports, and Settings. Native input/output pickers and versioned named preset editing/import/export are implemented. Platform shell integration and release usability studies remain pending.
+The current Windows development slice implements Convert, Jobs, Presets, Engines, Reports, and Settings. Native input/output pickers, versioned named preset editing/import/export, and a classic Explorer file/directory entry are implemented. The shell entry only pre-fills an existing local absolute path, and a running single instance receives and focuses on later requests. Windows 11 modern top-level, macOS/Linux shell integration, and release usability studies remain pending.
 
 ## 2. First-run flow
 

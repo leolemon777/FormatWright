@@ -2,11 +2,11 @@
 
 mod queue_bridge;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use formatwright_core::{
@@ -29,6 +29,8 @@ use tempfile::TempPath;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+const MAX_PENDING_SHELL_OPEN_PATHS: usize = 32;
+
 struct DesktopState {
     store: Mutex<SqliteJobStore>,
     job_database_path: PathBuf,
@@ -45,6 +47,7 @@ struct DesktopState {
     operation_gate: Mutex<DesktopOperationGate>,
     folder_previews: Mutex<HashMap<Uuid, DesktopFolderPreviewCache>>,
     revalidations: Mutex<HashSet<Uuid>>,
+    shell_open_paths: Arc<Mutex<VecDeque<PathBuf>>>,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -104,6 +107,12 @@ struct DesktopRecipeExport {
     input_path: PathBuf,
     output_path: PathBuf,
     plan: Plan,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct DesktopShellOpen {
+    path: PathBuf,
+    directory: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -1375,6 +1384,97 @@ fn unix_ms_now() -> i64 {
         .unwrap_or_default()
 }
 
+fn shell_open_path_from_args<I, S>(arguments: I) -> Option<PathBuf>
+where
+    I: IntoIterator<Item = S>,
+    S: Into<std::ffi::OsString>,
+{
+    let mut arguments = arguments.into_iter().map(Into::into);
+    let _executable = arguments.next()?;
+    while let Some(argument) = arguments.next() {
+        if argument == "--shell-open" {
+            return arguments.next().map(PathBuf::from);
+        }
+    }
+    None
+}
+
+fn validated_shell_open_path(
+    arguments: impl IntoIterator<Item = std::ffi::OsString>,
+) -> Option<PathBuf> {
+    let requested = shell_open_path_from_args(arguments)?;
+    if !requested.is_absolute() {
+        return None;
+    }
+    #[cfg(windows)]
+    if !matches!(
+        requested.components().next(),
+        Some(std::path::Component::Prefix(prefix))
+            if matches!(
+                prefix.kind(),
+                std::path::Prefix::Disk(_) | std::path::Prefix::VerbatimDisk(_)
+            )
+    ) {
+        return None;
+    }
+    let canonical = requested.canonicalize().ok()?;
+    if !canonical.is_file() && !canonical.is_dir() {
+        return None;
+    }
+    #[cfg(windows)]
+    if !matches!(
+        canonical.components().next(),
+        Some(std::path::Component::Prefix(prefix))
+            if matches!(prefix.kind(), std::path::Prefix::VerbatimDisk(_))
+    ) {
+        return None;
+    }
+    Some(requested)
+}
+
+fn desktop_shell_open_from_args(
+    arguments: impl IntoIterator<Item = std::ffi::OsString>,
+) -> Option<DesktopShellOpen> {
+    let path = validated_shell_open_path(arguments)?;
+    let directory = path.is_dir();
+    Some(DesktopShellOpen { path, directory })
+}
+
+fn enqueue_shell_open_path(pending: &Mutex<VecDeque<PathBuf>>, path: PathBuf) {
+    if let Ok(mut pending) = pending.lock() {
+        if pending.len() >= MAX_PENDING_SHELL_OPEN_PATHS {
+            pending.pop_front();
+        }
+        pending.push_back(path);
+    }
+}
+
+fn handle_second_instance(
+    app: &tauri::AppHandle,
+    arguments: Vec<String>,
+    shell_open_paths: &Mutex<VecDeque<PathBuf>>,
+) {
+    if let Some(shell_open) =
+        desktop_shell_open_from_args(arguments.into_iter().map(std::ffi::OsString::from))
+    {
+        enqueue_shell_open_path(shell_open_paths, shell_open.path);
+        let _ = app.emit("formatwright://shell-open-requested", ());
+    }
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)] // Tauri commands receive managed state through this extractor.
+fn get_desktop_shell_open(state: tauri::State<'_, DesktopState>) -> Option<DesktopShellOpen> {
+    let path = state.shell_open_paths.lock().ok()?.pop_front()?;
+    let directory = path.is_dir();
+    Some(DesktopShellOpen { path, directory })
+}
+
 fn report_for_export(mut report: ValidationReport, redact_paths: bool) -> ValidationReport {
     if redact_paths {
         report.input.display_path = None;
@@ -2071,7 +2171,10 @@ fn recover_desktop_jobs(
     })
 }
 
-fn setup_desktop(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+fn setup_desktop(
+    app: &mut tauri::App,
+    shell_open_paths: Arc<Mutex<VecDeque<PathBuf>>>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let data_directory = app.path().app_data_dir()?;
     let resource_directory = app.path().resource_dir()?;
     let job_database_path = data_directory.join("jobs.sqlite3");
@@ -2110,6 +2213,10 @@ fn setup_desktop(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>>
     let settings = ApplicationSettingsService::new(&settings_path)
         .read()
         .map_err(|error| Box::<dyn std::error::Error>::from(error.to_string()))?;
+    let shell_open_path = validated_shell_open_path(std::env::args_os());
+    if let Some(path) = shell_open_path {
+        enqueue_shell_open_path(&shell_open_paths, path);
+    }
     app.manage(DesktopState {
         store: Mutex::new(store),
         job_database_path,
@@ -2126,6 +2233,7 @@ fn setup_desktop(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>>
         operation_gate: Mutex::new(DesktopOperationGate::default()),
         folder_previews: Mutex::new(HashMap::new()),
         revalidations: Mutex::new(HashSet::new()),
+        shell_open_paths,
     });
     Ok(())
 }
@@ -2137,9 +2245,16 @@ fn setup_desktop(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>>
 ///
 /// Panics when Tauri cannot initialize the configured window or event loop.
 pub fn run() {
+    let shell_open_paths = Arc::new(Mutex::new(VecDeque::new()));
+    let forwarded_shell_open_paths = Arc::clone(&shell_open_paths);
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(
+            move |app, arguments, _working_directory| {
+                handle_second_instance(app, arguments, &forwarded_shell_open_paths);
+            },
+        ))
         .plugin(tauri_plugin_dialog::init())
-        .setup(setup_desktop)
+        .setup(move |app| setup_desktop(app, Arc::clone(&shell_open_paths)))
         .invoke_handler(tauri::generate_handler![
             run_queue_bridge_benchmark,
             desktop_doctor,
@@ -2155,6 +2270,7 @@ pub fn run() {
             pause_desktop_queue_window,
             cancel_desktop_queue_window,
             cancel_desktop_job,
+            get_desktop_shell_open,
             requeue_desktop_job,
             cleanup_desktop_job_staging,
             list_desktop_jobs,
@@ -2207,12 +2323,13 @@ mod tests {
 
     use super::{
         DESKTOP_JOB_PAGE_LIMIT, DesktopConversionRequest, DesktopEngineRegistryEntry,
-        DesktopOperationGate, acquire_active_operation, acquire_maintenance_operation,
-        acquire_queue_window, apply_pending_restore, backup_path, bundled_manifest_paths,
-        desktop_job_page_limit, load_preset_library, pending_restore_path, persist_preset_library,
+        DesktopOperationGate, MAX_PENDING_SHELL_OPEN_PATHS, acquire_active_operation,
+        acquire_maintenance_operation, acquire_queue_window, apply_pending_restore, backup_path,
+        bundled_manifest_paths, desktop_job_page_limit, enqueue_shell_open_path,
+        load_preset_library, pending_restore_path, persist_preset_library,
         prepare_approved_desktop_conversion, recover_desktop_jobs, registered_manifest_paths,
-        report_for_export, requeue_job, run_queue_window_on_database, stage_pending_restore,
-        write_desktop_export_noclobber,
+        report_for_export, requeue_job, run_queue_window_on_database, shell_open_path_from_args,
+        stage_pending_restore, validated_shell_open_path, write_desktop_export_noclobber,
     };
 
     fn plan(output_path: PathBuf) -> Plan {
@@ -2626,6 +2743,82 @@ mod tests {
         assert_eq!(
             desktop_job_page_limit(Some(usize::MAX)),
             DESKTOP_JOB_PAGE_LIMIT
+        );
+    }
+
+    #[test]
+    fn shell_open_accepts_one_explicit_existing_local_path() {
+        let suite = tempdir().expect("suite");
+        let input = suite.path().join("名字 with spaces.json");
+        fs::write(&input, b"{}").expect("input");
+        assert_eq!(
+            validated_shell_open_path([
+                "formatwright-desktop.exe".into(),
+                "--shell-open".into(),
+                input.clone().into_os_string(),
+            ]),
+            Some(input)
+        );
+        assert_eq!(
+            shell_open_path_from_args([
+                "formatwright-desktop.exe",
+                "--unknown",
+                "value",
+                "--shell-open",
+                "selected.txt",
+                "ignored.txt",
+            ]),
+            Some(PathBuf::from("selected.txt"))
+        );
+        let pending = std::sync::Mutex::new(std::collections::VecDeque::new());
+        for index in 0..=MAX_PENDING_SHELL_OPEN_PATHS {
+            enqueue_shell_open_path(&pending, PathBuf::from(index.to_string()));
+        }
+        let pending = pending.into_inner().expect("pending paths");
+        assert_eq!(pending.len(), MAX_PENDING_SHELL_OPEN_PATHS);
+        assert_eq!(pending.front(), Some(&PathBuf::from("1")));
+        assert_eq!(
+            pending.back(),
+            Some(&PathBuf::from(MAX_PENDING_SHELL_OPEN_PATHS.to_string()))
+        );
+    }
+
+    #[test]
+    fn shell_open_rejects_missing_or_incomplete_requests() {
+        assert_eq!(
+            validated_shell_open_path([
+                "formatwright-desktop.exe".into(),
+                "--shell-open".into(),
+                PathBuf::from("definitely-missing-formatwright-input").into_os_string(),
+            ]),
+            None
+        );
+        #[cfg(windows)]
+        for rejected in [r"\\server\share\file.txt", r"\\.\C:\device.txt"] {
+            assert_eq!(
+                validated_shell_open_path([
+                    "formatwright-desktop.exe".into(),
+                    "--shell-open".into(),
+                    PathBuf::from(rejected).into_os_string(),
+                ]),
+                None
+            );
+        }
+        assert_eq!(
+            shell_open_path_from_args(["formatwright-desktop.exe", "--shell-open"]),
+            None
+        );
+        assert_eq!(
+            shell_open_path_from_args(["formatwright-desktop.exe", "selected.txt"]),
+            None
+        );
+        assert_eq!(
+            validated_shell_open_path([
+                "formatwright-desktop.exe".into(),
+                "--shell-open".into(),
+                PathBuf::from("relative-input.txt").into_os_string(),
+            ]),
+            None
         );
     }
 
