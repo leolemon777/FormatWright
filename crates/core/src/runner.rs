@@ -365,15 +365,10 @@ where
             "Choose another output path or retry with an explicit conflict policy.",
         ));
     }
-    std::fs::rename(&partial_path, &output_path).map_err(|error| {
-        FormatWrightError::new(
-            ErrorCode::StorageFailed,
-            Stage::Commit,
-            "Validated output could not be committed",
-            "Check destination permissions and storage health.",
-        )
-        .with_diagnostic(error.to_string())
-    })?;
+    if let Err(error) = commit_path_no_replace(&partial_path, &output_path) {
+        cleanup_partial(&partial_path);
+        return Err(error);
+    }
     report.output.display_path = Some(output_path.to_string_lossy().into_owned());
 
     Ok(ExecutionResult {
@@ -666,15 +661,10 @@ where
             "Choose another output path.",
         ));
     }
-    std::fs::rename(&produced_pdf, output_path).map_err(|error| {
-        FormatWrightError::new(
-            ErrorCode::StorageFailed,
-            Stage::Commit,
-            "Validated Office PDF could not be committed",
-            "Check destination permissions and storage health.",
-        )
-        .with_diagnostic(error.to_string())
-    })?;
+    if let Err(error) = commit_path_no_replace(&produced_pdf, output_path) {
+        cleanup_partial(partial_path);
+        return Err(error);
+    }
     if let Err(error) = std::fs::remove_dir_all(partial_path) {
         tracing::warn!(partial = %partial_path.display(), %error, "committed Office PDF but could not clean workspace");
     }
@@ -1110,15 +1100,10 @@ where
             "Choose another output directory.",
         ));
     }
-    std::fs::rename(partial_path, output_path).map_err(|error| {
-        FormatWrightError::new(
-            ErrorCode::StorageFailed,
-            Stage::Commit,
-            "Validated PDF page directory could not be committed",
-            "Check destination permissions and storage health.",
-        )
-        .with_diagnostic(error.to_string())
-    })?;
+    if let Err(error) = commit_path_no_replace(partial_path, output_path) {
+        cleanup_partial(partial_path);
+        return Err(error);
+    }
     report.output.display_path = Some(output_path.to_string_lossy().into_owned());
     Ok(ExecutionResult {
         output_path: output_path.to_owned(),
@@ -1369,15 +1354,10 @@ where
             "Choose another output path.",
         ));
     }
-    std::fs::rename(&staged_output, output_path).map_err(|error| {
-        FormatWrightError::new(
-            ErrorCode::StorageFailed,
-            Stage::Commit,
-            "Validated HEIC output could not be committed",
-            "Check destination permissions and storage health.",
-        )
-        .with_diagnostic(error.to_string())
-    })?;
+    if let Err(error) = commit_path_no_replace(&staged_output, output_path) {
+        cleanup_partial(partial_path);
+        return Err(error);
+    }
     if let Err(error) = std::fs::remove_dir(partial_path) {
         tracing::warn!(partial = %partial_path.display(), %error, "committed HEIC output but could not remove empty workspace");
     }
@@ -1712,15 +1692,10 @@ where
             "Choose another output path.",
         ));
     }
-    std::fs::rename(partial_path, output_path).map_err(|error| {
-        FormatWrightError::new(
-            ErrorCode::StorageFailed,
-            Stage::Commit,
-            "Validated DOCX could not be committed",
-            "Check destination permissions.",
-        )
-        .with_diagnostic(error.to_string())
-    })?;
+    if let Err(error) = commit_path_no_replace(partial_path, output_path) {
+        cleanup_partial(partial_path);
+        return Err(error);
+    }
     report.output.display_path = Some(output_path.to_string_lossy().into_owned());
     Ok(ExecutionResult {
         output_path: output_path.to_owned(),
@@ -1828,15 +1803,10 @@ where
             "Choose another output path and retry.",
         ));
     }
-    std::fs::rename(partial_path, output_path).map_err(|error| {
-        FormatWrightError::new(
-            ErrorCode::StorageFailed,
-            Stage::Commit,
-            "Validated output could not be committed",
-            "Check destination permissions and storage health.",
-        )
-        .with_diagnostic(error.to_string())
-    })?;
+    if let Err(error) = commit_path_no_replace(partial_path, output_path) {
+        cleanup_partial(partial_path);
+        return Err(error);
+    }
     report.output.display_path = Some(output_path.to_string_lossy().into_owned());
     Ok(ExecutionResult {
         output_path: output_path.to_owned(),
@@ -2434,6 +2404,38 @@ fn cleanup_partial(path: &Path) {
     }
 }
 
+fn commit_path_no_replace(source: &Path, destination: &Path) -> Result<()> {
+    rename_path_no_replace(source, destination).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::AlreadyExists || destination.exists() {
+            return FormatWrightError::new(
+                ErrorCode::OutputConflict,
+                Stage::Commit,
+                "The destination appeared before the validated output could be committed",
+                "Keep the existing destination and choose another output path.",
+            )
+            .with_diagnostic(error.to_string());
+        }
+        FormatWrightError::new(
+            ErrorCode::StorageFailed,
+            Stage::Commit,
+            "Validated output could not be committed without overwriting",
+            "Check destination permissions and local filesystem support for atomic no-replace moves.",
+        )
+        .with_diagnostic(error.to_string())
+    })
+}
+
+fn rename_path_no_replace(source: &Path, destination: &Path) -> std::io::Result<()> {
+    let path = tempfile::TempPath::try_from_path(source.to_path_buf())?;
+    match path.persist_noclobber(destination) {
+        Ok(()) => Ok(()),
+        Err(mut error) => {
+            error.path.disable_cleanup(true);
+            Err(error.error)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -2457,6 +2459,7 @@ mod tests {
     use tokio_util::sync::CancellationToken;
     use uuid::Uuid;
 
+    use super::commit_path_no_replace;
     #[cfg(unix)]
     use super::terminate_process_tree;
     #[cfg(windows)]
@@ -2486,6 +2489,62 @@ mod tests {
         };
         let error = enforce_network_policy(&plan).expect_err("network plan must be blocked");
         assert_eq!(error.code, ErrorCode::PolicyBlocked);
+    }
+
+    #[test]
+    fn atomic_file_commit_never_replaces_an_existing_destination() {
+        let directory = tempdir().expect("temporary directory");
+        let staged = directory.path().join("staged.bin");
+        let destination = directory.path().join("destination.bin");
+        fs::write(&staged, b"validated output").expect("staged output");
+        fs::write(&destination, b"existing data").expect("existing destination");
+
+        let error = commit_path_no_replace(&staged, &destination)
+            .expect_err("no-replace commit must reject an existing file");
+
+        assert_eq!(error.code, ErrorCode::OutputConflict);
+        assert_eq!(
+            fs::read(&destination).expect("destination data"),
+            b"existing data"
+        );
+        assert_eq!(fs::read(&staged).expect("staged data"), b"validated output");
+    }
+
+    #[test]
+    fn atomic_directory_commit_never_replaces_an_existing_destination() {
+        let directory = tempdir().expect("temporary directory");
+        let staged = directory.path().join("staged-pages");
+        let destination = directory.path().join("destination-pages");
+        fs::create_dir(&staged).expect("staged directory");
+        fs::write(staged.join("page-1.png"), b"validated page").expect("staged page");
+        fs::create_dir(&destination).expect("destination directory");
+        fs::write(destination.join("keep.txt"), b"existing data").expect("existing marker");
+
+        let error = commit_path_no_replace(&staged, &destination)
+            .expect_err("no-replace commit must reject an existing directory");
+
+        assert_eq!(error.code, ErrorCode::OutputConflict);
+        assert_eq!(
+            fs::read(destination.join("keep.txt")).expect("destination marker"),
+            b"existing data"
+        );
+        assert!(staged.join("page-1.png").is_file());
+    }
+
+    #[test]
+    fn atomic_file_commit_moves_to_an_absent_destination() {
+        let directory = tempdir().expect("temporary directory");
+        let staged = directory.path().join("staged.bin");
+        let destination = directory.path().join("destination.bin");
+        fs::write(&staged, b"validated output").expect("staged output");
+
+        commit_path_no_replace(&staged, &destination).expect("no-replace commit");
+
+        assert!(!staged.exists());
+        assert_eq!(
+            fs::read(destination).expect("committed data"),
+            b"validated output"
+        );
     }
 
     #[cfg(windows)]

@@ -3,7 +3,10 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use rusqlite::{Connection, ErrorCode as SqliteErrorCode, OptionalExtension, Transaction, params};
+use rusqlite::{
+    Connection, ErrorCode as SqliteErrorCode, OptionalExtension, Transaction, TransactionBehavior,
+    params,
+};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -166,7 +169,10 @@ impl SqliteJobStore {
             return Ok(());
         }
 
-        let transaction = self.connection.transaction().map_err(storage_error)?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(storage_error)?;
         let active_reservations = {
             let mut statement = transaction
                 .prepare(
@@ -255,7 +261,10 @@ impl SqliteJobStore {
         }
         let now = now_unix_ms();
         let state = JobState::Planned;
-        let transaction = self.connection.transaction().map_err(storage_error)?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(storage_error)?;
         let mut records = Vec::with_capacity(requests.len());
         for request in requests {
             let id = Uuid::new_v4();
@@ -313,7 +322,10 @@ impl SqliteJobStore {
         if job_ids.is_empty() {
             return Ok(Vec::new());
         }
-        let transaction = self.connection.transaction().map_err(storage_error)?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(storage_error)?;
         let now = now_unix_ms();
         let next = JobState::Queued;
         let mut records = Vec::with_capacity(job_ids.len());
@@ -418,7 +430,10 @@ impl SqliteJobStore {
     /// conflicts, or database failures.
     #[allow(clippy::too_many_lines)]
     pub fn transition(&mut self, job_id: Uuid, next: JobState, code: &str) -> Result<JobRecord> {
-        let transaction = self.connection.transaction().map_err(storage_error)?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(storage_error)?;
         let row = transaction
             .query_row(
                 "SELECT state, input_path, output_path, plan_hash, sequence,
@@ -1277,6 +1292,23 @@ fn now_unix_ms() -> i64 {
 
 #[allow(clippy::needless_pass_by_value)]
 fn storage_error(error: rusqlite::Error) -> FormatWrightError {
+    if matches!(
+        error,
+        rusqlite::Error::SqliteFailure(ref sqlite, _)
+            if matches!(
+                sqlite.code,
+                SqliteErrorCode::DatabaseBusy | SqliteErrorCode::DatabaseLocked
+            )
+    ) {
+        return FormatWrightError::new(
+            ErrorCode::StorageFailed,
+            Stage::Store,
+            "The state database is busy with another writer",
+            "Retry after the other FormatWright operation finishes.",
+        )
+        .retryable(true)
+        .with_diagnostic(error.to_string());
+    }
     FormatWrightError::new(
         ErrorCode::StorageFailed,
         Stage::Store,
@@ -1290,6 +1322,8 @@ fn storage_error(error: rusqlite::Error) -> FormatWrightError {
 mod tests {
     use std::collections::{BTreeMap, HashSet};
     use std::path::PathBuf;
+    use std::sync::{Arc, Barrier};
+    use std::thread;
     use std::time::{Duration, Instant};
 
     use tempfile::tempdir;
@@ -1318,6 +1352,12 @@ mod tests {
         }
     }
 
+    fn durable_plan() -> Plan {
+        let mut plan = plan();
+        plan.plan_hash = crate::planner::deterministic_plan_hash(&plan).expect("hash durable Plan");
+        plan
+    }
+
     #[test]
     fn transitions_are_transactional_and_ordered() {
         let mut store = SqliteJobStore::open_in_memory().expect("in-memory store");
@@ -1338,6 +1378,92 @@ mod tests {
             .transition(job.id, JobState::Completed, "VALIDATION_PASSED")
             .expect("complete job");
         assert_eq!(completed.sequence, 3);
+    }
+
+    #[test]
+    fn concurrent_connections_cannot_reserve_the_same_output() {
+        let directory = tempdir().expect("temporary directory");
+        let database = directory.path().join("jobs.sqlite3");
+        drop(SqliteJobStore::open(&database).expect("initialize database"));
+        let output = directory.path().join("shared-output.mp4");
+        let barrier = Arc::new(Barrier::new(3));
+        let mut handles = Vec::new();
+        for index in 0..2 {
+            let database = database.clone();
+            let output = output.clone();
+            let barrier = Arc::clone(&barrier);
+            handles.push(thread::spawn(move || {
+                let mut store = SqliteJobStore::open(&database).expect("concurrent store");
+                barrier.wait();
+                store.create_job(format!("input-{index}.mkv"), output, &durable_plan())
+            }));
+        }
+        barrier.wait();
+        let results = handles
+            .into_iter()
+            .map(|handle| handle.join().expect("reservation thread"))
+            .collect::<Vec<_>>();
+
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+        let errors = results
+            .iter()
+            .filter_map(|result| result.as_ref().err())
+            .collect::<Vec<_>>();
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].code, ErrorCode::OutputConflict);
+        let store = SqliteJobStore::open(&database).expect("inspect database");
+        assert_eq!(store.count_jobs().expect("job count"), 1);
+        drop(store);
+        assert!(
+            crate::MaintenanceService::new(&database)
+                .integrity_check()
+                .expect("integrity report")
+                .ok
+        );
+    }
+
+    #[test]
+    fn concurrent_transitions_commit_only_one_event_sequence() {
+        let directory = tempdir().expect("temporary directory");
+        let database = directory.path().join("jobs.sqlite3");
+        let mut store = SqliteJobStore::open(&database).expect("initialize database");
+        let job = store
+            .create_job(
+                "input.mkv",
+                directory.path().join("output.mp4"),
+                &durable_plan(),
+            )
+            .expect("create job");
+        let job_id = job.id;
+        drop(store);
+        let barrier = Arc::new(Barrier::new(3));
+        let mut handles = Vec::new();
+        for _ in 0..2 {
+            let database = database.clone();
+            let barrier = Arc::clone(&barrier);
+            handles.push(thread::spawn(move || {
+                let mut store = SqliteJobStore::open(&database).expect("concurrent store");
+                barrier.wait();
+                store.transition(job_id, JobState::Running, "CONCURRENT_START")
+            }));
+        }
+        barrier.wait();
+        let results = handles
+            .into_iter()
+            .map(|handle| handle.join().expect("transition thread"))
+            .collect::<Vec<_>>();
+
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+        assert_eq!(results.iter().filter(|result| result.is_err()).count(), 1);
+        let store = SqliteJobStore::open(&database).expect("inspect database");
+        let details = store
+            .get_job_details(job_id)
+            .expect("job details")
+            .expect("stored job");
+        assert_eq!(details.job.state, JobState::Running);
+        assert_eq!(details.job.sequence, 1);
+        assert_eq!(details.events.len(), 2);
+        assert_eq!(details.events[1].code, "CONCURRENT_START");
     }
 
     #[test]
