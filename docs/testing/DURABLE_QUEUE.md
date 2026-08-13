@@ -43,7 +43,9 @@ The latest CLI crash sandbox case `sandbox-suite-a23cc63b087140c39c800c0ddb33f16
 
 The latest recursive batch run `batch-suite-399229570e534915a0277a326529a6d8` additionally proves that the real resource scheduler can atomically queue its Plans, stop after two commits, leave three jobs queued across CLI processes, and finish those three through `jobs run --parallel 4` after engine and input reinspection via shared `JobExecutionService::run_window`. The 2 GiB reservation budget bounded its peak active image jobs at two. See `BATCH_SANDBOX.md` and `JOB_EXECUTION_SERVICE.md`.
 
-The mixed scheduler run `mixed-scheduler-suite-402efe46745d4aeaa1a1319ea1f0d304` queued nine structured, image, and video jobs through public CLI commands, completed 9/9, observed two simultaneous path-scoped FFmpeg processes, parent RSS 16,125,952 bytes, process-tree RSS 2,325,934,080 bytes, WAL peak 1,285,472 bytes, and no staged remnants. See `MIXED_SCHEDULER.md`.
+The mixed scheduler run `mixed-scheduler-suite-402efe46745d4aeaa1a1319ea1f0d304` queued nine larger structured, image, and video jobs through public CLI commands, completed 9/9, observed two simultaneous path-scoped FFmpeg processes, parent RSS 16,125,952 bytes, process-tree RSS 2,325,934,080 bytes, WAL peak 1,285,472 bytes, and no staged remnants. See `MIXED_SCHEDULER.md`.
+
+The strict mixed small-file queue gate `mixed-10000-suite-8a0cd2c1a0ad41f6a956dbd7ea415657` executed 9,600 JSON→YAML, 200 PNG→WebP, and 200 MKV→MP4 Jobs through shared `JobExecutionService`. It completed and reported all 10,000, independently probed 400 media/image outputs, proved 20 valid-format changes became `INPUT_CHANGED` and completed after repair, bounded hydration to 256, distributed the first window 86/85/85, measured 49.762 jobs/s, queue-latency P50/P95 of 137.533/193.880 seconds, 70,877,184-byte control-plane RSS, and 48,092,792-byte peak WAL. See `MIXED_TEN_THOUSAND.md`.
 
 The opt-in release gate in `TEN_THOUSAND_CONVERSIONS.md` now proves 10,000 distinct structured inputs are planned, atomically queued, reopened, executed in windows of 128, semantically validated, and committed to 10,000 distinct outputs. The recorded Windows release run completed planning in 48.638 seconds and execution in 88.111 seconds. A new atomic `queue_jobs` transition removes the prior per-job transaction bottleneck and rolls the complete enqueue operation back on any invalid ID or state.
 
@@ -51,7 +53,7 @@ The multi-process gate in `MULTI_PROCESS_QUEUE.md` now proves atomic `Queued →
 
 ## Remaining certification work
 
-- Run and retry a mixed successful/failed media/document distribution across the full 10,000-job corpus; the nine-job mixed and homogeneous 10,000-job gates now pass separately.
-- Extend RSS and WAL measurements from the nine-job mixed scheduler gate to the full 10,000-job corpus.
+- Extend the verified 10,000 structured/image/media distribution with PDF/Office/document Jobs once those adapters have a release-certified fixture budget.
+- Add larger/high-resolution media mixes; the verified 10,000 gate intentionally measures small-file queue/control-plane scaling while the nine-job gate stresses larger concurrent engines.
 - Extend the verified four-process and force-kill cases into a long-duration reboot/power-loss campaign.
 - Repeat on macOS and Linux filesystems.

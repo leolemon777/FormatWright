@@ -40,4 +40,4 @@ Schema v4 batch creation, selection capture, and bulk actions follow the same im
 
 - Longer power-loss/reboot soak beyond the verified process-tree force-kill/restart case.
 - A real worker hook that creates the destination precisely between validation and publish, in addition to the direct publish primitive tests.
-- 10k mixed-format concurrency, latency, WAL, RSS, and fairness evidence.
+- Larger/high-resolution and PDF/Office expansion of the verified 10k structured/image/media latency, WAL, RSS, and fairness evidence.

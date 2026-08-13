@@ -74,5 +74,5 @@ The four-runner exact-once gate and real force-kill/recovery gate are recorded i
 ## Remaining work
 
 - Desktop recovery banner, batch browser, and virtualized query view
-- Long-duration power-loss soak and full 10k mixed workload certification
+- Long-duration power-loss soak, cross-platform certification, and PDF/Office expansion of the verified 10k structured/image/media gate
 - Cross-platform release certification of real adapter process trees (the Windows unit fixture and existing FFmpeg sandbox are development evidence)

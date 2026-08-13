@@ -93,6 +93,7 @@ pwsh -File scripts/test_pdf_sandbox.ps1
 pwsh -File scripts/test_office_sandbox.ps1
 pwsh -File scripts/test_multi_process_queue.ps1
 pwsh -File scripts/test_queue_crash_recovery.ps1
+pwsh -File scripts/test_mixed_ten_thousand.ps1
 ~~~
 
 The sandbox suites generate synthetic fixtures in an isolated `.artifacts` directory and verify media, audio, GIF, image/HEIC, structured-data, document, PDF-rendering, and Office-to-PDF paths plus conflict protection, cancellation, multi-process exact-once ownership, and crash recovery. See `docs/testing/` for each suite's exact evidence boundary.

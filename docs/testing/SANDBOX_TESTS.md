@@ -48,6 +48,8 @@ The same isolation and evidence rules apply to the focused audio, GIF, image, HE
 
 `scripts/test_multi_process_queue.ps1` uses separate CLI processes and isolated SQLite files to test process-level idempotency plus exact-once queue ownership. `scripts/test_queue_crash_recovery.ps1` targets only the newly launched, path-verified test runner process tree and only after observing its Job in Running with its deterministic partial. Their assertions and recorded cases are in `docs/testing/MULTI_PROCESS_QUEUE.md`.
 
+`scripts/test_mixed_ten_thousand.ps1` is an opt-in Release gate. It creates 10,000 distinct structured/image/media inputs under one ignored case directory, activates the exact hash-verified Starter Media pack, executes the shared queue, injects and repairs 20 input-change blocks, samples RSS/WAL/staging, and independently probes 400 engine outputs. See `docs/testing/MIXED_TEN_THOUSAND.md` for the recorded evidence and small-file/high-resolution boundary.
+
 The opt-in Rust release gate in `docs/testing/TEN_THOUSAND_CONVERSIONS.md` uses an OS temporary directory, creates 10,000 different inputs and outputs, and removes the complete fixture when the test process exits normally. It remains distinct from the smaller per-workflow scripts and is not part of ordinary CI.
 
 ## Evidence interpretation

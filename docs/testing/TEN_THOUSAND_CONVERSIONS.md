@@ -43,4 +43,4 @@ The first development attempt used top-level JSON objects and was correctly reje
 
 ## Evidence boundary
 
-This satisfies the 10,000-real-file homogeneous batch architecture gate on Windows. It does not yet certify mixed media/document failure and retry distribution, bounded parallel workers, fairness across batches, peak RSS, `SQLite`/WAL growth, physically separate disks, or macOS/Linux filesystem behavior. Those remain release-matrix work.
+This satisfies the 10,000-real-file homogeneous batch architecture gate on Windows. The separate `MIXED_TEN_THOUSAND.md` gate now covers 9,600 structured + 200 image + 200 media Jobs, bounded workers, round-robin batch fairness, P50/P95 queue latency, RSS/WAL/staging, 20 repaired input-change failures, and independent probes. High-resolution/PDF/Office/document mixes, physically separate disks, and macOS/Linux filesystem behavior remain release-matrix work.
