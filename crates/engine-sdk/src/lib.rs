@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
 
+use ed25519_dalek::Signer;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -152,6 +153,267 @@ pub struct ManifestSignature {
     pub value: String,
 }
 
+/// Signature algorithm supported by release keyrings (ADR-0011).
+pub const SIGNATURE_ALGORITHM_ED25519: &str = "ed25519";
+
+/// Keyring document schema (ADR-0011).
+pub const RELEASE_KEYRING_SCHEMA_VERSION: u32 = 1;
+
+/// The only key purpose accepted for engine-manifest signatures (ADR-0011).
+pub const KEYRING_PURPOSE_ENGINE_MANIFEST: &str = "engine-manifest";
+
+/// Trust verdict for a manifest signature, evaluated against a release
+/// keyring (ADR-0011). The evaluation order is deterministic: `Unsigned`,
+/// `UnknownKey`, `Revoked`, `Expired`, `InvalidSignature`, `Trusted`.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum SignatureTrust {
+    Trusted { key_id: String },
+    Unsigned,
+    UnknownKey { key_id: String },
+    Revoked { key_id: String },
+    Expired { key_id: String },
+    InvalidSignature,
+}
+
+#[derive(Clone, Debug, Eq, Error, PartialEq)]
+#[error("invalid release keyring: {message}")]
+pub struct KeyringValidationError {
+    pub message: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ReleaseKey {
+    pub key_id: String,
+    pub algorithm: String,
+    pub purpose: String,
+    /// Lowercase hex of the 32-byte Ed25519 verifying key.
+    pub public_key: String,
+    pub valid_from_unix_ms: u64,
+    pub valid_until_unix_ms: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct KeyRevocation {
+    pub key_id: String,
+    pub revoked_unix_ms: u64,
+    pub reason: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ReleaseKeyring {
+    pub schema_version: u32,
+    #[serde(default)]
+    pub keys: Vec<ReleaseKey>,
+    #[serde(default)]
+    pub revocations: Vec<KeyRevocation>,
+}
+
+impl ReleaseKeyring {
+    /// Validates keyring invariants: schema version, key identity/algorithm/
+    /// purpose/validity bounds, hex keys, and unique IDs.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first violated keyring invariant.
+    pub fn validate(&self) -> Result<(), KeyringValidationError> {
+        if self.schema_version != RELEASE_KEYRING_SCHEMA_VERSION {
+            return keyring_error(format!(
+                "unsupported schema version {}",
+                self.schema_version
+            ));
+        }
+        let mut key_ids = BTreeSet::new();
+        for key in &self.keys {
+            if !valid_engine_id(&key.key_id) {
+                return keyring_error(format!(
+                    "key_id must match [a-z0-9][a-z0-9._-]+: {}",
+                    key.key_id
+                ));
+            }
+            if !key_ids.insert(&key.key_id) {
+                return keyring_error(format!("duplicate key_id {}", key.key_id));
+            }
+            if key.algorithm != SIGNATURE_ALGORITHM_ED25519 {
+                return keyring_error(format!(
+                    "key {} algorithm must be {SIGNATURE_ALGORITHM_ED25519}",
+                    key.key_id
+                ));
+            }
+            if key.purpose != KEYRING_PURPOSE_ENGINE_MANIFEST {
+                return keyring_error(format!(
+                    "key {} purpose must be {KEYRING_PURPOSE_ENGINE_MANIFEST}",
+                    key.key_id
+                ));
+            }
+            if !is_lower_hex(&key.public_key, 32) {
+                return keyring_error(format!(
+                    "key {} public_key must be 64 lowercase hex characters",
+                    key.key_id
+                ));
+            }
+            if key.valid_from_unix_ms == 0 || key.valid_until_unix_ms <= key.valid_from_unix_ms {
+                return keyring_error(format!(
+                    "key {} validity window is empty or inverted",
+                    key.key_id
+                ));
+            }
+        }
+        let mut revoked_ids = BTreeSet::new();
+        for revocation in &self.revocations {
+            if !valid_engine_id(&revocation.key_id) {
+                return keyring_error(format!(
+                    "revocation key_id must match [a-z0-9][a-z0-9._-]+: {}",
+                    revocation.key_id
+                ));
+            }
+            if !revoked_ids.insert(&revocation.key_id) {
+                return keyring_error(format!("duplicate revocation for {}", revocation.key_id));
+            }
+            if revocation.revoked_unix_ms == 0 {
+                return keyring_error(format!(
+                    "revocation for {} must carry a timestamp",
+                    revocation.key_id
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Deterministic signing payload for a manifest (ADR-0011): the compact JSON
+/// serialization of the manifest with the `signature` field removed. Struct
+/// field order is the schema order; future map-typed fields must serialize
+/// with sorted keys. The payload never contains an install absolute path.
+///
+/// # Panics
+///
+/// Panics only if the manifest fails JSON serialization, which the type
+/// system prevents for this schema.
+pub fn canonical_manifest_bytes(manifest: &EngineManifest) -> Vec<u8> {
+    let mut unsigned = manifest.clone();
+    unsigned.signature = None;
+    serde_json::to_vec(&unsigned).expect("engine manifest serializes to JSON")
+}
+
+/// Signs a manifest with an Ed25519 seed. Release tooling and tests use this
+/// to produce `signature.value` over [`canonical_manifest_bytes`].
+pub fn sign_manifest(
+    manifest: &EngineManifest,
+    key_id: &str,
+    seed: &[u8; 32],
+) -> ManifestSignature {
+    let signing = ed25519_dalek::SigningKey::from_bytes(seed);
+    let signature = signing.sign(&canonical_manifest_bytes(manifest));
+    ManifestSignature {
+        algorithm: SIGNATURE_ALGORITHM_ED25519.to_owned(),
+        key_id: key_id.to_owned(),
+        value: to_lower_hex(&signature.to_bytes()),
+    }
+}
+
+/// Derives the keyring `public_key` hex for an Ed25519 seed.
+pub fn ed25519_public_key_hex(seed: &[u8; 32]) -> String {
+    to_lower_hex(
+        ed25519_dalek::SigningKey::from_bytes(seed)
+            .verifying_key()
+            .as_bytes(),
+    )
+}
+
+/// Evaluates a manifest signature against a release keyring (ADR-0011).
+/// The caller supplies `now_unix_ms` so the verdict stays deterministic and
+/// testable. The keyring itself is trusted input and should be validated with
+/// [`ReleaseKeyring::validate`] before use.
+#[must_use]
+pub fn verify_manifest_signature(
+    manifest: &EngineManifest,
+    keyring: &ReleaseKeyring,
+    now_unix_ms: u64,
+) -> SignatureTrust {
+    let Some(signature) = &manifest.signature else {
+        return SignatureTrust::Unsigned;
+    };
+    let Some(key) = keyring
+        .keys
+        .iter()
+        .find(|key| key.key_id == signature.key_id)
+    else {
+        return SignatureTrust::UnknownKey {
+            key_id: signature.key_id.clone(),
+        };
+    };
+    if keyring
+        .revocations
+        .iter()
+        .any(|revocation| revocation.key_id == signature.key_id)
+    {
+        return SignatureTrust::Revoked {
+            key_id: signature.key_id.clone(),
+        };
+    }
+    if now_unix_ms < key.valid_from_unix_ms || now_unix_ms > key.valid_until_unix_ms {
+        return SignatureTrust::Expired {
+            key_id: key.key_id.clone(),
+        };
+    }
+    let Some(verifying_bytes) = decode_lower_hex(&key.public_key, 32) else {
+        return SignatureTrust::InvalidSignature;
+    };
+    let Some(signature_bytes) = decode_lower_hex(&signature.value, 64) else {
+        return SignatureTrust::InvalidSignature;
+    };
+    let Ok(verifying) = ed25519_dalek::VerifyingKey::from_bytes(&{
+        let mut bytes = [0_u8; 32];
+        bytes.copy_from_slice(&verifying_bytes);
+        bytes
+    }) else {
+        return SignatureTrust::InvalidSignature;
+    };
+    let mut fixed_signature = [0_u8; 64];
+    fixed_signature.copy_from_slice(&signature_bytes);
+    let signature = ed25519_dalek::Signature::from_bytes(&fixed_signature);
+    if verifying
+        .verify_strict(&canonical_manifest_bytes(manifest), &signature)
+        .is_ok()
+    {
+        SignatureTrust::Trusted {
+            key_id: key.key_id.clone(),
+        }
+    } else {
+        SignatureTrust::InvalidSignature
+    }
+}
+
+fn is_lower_hex(value: &str, expected_bytes: usize) -> bool {
+    value.len() == expected_bytes * 2
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn decode_lower_hex(value: &str, expected_bytes: usize) -> Option<Vec<u8>> {
+    if !is_lower_hex(value, expected_bytes) {
+        return None;
+    }
+    (0..expected_bytes)
+        .map(|index| u8::from_str_radix(&value[index * 2..index * 2 + 2], 16).ok())
+        .collect()
+}
+
+fn to_lower_hex(bytes: &[u8]) -> String {
+    let mut text = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        use std::fmt::Write as _;
+        let _ = write!(text, "{byte:02x}");
+    }
+    text
+}
+
+fn keyring_error<T>(message: String) -> Result<T, KeyringValidationError> {
+    Err(KeyringValidationError { message })
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct EngineManifest {
     pub schema_version: u32,
@@ -224,12 +486,22 @@ impl EngineManifest {
         self.validate_pack_files()?;
         self.validate_provenance_and_licenses()?;
         self.validate_capabilities()?;
-        if let Some(signature) = &self.signature
-            && (signature.algorithm.trim().is_empty()
-                || signature.key_id.trim().is_empty()
-                || signature.value.trim().is_empty())
-        {
-            return manifest_error("signature fields must all be populated".to_owned());
+        if let Some(signature) = &self.signature {
+            if signature.algorithm != SIGNATURE_ALGORITHM_ED25519 {
+                return manifest_error(format!(
+                    "signature algorithm must be {SIGNATURE_ALGORITHM_ED25519}"
+                ));
+            }
+            if signature.key_id.trim().is_empty() || !valid_engine_id(signature.key_id.trim()) {
+                return manifest_error(
+                    "signature key_id must match [a-z0-9][a-z0-9._-]+".to_owned(),
+                );
+            }
+            if !is_lower_hex(&signature.value, 64) {
+                return manifest_error(
+                    "signature value must be 128 lowercase hex characters".to_owned(),
+                );
+            }
         }
         Ok(())
     }
@@ -497,5 +769,169 @@ mod tests {
             .validate(1)
             .expect_err("duplicate capability must fail");
         assert!(error.message.contains("duplicate capability"));
+    }
+
+    fn keyring(seed: &[u8; 32], from: u64, until: u64, revoked: bool) -> super::ReleaseKeyring {
+        super::ReleaseKeyring {
+            schema_version: super::RELEASE_KEYRING_SCHEMA_VERSION,
+            keys: vec![super::ReleaseKey {
+                key_id: "release-2026h2".to_owned(),
+                algorithm: super::SIGNATURE_ALGORITHM_ED25519.to_owned(),
+                purpose: super::KEYRING_PURPOSE_ENGINE_MANIFEST.to_owned(),
+                public_key: super::ed25519_public_key_hex(seed),
+                valid_from_unix_ms: from,
+                valid_until_unix_ms: until,
+            }],
+            revocations: if revoked {
+                vec![super::KeyRevocation {
+                    key_id: "release-2026h2".to_owned(),
+                    revoked_unix_ms: 5,
+                    reason: "test revocation".to_owned(),
+                }]
+            } else {
+                Vec::new()
+            },
+        }
+    }
+
+    const NOW: u64 = 1_800_000_000_000;
+    const WINDOW: (u64, u64) = (NOW - 1_000, NOW + 1_000);
+    const SEED: [u8; 32] = [7; 32];
+
+    #[test]
+    fn signs_and_verifies_a_manifest_as_trusted() {
+        let mut value = manifest();
+        value.signature = Some(super::sign_manifest(&value, "release-2026h2", &SEED));
+        value.validate(1).expect("signed manifest validates");
+        let trust = super::verify_manifest_signature(
+            &value,
+            &keyring(&SEED, WINDOW.0, WINDOW.1, false),
+            NOW,
+        );
+        assert_eq!(
+            trust,
+            super::SignatureTrust::Trusted {
+                key_id: "release-2026h2".to_owned()
+            }
+        );
+    }
+
+    #[test]
+    fn canonical_bytes_exclude_the_signature_field() {
+        let unsigned = manifest();
+        let mut signed = unsigned.clone();
+        signed.signature = Some(super::sign_manifest(&signed, "release-2026h2", &SEED));
+        assert_eq!(
+            super::canonical_manifest_bytes(&signed),
+            super::canonical_manifest_bytes(&unsigned)
+        );
+        let text = String::from_utf8(super::canonical_manifest_bytes(&signed)).expect("utf-8");
+        assert!(text.contains("\"signature\":null"));
+        assert!(!text.contains(&signed.signature.as_ref().expect("signature").value));
+    }
+
+    #[test]
+    fn rejects_a_tampered_manifest_or_replayed_signature() {
+        let mut value = manifest();
+        value.signature = Some(super::sign_manifest(&value, "release-2026h2", &SEED));
+        value.executables[0].sha256 = "cd".repeat(32);
+        assert_eq!(
+            super::verify_manifest_signature(
+                &value,
+                &keyring(&SEED, WINDOW.0, WINDOW.1, false),
+                NOW
+            ),
+            super::SignatureTrust::InvalidSignature
+        );
+        let other = manifest();
+        let mut replayed = other.clone();
+        replayed.engine_id = "other-engine".to_owned();
+        replayed.signature = value.signature.clone();
+        assert_eq!(
+            super::verify_manifest_signature(
+                &replayed,
+                &keyring(&SEED, WINDOW.0, WINDOW.1, false),
+                NOW
+            ),
+            super::SignatureTrust::InvalidSignature
+        );
+    }
+
+    #[test]
+    fn distinguishes_unsigned_unknown_revoked_and_expired_keys() {
+        let trusted_keyring = keyring(&SEED, WINDOW.0, WINDOW.1, false);
+        assert_eq!(
+            super::verify_manifest_signature(&manifest(), &trusted_keyring, NOW),
+            super::SignatureTrust::Unsigned
+        );
+        let mut unknown = manifest();
+        unknown.signature = Some(super::sign_manifest(&unknown, "release-2026h1", &SEED));
+        assert_eq!(
+            super::verify_manifest_signature(&unknown, &trusted_keyring, NOW),
+            super::SignatureTrust::UnknownKey {
+                key_id: "release-2026h1".to_owned()
+            }
+        );
+        let mut wrong_key = manifest();
+        wrong_key.signature = Some(super::sign_manifest(&wrong_key, "release-2026h2", &[9; 32]));
+        assert_eq!(
+            super::verify_manifest_signature(&wrong_key, &trusted_keyring, NOW),
+            super::SignatureTrust::InvalidSignature
+        );
+        let mut known = manifest();
+        known.signature = Some(super::sign_manifest(&known, "release-2026h2", &SEED));
+        assert_eq!(
+            super::verify_manifest_signature(
+                &known,
+                &keyring(&SEED, WINDOW.0, WINDOW.1, true),
+                NOW
+            ),
+            super::SignatureTrust::Revoked {
+                key_id: "release-2026h2".to_owned()
+            }
+        );
+        assert_eq!(
+            super::verify_manifest_signature(
+                &known,
+                &keyring(&SEED, NOW + 10, NOW + 20, false),
+                NOW
+            ),
+            super::SignatureTrust::Expired {
+                key_id: "release-2026h2".to_owned()
+            }
+        );
+    }
+
+    #[test]
+    fn validates_keyring_shape_and_rejects_bad_signatures_in_manifests() {
+        keyring(&SEED, WINDOW.0, WINDOW.1, false)
+            .validate()
+            .expect("keyring validates");
+        let mut bad_keyring = keyring(&SEED, WINDOW.0, WINDOW.1, false);
+        bad_keyring.keys[0].public_key = "XYZ".to_owned();
+        assert!(bad_keyring.validate().is_err());
+        let mut empty_window = keyring(&SEED, 100, 100, false);
+        empty_window.keys[0].valid_until_unix_ms = 100;
+        assert!(empty_window.validate().is_err());
+
+        let mut bad_signature = manifest();
+        bad_signature.signature = Some(super::ManifestSignature {
+            algorithm: "rsa-sha256".to_owned(),
+            key_id: "release-2026h2".to_owned(),
+            value: "ab".repeat(64),
+        });
+        let error = bad_signature
+            .validate(1)
+            .expect_err("algorithm must be pinned");
+        assert!(error.message.contains("algorithm"));
+
+        let mut uppercase = manifest();
+        uppercase.signature = Some(super::ManifestSignature {
+            algorithm: super::SIGNATURE_ALGORITHM_ED25519.to_owned(),
+            key_id: "release-2026h2".to_owned(),
+            value: "AB".repeat(64),
+        });
+        let error = uppercase.validate(1).expect_err("hex must be lowercase");
+        assert!(error.message.contains("lowercase hex"));
     }
 }

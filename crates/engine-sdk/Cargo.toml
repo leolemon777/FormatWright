@@ -8,6 +8,7 @@ authors.workspace = true
 description = "Versioned engine identities and capabilities for FormatWright"
 
 [dependencies]
+ed25519-dalek.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

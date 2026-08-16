@@ -138,6 +138,7 @@ def check_required_files(errors: list[str]) -> None:
         "schemas/application-settings/v1.schema.json",
         "docs/testing/APPLICATION_STATE_BUNDLE.md",
         "docs/adr/0010-versioned-application-state-bundles.md",
+        "docs/adr/0011-trusted-engine-signatures-and-release-keyring.md",
         "apps/desktop/package.json",
         "apps/desktop/src-tauri/tauri.conf.json",
         "apps/desktop/src-tauri/tauri.windows.conf.json",

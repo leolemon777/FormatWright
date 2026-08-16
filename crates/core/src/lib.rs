@@ -50,12 +50,12 @@ pub use domain::{
 };
 pub use engine_pack::{
     ENGINE_PROTOCOL_VERSION, VerifiedEnginePack, activate_engine_pack, install_engine_pack,
-    verify_engine_pack,
+    load_release_keyring, verify_engine_pack, verify_engine_pack_with_keyring,
 };
 pub use error::{ErrorCode, FormatWrightError, Result, Stage};
 pub use fingerprint::{full_blake3, identify_artifact};
 pub use formatwright_engine_sdk::{
-    Certification, DoctorReport, EngineHealth, EngineIdentity, LossClass, Operation,
+    Certification, DoctorReport, EngineHealth, EngineIdentity, LossClass, Operation, SignatureTrust,
 };
 pub use inspect::inspect_media;
 pub use job_store::{

@@ -1,8 +1,8 @@
 # Engine Supply Chain and Certification
 
-- Status: File-inventory SBOM and runtime sidecar verification implemented; certification incomplete
-- Version: 0.3
-- Updated: 2026-08-13
+- Status: File-inventory SBOM, runtime sidecar verification, and trusted-signature verification (ADR-0011) implemented; certification incomplete
+- Version: 0.4
+- Updated: 2026-08-15
 
 ## 1. Pack contents
 
@@ -71,6 +71,12 @@ States:
 - revoked
 
 A job pins a certified pack identity. New jobs may migrate after Doctor and fixture checks. Interrupted jobs never silently switch packs.
+
+### 4.1 Signature trust (ADR-0011)
+
+Manifest signatures are Ed25519 over canonical manifest bytes (compact JSON in schema field order, `signature` nulled, map fields sorted) and are evaluated against a versioned release keyring (`{ schema_version, keys[], revocations[] }`). The verdict is exactly one of `Trusted { key_id }`, `Unsigned`, `UnknownKey`, `Revoked`, `Expired`, or `InvalidSignature` (which also covers a signature replayed over a different manifest), evaluated in that fail-closed order by `formatwright_engine_sdk::verify_manifest_signature`. `formatwright engines verify <manifest> --keyring <keyring.json>` fails closed (exit 8, `POLICY_BLOCKED`) on every non-trusted verdict; without a keyring the historical hash/sidecar verification is unchanged.
+
+A `Trusted` signature alone never promotes a pack to certified: certification additionally requires the human-signed transitive review (§6 and `sources.json.review_status`), and real release key material has not been generated yet — all currently shipped packs are honestly `Unsigned`. Verification was proven on 2026-08-15 with a generated key against a copy of the real PDF Starter pack, including a third-party (PyNaCl) signer reproducing the canonical bytes byte-for-byte before signing, and distinct CLI rejections for `Unsigned`, tampered (`InvalidSignature`), and revoked manifests. `DowngradeBlocked` is a registry verdict produced during activation/rollback, not a crypto state; the multi-version registry with startup fallback lands as the next batch on top of ADR-0011.
 
 The Windows v0.1 Starter implementation now contains Core (built-in structured conversions), PDF (pinned Poppler tools and declared runtime files), and Media (pinned FFmpeg/ffprobe). The deterministic builder now emits per-pack `sbom.spdx.json` and `sources.json`; both are hashed by the Manifest and verified during import/install. Document and Image remain optional packs until their redistribution and capability matrices pass. The installer carries Starter resources directly; first startup verifies, copies, and activates them through the versioned atomic registry path. These packs remain development/unverified until transitive component attribution, license/source-offer and patent review, signature/keyring, clean-VM, upgrade, rollback, and revocation gates pass.
 

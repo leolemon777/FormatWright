@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use formatwright_engine_sdk::{
     EngineArchitecture, EngineManifest, EnginePlatform, ManifestLicense, ManifestSupplyChain,
+    ReleaseKeyring, SignatureTrust,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -22,6 +23,10 @@ pub struct VerifiedEnginePack {
     pub runtime_files: Vec<PathBuf>,
     pub supply_chain_files: Vec<PathBuf>,
     pub signature_present: bool,
+    /// Signature verdict against a release keyring (ADR-0011). `None` means
+    /// no keyring was supplied, so trust was not evaluated; a present
+    /// signature alone must never be read as trust.
+    pub signature_trust: Option<SignatureTrust>,
 }
 
 /// Loads a pack manifest, validates static invariants, checks the host target,
@@ -116,7 +121,62 @@ pub fn verify_engine_pack(manifest_path: impl AsRef<Path>) -> Result<VerifiedEng
         runtime_files,
         supply_chain_files,
         signature_present,
+        signature_trust: None,
     })
+}
+
+/// Verifies an engine pack and evaluates its signature against a release
+/// keyring (ADR-0011). The keyring must itself be valid; an invalid keyring
+/// fails closed instead of degrading to unsigned verification.
+///
+/// # Errors
+///
+/// Returns the same errors as [`verify_engine_pack`], plus a keyring error
+/// when the supplied keyring is malformed.
+pub fn verify_engine_pack_with_keyring(
+    manifest_path: impl AsRef<Path>,
+    keyring: &ReleaseKeyring,
+    now_unix_ms: u64,
+) -> Result<VerifiedEnginePack> {
+    keyring.validate().map_err(|error| {
+        engine_error("Release keyring is invalid".to_owned(), error.to_string())
+    })?;
+    let mut verified = verify_engine_pack(manifest_path)?;
+    verified.signature_trust = Some(formatwright_engine_sdk::verify_manifest_signature(
+        &verified.manifest,
+        keyring,
+        now_unix_ms,
+    ));
+    Ok(verified)
+}
+
+/// Loads and validates a release keyring document (ADR-0011).
+///
+/// # Errors
+///
+/// Returns an engine/storage error when the file is unreadable, malformed,
+/// or violates keyring invariants.
+pub fn load_release_keyring(path: impl AsRef<Path>) -> Result<ReleaseKeyring> {
+    let path = path.as_ref();
+    let bytes = fs::read(path).map_err(|error| {
+        engine_error(
+            format!("Cannot read release keyring: {}", path.display()),
+            error.to_string(),
+        )
+    })?;
+    let keyring = serde_json::from_slice::<ReleaseKeyring>(&bytes).map_err(|error| {
+        engine_error(
+            format!("Release keyring is not valid JSON: {}", path.display()),
+            error.to_string(),
+        )
+    })?;
+    keyring.validate().map_err(|error| {
+        engine_error(
+            format!("Release keyring is invalid: {}", path.display()),
+            error.to_string(),
+        )
+    })?;
+    Ok(keyring)
 }
 
 /// Verifies an engine pack and registers its exact executable paths for this
@@ -599,8 +659,8 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{
-        ENGINE_PROTOCOL_VERSION, activate_engine_pack, install_engine_pack, read_json_object,
-        verify_engine_pack,
+        ENGINE_PROTOCOL_VERSION, activate_engine_pack, install_engine_pack, load_release_keyring,
+        read_json_object, verify_engine_pack, verify_engine_pack_with_keyring,
     };
 
     fn manifest(binary_hash: String) -> EngineManifest {
@@ -892,6 +952,109 @@ mod tests {
         .expect("rewrite manifest");
         let error = verify_engine_pack(&manifest_path).expect_err("tampered SBOM hash");
         assert!(error.message.contains("SBOM hash mismatch"));
+    }
+
+    #[test]
+    fn evaluates_signature_trust_against_a_release_keyring() {
+        use formatwright_engine_sdk::{
+            KeyRevocation, ReleaseKey, ReleaseKeyring, ed25519_public_key_hex, sign_manifest,
+        };
+        const SEED: [u8; 32] = [7; 32];
+        const NOW: u64 = 1_800_000_000_000;
+        let keyring = ReleaseKeyring {
+            schema_version: 1,
+            keys: vec![ReleaseKey {
+                key_id: "release-2026h2".to_owned(),
+                algorithm: "ed25519".to_owned(),
+                purpose: "engine-manifest".to_owned(),
+                public_key: ed25519_public_key_hex(&SEED),
+                valid_from_unix_ms: NOW - 1_000,
+                valid_until_unix_ms: NOW + 1_000,
+            }],
+            revocations: Vec::new(),
+        };
+
+        let (directory, manifest_path) = create_pack();
+        let unsigned = verify_engine_pack(&manifest_path).expect("unsigned pack verifies");
+        assert!(!unsigned.signature_present);
+        assert!(unsigned.signature_trust.is_none());
+
+        let verified = verify_engine_pack_with_keyring(&manifest_path, &keyring, NOW)
+            .expect("keyring evaluation runs");
+        assert_eq!(
+            verified.signature_trust,
+            Some(formatwright_engine_sdk::SignatureTrust::Unsigned)
+        );
+
+        let bytes = fs::read(&manifest_path).expect("read manifest");
+        let mut value = serde_json::from_slice::<EngineManifest>(&bytes).expect("parse manifest");
+        value.signature = Some(sign_manifest(&value, "release-2026h2", &SEED));
+        fs::write(
+            &manifest_path,
+            serde_json::to_vec_pretty(&value).expect("serialize signed manifest"),
+        )
+        .expect("write signed manifest");
+
+        let trusted = verify_engine_pack_with_keyring(&manifest_path, &keyring, NOW)
+            .expect("signed pack verifies");
+        assert_eq!(
+            trusted.signature_trust,
+            Some(formatwright_engine_sdk::SignatureTrust::Trusted {
+                key_id: "release-2026h2".to_owned()
+            })
+        );
+        assert_ne!(trusted.manifest_sha256, verified.manifest_sha256);
+
+        let mut tampered = value.clone();
+        tampered.version = "9.9.9".to_owned();
+        tampered.signature = value.signature.clone();
+        fs::write(
+            &manifest_path,
+            serde_json::to_vec_pretty(&tampered).expect("serialize tampered manifest"),
+        )
+        .expect("write tampered manifest");
+        let tampered = verify_engine_pack_with_keyring(&manifest_path, &keyring, NOW)
+            .expect("file hashes still verify");
+        assert_eq!(
+            tampered.signature_trust,
+            Some(formatwright_engine_sdk::SignatureTrust::InvalidSignature)
+        );
+
+        let mut revoked = keyring.clone();
+        revoked.revocations.push(KeyRevocation {
+            key_id: "release-2026h2".to_owned(),
+            revoked_unix_ms: 5,
+            reason: "compromised in test".to_owned(),
+        });
+        let (_fresh_directory, fresh_manifest) = create_pack();
+        let bytes = fs::read(&fresh_manifest).expect("read fresh manifest");
+        let mut fresh =
+            serde_json::from_slice::<EngineManifest>(&bytes).expect("parse fresh manifest");
+        fresh.signature = Some(sign_manifest(&fresh, "release-2026h2", &SEED));
+        fs::write(
+            &fresh_manifest,
+            serde_json::to_vec_pretty(&fresh).expect("serialize fresh manifest"),
+        )
+        .expect("write fresh manifest");
+        let revoked = verify_engine_pack_with_keyring(&fresh_manifest, &revoked, NOW)
+            .expect("revoked evaluation runs");
+        assert_eq!(
+            revoked.signature_trust,
+            Some(formatwright_engine_sdk::SignatureTrust::Revoked {
+                key_id: "release-2026h2".to_owned()
+            })
+        );
+
+        let keyring_path = directory.path().join("keyring.json");
+        fs::write(
+            &keyring_path,
+            serde_json::to_vec_pretty(&keyring).expect("serialize keyring"),
+        )
+        .expect("write keyring");
+        let loaded = load_release_keyring(&keyring_path).expect("load keyring");
+        assert_eq!(loaded, keyring);
+        fs::write(&keyring_path, b"{\"schema_version\": 9}").expect("write bad keyring");
+        assert!(load_release_keyring(&keyring_path).is_err());
     }
 
     #[test]

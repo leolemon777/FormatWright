@@ -13,9 +13,10 @@ use formatwright_core::{
     JobRecord, JobSelectionQuery, JobState, MaintenanceService, Plan, PlanRequest, Probe,
     QueueWindowControl, ReportService, SqliteJobStore, StateBundleOptions, cleanup_staged_output,
     doctor, execute_plan_observed, identify_artifact, inspect_document, inspect_engine,
-    inspect_media, inspect_office, inspect_pdf, inspect_structured, office_format_hint,
-    pdf_format_hint, plan_conversion, plan_metadata_clean, prepare_conversion, resolve_output_path,
-    staged_output_candidates, structured_format_hint, verify_engine_pack,
+    inspect_media, inspect_office, inspect_pdf, inspect_structured, load_release_keyring,
+    office_format_hint, pdf_format_hint, plan_conversion, plan_metadata_clean, prepare_conversion,
+    resolve_output_path, staged_output_candidates, structured_format_hint, verify_engine_pack,
+    verify_engine_pack_with_keyring,
 };
 use serde::Serialize;
 use tokio_util::sync::CancellationToken;
@@ -418,6 +419,10 @@ enum EnginesCommand {
     Verify {
         #[arg(value_name = "MANIFEST")]
         manifest: PathBuf,
+        /// Evaluate the manifest signature against a release keyring
+        /// (ADR-0011) and fail closed on any non-trusted state.
+        #[arg(long, value_name = "KEYRING")]
+        keyring: Option<PathBuf>,
     },
 }
 
@@ -943,8 +948,45 @@ async fn run(cli: Cli) -> Result<(), FormatWrightError> {
             }
         }
         Command::Engines { command } => match command {
-            EnginesCommand::Verify { manifest } => {
-                let verified = verify_engine_pack(manifest)?;
+            EnginesCommand::Verify { manifest, keyring } => {
+                let verified = match &keyring {
+                    Some(keyring_path) => {
+                        let keyring = load_release_keyring(keyring_path)?;
+                        let now_unix_ms = u64::try_from(
+                            std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map_err(|error| {
+                                    FormatWrightError::new(
+                                        ErrorCode::Internal,
+                                        formatwright_core::Stage::Doctor,
+                                        format!("system clock is before the Unix epoch: {error}"),
+                                        "Fix the system clock and retry.",
+                                    )
+                                })?
+                                .as_millis(),
+                        )
+                        .map_err(|error| {
+                            FormatWrightError::new(
+                                ErrorCode::Internal,
+                                formatwright_core::Stage::Doctor,
+                                format!("system clock overflowed keyring timestamps: {error}"),
+                                "Fix the system clock and retry.",
+                            )
+                        })?;
+                        verify_engine_pack_with_keyring(manifest, &keyring, now_unix_ms)?
+                    }
+                    None => verify_engine_pack(manifest)?,
+                };
+                if let Some(trust) = &verified.signature_trust
+                    && !matches!(trust, formatwright_core::SignatureTrust::Trusted { .. })
+                {
+                    return Err(FormatWrightError::new(
+                        ErrorCode::PolicyBlocked,
+                        formatwright_core::Stage::Doctor,
+                        format!("engine signature is not trusted: {trust:?}"),
+                        "Import a pack signed by a current FormatWright release key (ADR-0011).",
+                    ));
+                }
                 if cli.json {
                     print_json(&verified)
                 } else {
@@ -953,6 +995,9 @@ async fn run(cli: Cli) -> Result<(), FormatWrightError> {
                     println!("manifest sha256: {}", verified.manifest_sha256);
                     println!("executables verified: {}", verified.executables.len());
                     println!("signature present: {}", verified.signature_present);
+                    if let Some(trust) = &verified.signature_trust {
+                        println!("signature trust: {trust:?}");
+                    }
                     Ok(())
                 }
             }
