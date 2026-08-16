@@ -7,6 +7,8 @@ pub mod doctor;
 mod document;
 pub mod domain;
 pub mod engine_pack;
+pub mod engine_registry;
+pub use engine_registry::{EngineFallback, EngineRecovery, EngineRegistry, InstalledEngineVersion};
 pub mod error;
 pub mod fingerprint;
 pub mod inspect;

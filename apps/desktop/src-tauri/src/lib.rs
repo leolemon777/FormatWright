@@ -13,7 +13,7 @@ use formatwright_core::{
     ApplicationSettings, ApplicationSettingsService, ApplicationStateLayout,
     ApplicationStateService, BatchRecord, BulkActionReport, BulkJobAction, BulkJobService,
     CapabilitySnapshot, CompactReport, ConversionPreset, ConversionService, DoctorReport,
-    EngineDiscoveryPolicy, EngineRegistryIdentity, FolderBatchService, FolderDiskBudget,
+    EngineDiscoveryPolicy, EngineRegistry, FolderBatchService, FolderDiskBudget,
     FolderMappingEntry, IntegrityReport, JobCreateRequest, JobExecutionService, JobQueryPage,
     JobRecord, JobRecoveryService, JobSelectionQuery, JobState, JobStateCount, MaintenanceService,
     MaintenanceStatus, PRESET_SCHEMA_VERSION, Plan, PlanRequest, PresetLibrary, Probe,
@@ -56,6 +56,8 @@ struct DesktopStartupRecovery {
     removed_staged_outputs: usize,
     restored_bundle_id: Option<Uuid>,
     restore_error: Option<String>,
+    #[serde(default)]
+    engine_recovery: Vec<formatwright_core::EngineRecovery>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -64,6 +66,7 @@ struct DesktopRecoverySummary {
     removed_staged_outputs: usize,
     restored_bundle_id: Option<Uuid>,
     restore_error: Option<String>,
+    engine_recovery: Vec<formatwright_core::EngineRecovery>,
     state_counts: Vec<JobStateCount>,
 }
 
@@ -330,8 +333,6 @@ struct DesktopRunResult {
     report: ValidationReport,
 }
 
-type DesktopEngineRegistryEntry = EngineRegistryIdentity;
-
 #[derive(Clone, Debug, Deserialize)]
 struct DesktopEngineBundle {
     schema_version: u32,
@@ -410,7 +411,12 @@ async fn import_desktop_engine_pack(
     .await
     .map_err(|error| format!("engine-pack verification worker failed: {error}"))?
     .map_err(serialize_error)?;
-    persist_engine_registry_entry(&state.engine_registry_directory, &verified)?;
+    EngineRegistry::new(
+        state.engine_registry_directory.clone(),
+        state.engine_store_directory.clone(),
+    )
+    .set_active(&verified)
+    .map_err(serialize_error)?;
     Ok(valid_engine_summary(&verified))
 }
 
@@ -418,7 +424,15 @@ async fn import_desktop_engine_pack(
 async fn list_imported_engine_packs(
     state: tauri::State<'_, DesktopState>,
 ) -> Result<Vec<DesktopEnginePackSummary>, String> {
-    let paths = registered_manifest_paths(&state.engine_registry_directory)?;
+    let paths = EngineRegistry::new(
+        state.engine_registry_directory.clone(),
+        state.engine_store_directory.clone(),
+    )
+    .active_entries()
+    .map_err(serialize_error)?
+    .into_iter()
+    .map(|entry| entry.manifest_path)
+    .collect::<Vec<_>>();
     let mut summaries = Vec::with_capacity(paths.len());
     for path in paths {
         let display_path = path.clone();
@@ -994,6 +1008,7 @@ fn get_desktop_recovery_summary(
         removed_staged_outputs: state.startup_recovery.removed_staged_outputs,
         restored_bundle_id: state.startup_recovery.restored_bundle_id,
         restore_error: state.startup_recovery.restore_error.clone(),
+        engine_recovery: state.startup_recovery.engine_recovery.clone(),
         state_counts: lock(&state.store)?
             .count_jobs_by_state()
             .map_err(serialize_error)?,
@@ -1992,92 +2007,6 @@ fn valid_engine_summary(verified: &VerifiedEnginePack) -> DesktopEnginePackSumma
     }
 }
 
-fn persist_engine_registry_entry(
-    directory: &std::path::Path,
-    verified: &VerifiedEnginePack,
-) -> Result<(), String> {
-    let destination = directory.join(format!("{}.json", verified.manifest.engine_id));
-    let partial = directory.join(format!(
-        ".{}.{}.partial",
-        verified.manifest.engine_id,
-        Uuid::new_v4()
-    ));
-    let entry = DesktopEngineRegistryEntry {
-        engine_id: Some(verified.manifest.engine_id.clone()),
-        manifest_path: verified.manifest_path.clone(),
-    };
-    let bytes = serde_json::to_vec_pretty(&entry).map_err(|error| error.to_string())?;
-    std::fs::write(&partial, bytes).map_err(|error| error.to_string())?;
-    remove_superseded_registry_entries(directory, &verified.manifest.engine_id, &destination)?;
-    let backup = directory.join(format!(".{}.backup", verified.manifest.engine_id));
-    if destination.is_file() {
-        let _ = std::fs::remove_file(&backup);
-        std::fs::rename(&destination, &backup).map_err(|error| error.to_string())?;
-    }
-    match std::fs::rename(&partial, &destination) {
-        Ok(()) => {
-            let _ = std::fs::remove_file(backup);
-            Ok(())
-        }
-        Err(error) => {
-            let _ = std::fs::remove_file(partial);
-            if backup.is_file() {
-                let _ = std::fs::rename(&backup, &destination);
-            }
-            Err(error.to_string())
-        }
-    }
-}
-
-fn remove_superseded_registry_entries(
-    directory: &Path,
-    engine_id: &str,
-    active_entry: &Path,
-) -> Result<(), String> {
-    for entry in std::fs::read_dir(directory).map_err(|error| error.to_string())? {
-        let path = entry.map_err(|error| error.to_string())?.path();
-        if path.extension().and_then(std::ffi::OsStr::to_str) != Some("json") {
-            continue;
-        }
-        if path == active_entry {
-            continue;
-        }
-        let record = std::fs::read(&path)
-            .ok()
-            .and_then(|bytes| serde_json::from_slice::<DesktopEngineRegistryEntry>(&bytes).ok());
-        let superseded = record.is_some_and(|record| {
-            record.engine_id.as_deref() == Some(engine_id)
-                || formatwright_core::verify_engine_pack(record.manifest_path)
-                    .is_ok_and(|pack| pack.manifest.engine_id == engine_id)
-        });
-        if superseded {
-            std::fs::remove_file(path).map_err(|error| error.to_string())?;
-        }
-    }
-    Ok(())
-}
-
-fn registered_manifest_paths(directory: &std::path::Path) -> Result<Vec<PathBuf>, String> {
-    let mut paths = Vec::new();
-    let entries = std::fs::read_dir(directory).map_err(|error| error.to_string())?;
-    for entry in entries {
-        let entry = entry.map_err(|error| error.to_string())?;
-        let path = entry.path();
-        if path.extension().and_then(std::ffi::OsStr::to_str) != Some("json") {
-            continue;
-        }
-        let bytes = std::fs::read(&path).map_err(|error| error.to_string())?;
-        let record =
-            serde_json::from_slice::<DesktopEngineRegistryEntry>(&bytes).map_err(|error| {
-                format!("invalid engine registry entry {}: {error}", path.display())
-            })?;
-        paths.push(record.manifest_path);
-    }
-    paths.sort();
-    paths.dedup();
-    Ok(paths)
-}
-
 fn bundled_manifest_paths(resource_directory: &Path) -> Result<Vec<PathBuf>, String> {
     let bundle_root = resource_directory.join("engine-packs").join("starter");
     let bundle_path = bundle_root.join("bundle.json");
@@ -2147,7 +2076,9 @@ fn install_bundled_engine_packs(
     for manifest in manifests {
         let verified = formatwright_core::install_engine_pack(manifest, engine_store_directory)
             .map_err(serialize_error)?;
-        persist_engine_registry_entry(engine_registry_directory, &verified)?;
+        EngineRegistry::new(engine_registry_directory, engine_store_directory)
+            .set_active(&verified)
+            .map_err(|error| error.to_string())?;
         installed.push(verified);
     }
     Ok(installed)
@@ -2168,6 +2099,7 @@ fn recover_desktop_jobs(
         removed_staged_outputs,
         restored_bundle_id: None,
         restore_error: None,
+        engine_recovery: Vec::new(),
     })
 }
 
@@ -2198,10 +2130,19 @@ fn setup_desktop(
         &engine_registry_directory,
     )
     .map_err(Box::<dyn std::error::Error>::from)?;
-    for manifest_path in registered_manifest_paths(&engine_registry_directory)
-        .map_err(Box::<dyn std::error::Error>::from)?
+    let engine_recovery = EngineRegistry::new(
+        engine_registry_directory.clone(),
+        engine_store_directory.clone(),
+    )
+    .recover()
+    .map_err(Box::<dyn std::error::Error>::from)?;
+    if engine_recovery
+        .iter()
+        .any(|outcome| matches!(outcome, formatwright_core::EngineRecovery::Failed { .. }))
     {
-        let _ = activate_engine_pack(manifest_path);
+        // A failed engine disables its routes until a working pack is
+        // imported; it must never be silently skipped (ADR-0011 item 6).
+        eprintln!("engine recovery reported failures: {engine_recovery:?}");
     }
     let mut store = SqliteJobStore::open(&job_database_path)
         .map_err(|error| Box::<dyn std::error::Error>::from(error.to_string()))?;
@@ -2209,6 +2150,7 @@ fn setup_desktop(
         .map_err(|error| Box::<dyn std::error::Error>::from(error.to_string()))?;
     startup_recovery.restored_bundle_id = restored_bundle_id;
     startup_recovery.restore_error = restore_error;
+    startup_recovery.engine_recovery = engine_recovery;
     let presets = load_preset_library(&presets_path).map_err(Box::<dyn std::error::Error>::from)?;
     let settings = ApplicationSettingsService::new(&settings_path)
         .read()
@@ -2322,12 +2264,11 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        DESKTOP_JOB_PAGE_LIMIT, DesktopConversionRequest, DesktopEngineRegistryEntry,
-        DesktopOperationGate, MAX_PENDING_SHELL_OPEN_PATHS, acquire_active_operation,
-        acquire_maintenance_operation, acquire_queue_window, apply_pending_restore, backup_path,
-        bundled_manifest_paths, desktop_job_page_limit, enqueue_shell_open_path,
-        load_preset_library, pending_restore_path, persist_preset_library,
-        prepare_approved_desktop_conversion, recover_desktop_jobs, registered_manifest_paths,
+        DESKTOP_JOB_PAGE_LIMIT, DesktopConversionRequest, DesktopOperationGate,
+        MAX_PENDING_SHELL_OPEN_PATHS, acquire_active_operation, acquire_maintenance_operation,
+        acquire_queue_window, apply_pending_restore, backup_path, bundled_manifest_paths,
+        desktop_job_page_limit, enqueue_shell_open_path, load_preset_library, pending_restore_path,
+        persist_preset_library, prepare_approved_desktop_conversion, recover_desktop_jobs,
         report_for_export, requeue_job, run_queue_window_on_database, shell_open_path_from_args,
         stage_pending_restore, validated_shell_open_path, write_desktop_export_noclobber,
     };
@@ -2487,19 +2428,28 @@ mod tests {
     fn engine_registry_reads_entries_and_ignores_partials() {
         let directory = tempdir().expect("temporary registry");
         let expected = PathBuf::from("C:/engine-pack/manifest.json");
-        let entry = DesktopEngineRegistryEntry {
+        let entry = formatwright_core::EngineRegistryIdentity {
             engine_id: Some("fixture-engine".to_owned()),
             manifest_path: expected.clone(),
         };
         fs::write(
-            directory.path().join("abc.json"),
+            directory.path().join("fixture-engine.json"),
             serde_json::to_vec(&entry).expect("serialize entry"),
         )
         .expect("write registry entry");
         fs::write(directory.path().join(".abc.partial"), b"incomplete").expect("write partial");
 
+        let registry = formatwright_core::EngineRegistry::new(
+            directory.path().to_path_buf(),
+            directory.path().join("store"),
+        );
         assert_eq!(
-            registered_manifest_paths(directory.path()).expect("read registry"),
+            registry
+                .active_entries()
+                .expect("read registry")
+                .into_iter()
+                .map(|entry| entry.manifest_path)
+                .collect::<Vec<_>>(),
             vec![expected]
         );
     }

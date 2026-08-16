@@ -160,6 +160,7 @@
 - [x] 新增 scheduler/preset 后的 embedded release executable 已重新构建并通过原生像素/UIA 检查。
 - [x] Windows Starter 构建脚本固定 Poppler/FFmpeg 版本与 archive hash；manifest 覆盖 executable/runtime/license 文件，重复构建顶层清单哈希一致。
 - [x] 独立 Engine SPDX 2.3 文件 SBOM 与 `sources.json`：确定性生成、Manifest 路径/哈希绑定、Core 身份/篡改验证、原子安装复制和 CI 回归已完成；`sources.json` 明确保持 incomplete，不能替代 transitive component/许可证/源码义务审查。
+- [x] ADR-0011 第 6 项多版本注册表（`engine_registry.rs`）：active 指针原子替换、历史由内容寻址 store 派生（无迁移/状态捆绑兼容）、启动 recover 自动回退到最新可验证版本并逐引擎上报 `Activated/FellBack/Failed`（替换原静默 `let _ = activate`）、手动 rollback 先复验并 `POLICY_BLOCKED` 拦截未授权降级、容错数字版本排序；桌面导入/内嵌安装/启动/列表与恢复摘要全部接线。
 - [x] ADR-0011 可信签名验证：canonical manifest bytes（schema 字段序、map 排序、`signature` 置空）、Ed25519 签名 envelope、版本化 release keyring（吊销/有效期）、`Trusted/Unsigned/UnknownKey/Revoked/Expired/InvalidSignature` 六态 fail-closed 判定；`engines verify --keyring` 对非 Trusted 退出码 8；真实 PDF Starter 副本经第三方（PyNaCl）按 canonical bytes 交叉签名验证为 Trusted，篡改/吊销/未签名分别得到不同拒绝；正式 release 密钥与签名仪式仍待冻结决策。
 - [x] Tauri Windows bundle 内嵌 Starter；Release 首次启动验证后复制到版本化 store 并原子激活，ambient `PATH` 不参与生产解析。
 - [x] 2026-08-15 标准 NSIS 重建（不含任何测试 DevTools 参数）并重跑真实 current-user 安装烟测：双 pack 安装、四个供应链侧车哈希经真实 CLI 复验且 `review_status=incomplete`、Shell verb/单实例/负向路径、卸载键与安装根清理和应用状态逐字节恢复全部通过；安装器 282,440,776 bytes、SHA-256 `a2d3861472b949f58fe9e6b17317f45d0d98d0102524432f8850074104ab5828`（证据 `.artifacts/windows-explorer-installed-smoke/suite-14dd1eebb65946968758aeb25ebba1b3`）。
@@ -169,7 +170,7 @@
 
 - [x] `cargo fmt --all --check`。
 - [x] `cargo clippy --workspace --all-targets --all-features -- -D warnings`。
-- [x] 196 项普通 Rust 测试通过（156 Core、9 Schema、22 Desktop、9 Engine SDK）；另有 2 项昂贵的 10k 同质/混合发布测试按设计默认忽略，均有显式 release 运行证据。
+- [x] 202 项普通 Rust 测试通过（162 Core、9 Schema、22 Desktop、9 Engine SDK）；另有 2 项昂贵的 10k 同质/混合发布测试按设计默认忽略，均有显式 release 运行证据。
 - [x] 13 项前端测试、TypeScript check 和生产构建通过（含目标 `<option>` 提交值与预设字段失效旧 preview 的回归）。
 - [x] Rust 1.88 MSRV 全 workspace locked check 通过。
 - [x] 8 个 Schema、12 个黄金工作流和必需文件的仓库合同检查通过。
@@ -182,7 +183,7 @@
 - [ ] **Windows 开箱可用纵向闭环**：确定版本、内嵌资源、本机首次启动安装和 Core/PDF/Media E2E 已完成；仍须在没有 FFmpeg、Poppler、LibreOffice、Pandoc、libvips 和开发缓存的离线干净虚拟机中通过安装后 UI 转换，并完成 Starter 供应链认证。
 - [x] **生产引擎解析与能力门控（实现）**：Release 只运行已激活 pack 中的精确二进制路径，禁止 ambient `PATH`、`.cmd`、`.bat`；UI/Planner/Backend 只展示和接受当前 capability snapshot 确实可执行的路线。R-009 关闭仍等待 Gate U 干净机证据。
 - [ ] **冻结产品决策**：名称/商标与域名、最低 OS、签名账户与预算、官方引擎包选择策略、PDF 默认引擎、测试语料许可证、AGPL 服务仓库边界。
-- [ ] **可信引擎供应链**：每包确定性文件 SBOM、来源记录、运行时验证与可信签名验证（ADR-0011：canonical bytes、Ed25519、版本化 keyring、六态判定、CLI fail-closed，已用真实 PDF 包和第三方签名器交叉验证）已实现；仍需正式 release 密钥与签名仪式、多版本注册表自动回滚/降级拦截、完整 transitive component 归属/源码义务/许可证与专利审查和认证记录。
+- [ ] **可信引擎供应链**：每包确定性文件 SBOM、来源记录、运行时验证、可信签名验证（ADR-0011：canonical bytes、Ed25519、版本化 keyring、六态判定、CLI fail-closed，已用真实 PDF 包和第三方签名器交叉验证）与多版本注册表（启动自动回滚、显式失败上报、手动回滚 + 未授权降级拦截）已实现；仍需正式 release 密钥与签名仪式、认证状态贯通 Doctor/Planner/UI/报告、完整 transitive component 归属/源码义务/许可证与专利审查和认证记录。
 - [ ] **完整验证闭环**：每个对外支持的工作流都有类型专用必检项；Unknown 不计为 Pass；完成 Office/PDF 视觉差异阈值校准。
 - [ ] **三平台真实认证**：Windows 11、macOS arm64（及 x64 构建）、Ubuntu LTS 跑黄金语料、取消/进程树、Unicode/长路径、文件系统和离线门禁。
 - [ ] **OS 强制隔离**：Windows/macOS/Linux 上用可验证的系统机制阻断引擎网络与越权文件访问，而不只做套接字观测。
