@@ -113,6 +113,56 @@ export function targetOptionViews(
   });
 }
 
+export type EngineRecoveryOutcome = {
+  outcome: "activated" | "fell_back" | "failed";
+  engine_id: string;
+  version?: string;
+  manifest_sha256?: string;
+  fallback?: {
+    failed_version: string;
+    failed_manifest_sha256: string;
+    reason: string;
+    fallback_version: string;
+  };
+  failed_version?: string;
+  reason?: string;
+};
+
+export type EngineRecoveryState = "fell-back" | "failed";
+
+// Only degraded engine states belong on the recovery banner; a plain
+// activated outcome is the normal startup path and must not raise a notice.
+export function engineRecoveryNotices(
+  recovery: { engine_recovery?: readonly EngineRecoveryOutcome[] } | null | undefined,
+  labels: {
+    engineFallbackNotice: (engine: string, version: string) => string;
+    engineFailedNotice: (engine: string, reason: string) => string;
+  },
+): string[] {
+  return (recovery?.engine_recovery ?? [])
+    .filter((outcome) => outcome.outcome !== "activated")
+    .map((outcome) =>
+      outcome.outcome === "fell_back"
+        ? labels.engineFallbackNotice(
+            outcome.engine_id,
+            outcome.fallback?.fallback_version ?? "?",
+          )
+        : labels.engineFailedNotice(outcome.engine_id, outcome.reason ?? ""),
+    );
+}
+
+export function engineRecoveryState(
+  outcomes: readonly EngineRecoveryOutcome[] | undefined,
+  engineId: string | null | undefined,
+): EngineRecoveryState | null {
+  if (!engineId) return null;
+  const match = (outcomes ?? []).find((outcome) => outcome.engine_id === engineId);
+  if (!match) return null;
+  if (match.outcome === "fell_back") return "fell-back";
+  if (match.outcome === "failed") return "failed";
+  return null;
+}
+
 export type PresetFormField =
   | "preset-name"
   | "target"

@@ -150,6 +150,8 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .engine-grid small { color: #7f897d; overflow-wrap: anywhere; }
 .pack-section { margin-top: 24px; border-top: 1px solid #2d342c; padding-top: 20px; }
 .pack-list { display: grid; gap: 8px; }
+.pack-status { display: flex; gap: 6px; justify-content: flex-end; }
+.engine-recovery-list { margin: 4px 0 0; padding-left: 18px; }
 .pack-list article { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 14px; border: 1px solid #30372f; padding: 14px; background: #131813; }
 .pack-list article > div { display: grid; gap: 4px; min-width: 0; }
 .pack-list small { color: #7f897d; overflow-wrap: anywhere; }

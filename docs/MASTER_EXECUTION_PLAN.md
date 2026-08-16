@@ -160,6 +160,7 @@
 - [x] 新增 scheduler/preset 后的 embedded release executable 已重新构建并通过原生像素/UIA 检查。
 - [x] Windows Starter 构建脚本固定 Poppler/FFmpeg 版本与 archive hash；manifest 覆盖 executable/runtime/license 文件，重复构建顶层清单哈希一致。
 - [x] 独立 Engine SPDX 2.3 文件 SBOM 与 `sources.json`：确定性生成、Manifest 路径/哈希绑定、Core 身份/篡改验证、原子安装复制和 CI 回归已完成；`sources.json` 明确保持 incomplete，不能替代 transitive component/许可证/源码义务审查。
+- [x] 引擎恢复状态贯通桌面 UI：启动恢复横幅按引擎列出自动回退/无可用版本通知（activated 不打扰），Engines 页为回退/失败的 pack 显示徽标；通知文案中英双语，纯函数回归覆盖降级细节缺失时的诚实呈现。
 - [x] ADR-0011 第 6 项多版本注册表（`engine_registry.rs`）：active 指针原子替换、历史由内容寻址 store 派生（无迁移/状态捆绑兼容）、启动 recover 自动回退到最新可验证版本并逐引擎上报 `Activated/FellBack/Failed`（替换原静默 `let _ = activate`）、手动 rollback 先复验并 `POLICY_BLOCKED` 拦截未授权降级、容错数字版本排序；桌面导入/内嵌安装/启动/列表与恢复摘要全部接线。
 - [x] ADR-0011 可信签名验证：canonical manifest bytes（schema 字段序、map 排序、`signature` 置空）、Ed25519 签名 envelope、版本化 release keyring（吊销/有效期）、`Trusted/Unsigned/UnknownKey/Revoked/Expired/InvalidSignature` 六态 fail-closed 判定；`engines verify --keyring` 对非 Trusted 退出码 8；真实 PDF Starter 副本经第三方（PyNaCl）按 canonical bytes 交叉签名验证为 Trusted，篡改/吊销/未签名分别得到不同拒绝；正式 release 密钥与签名仪式仍待冻结决策。
 - [x] Tauri Windows bundle 内嵌 Starter；Release 首次启动验证后复制到版本化 store 并原子激活，ambient `PATH` 不参与生产解析。
@@ -171,7 +172,7 @@
 - [x] `cargo fmt --all --check`。
 - [x] `cargo clippy --workspace --all-targets --all-features -- -D warnings`。
 - [x] 202 项普通 Rust 测试通过（162 Core、9 Schema、22 Desktop、9 Engine SDK）；另有 2 项昂贵的 10k 同质/混合发布测试按设计默认忽略，均有显式 release 运行证据。
-- [x] 13 项前端测试、TypeScript check 和生产构建通过（含目标 `<option>` 提交值与预设字段失效旧 preview 的回归）。
+- [x] 16 项前端测试、TypeScript check 和生产构建通过（含目标 `<option>` 提交值、预设字段失效旧 preview 与引擎恢复通知的回归）。
 - [x] Rust 1.88 MSRV 全 workspace locked check 通过。
 - [x] 8 个 Schema、12 个黄金工作流和必需文件的仓库合同检查通过。
 - [x] 图片、HEIC、音频、GIF、媒体、元数据、结构化、文档、PDF、Office、批量、混合调度、大文件、零网络和预设沙箱已有可复现脚本/文档。

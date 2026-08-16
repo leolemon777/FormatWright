@@ -7,6 +7,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   JOB_PAGE_SIZE,
   elapsedProgressSeconds,
+  engineRecoveryNotices,
+  engineRecoveryState,
   isDirectoryOutput,
   jobListAriaAttributes,
   latestJobProgress,
@@ -16,6 +18,7 @@ import {
   recommendedTargets,
   suggestedOutput,
   targetOptionViews,
+  type EngineRecoveryOutcome,
   type JobProgressUpdate,
 } from "./desktopModel";
 import { messages, type Language } from "./i18n";
@@ -113,6 +116,7 @@ type RecoverySummary = {
   removed_staged_outputs: number;
   restored_bundle_id?: string;
   restore_error?: string;
+  engine_recovery?: EngineRecoveryOutcome[];
   state_counts: JobStateCount[];
 };
 
@@ -1290,8 +1294,12 @@ export default function App() {
     (total, state) => total + (recoveryCounts[state] ?? 0),
     0,
   );
+  const engineNotices = engineRecoveryNotices(recovery, {
+    engineFallbackNotice: (engine, version) => copy.engineFallbackNotice.replace("{engine}", engine).replace("{version}", version),
+    engineFailedNotice: (engine, reason) => copy.engineFailedNotice.replace("{engine}", engine).replace("{reason}", reason),
+  });
   const showRecovery = !recoveryDismissed && recovery != null &&
-    (recovery.recovered_after_restart > 0 || recovery.restored_bundle_id != null || recovery.restore_error != null || recoverableCount > 0);
+    (recovery.recovered_after_restart > 0 || recovery.restored_bundle_id != null || recovery.restore_error != null || recoverableCount > 0 || engineNotices.length > 0);
   const pageStart = jobTotal === 0 ? 0 : jobOffset + 1;
   const pageEnd = Math.min(jobOffset + jobs.length, jobTotal);
   const activeProgress = activeJobId ? jobProgress[activeJobId] : undefined;
@@ -1328,6 +1336,7 @@ export default function App() {
             <span>{copy.recoveryBody}: {recovery.recovered_after_restart} {copy.recoveredOnStartup} · {recovery.removed_staged_outputs} {copy.partialsCleaned} · {recoverableCount} {copy.recoverableJobs}</span>
             {recovery.restored_bundle_id && <span>{copy.restoreCompleted}: {recovery.restored_bundle_id}</span>}
             {recovery.restore_error && <span className="restore-error">{copy.restoreFailed}: {recovery.restore_error}</span>}
+            {engineNotices.length > 0 && <ul className="engine-recovery-list">{engineNotices.map((notice) => <li key={notice}>{notice}</li>)}</ul>}
           </div>
           <span className="heading-actions">
             <button className="primary" type="button" onClick={() => setTab("jobs")}>{copy.reviewRecovery}</button>
@@ -1480,7 +1489,7 @@ export default function App() {
         <section className="page-card">
           <div className="page-heading"><div><p className="section-label">LOCAL INVENTORY</p><h1>{copy.doctor}</h1><p>{copy.doctorHint}</p></div><div className="heading-actions"><button className="secondary" type="button" disabled={engineBusy} onClick={importEnginePack}>{engineBusy ? copy.verifyingEnginePack : copy.importEnginePack}</button><button type="button" onClick={refreshEngines}>{copy.refresh}</button></div></div>
           {!doctor ? <p className="empty">{copy.importHint}</p> : <div className="engine-grid">{Object.entries(doctor.engines).map(([name, health]) => <article key={name}><strong>{name}</strong><span className={`status ${health.available ? "status-completed" : "status-failed"}`}>{health.available ? `✓ ${copy.available}` : `× ${copy.unavailable}`}</span><small>{health.identity?.version ?? health.message}</small></article>)}</div>}
-          <div className="pack-section"><p className="section-label">{copy.importedPacks}</p>{enginePacks.length === 0 ? <p className="empty">{copy.noImportedPacks}</p> : <div className="pack-list">{enginePacks.map((pack) => <article key={pack.manifest_sha256 ?? pack.manifest_path}><div><strong>{pack.engine_id ?? copy.invalidPack} {pack.version ?? ""}</strong><small><bdi>{pack.manifest_path}</bdi></small><small>{pack.executable_names.join(", ") || pack.message}</small></div><span className={`status ${pack.valid ? "status-warning" : "status-failed"}`}>{pack.valid ? (pack.signature_present ? copy.signaturePending : copy.unverified) : copy.invalidPack}</span></article>)}</div>}</div>
+          <div className="pack-section"><p className="section-label">{copy.importedPacks}</p>{enginePacks.length === 0 ? <p className="empty">{copy.noImportedPacks}</p> : <div className="pack-list">{enginePacks.map((pack) => <article key={pack.manifest_sha256 ?? pack.manifest_path}><div><strong>{pack.engine_id ?? copy.invalidPack} {pack.version ?? ""}</strong><small><bdi>{pack.manifest_path}</bdi></small><small>{pack.executable_names.join(", ") || pack.message}</small></div><div className="pack-status">{engineRecoveryState(recovery?.engine_recovery, pack.engine_id) === "fell-back" && <span className="status status-warning">{copy.engineRolledBackBadge}</span>}{engineRecoveryState(recovery?.engine_recovery, pack.engine_id) === "failed" && <span className="status status-failed">{copy.engineRecoveryFailedBadge}</span>}<span className={`status ${pack.valid ? "status-warning" : "status-failed"}`}>{pack.valid ? (pack.signature_present ? copy.signaturePending : copy.unverified) : copy.invalidPack}</span></div></article>)}</div>}</div>
         </section>
       )}
 

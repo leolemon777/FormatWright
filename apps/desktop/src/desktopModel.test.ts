@@ -4,6 +4,8 @@ import {
   JOB_PAGE_SIZE,
   SUPPORTED_TARGET_FORMATS,
   elapsedProgressSeconds,
+  engineRecoveryNotices,
+  engineRecoveryState,
   isDirectoryOutput,
   jobListAriaAttributes,
   latestJobProgress,
@@ -13,6 +15,7 @@ import {
   recommendedTargets,
   suggestedOutput,
   targetOptionViews,
+  type EngineRecoveryOutcome,
 } from "./desktopModel";
 
 describe("desktop workflow model", () => {
@@ -105,5 +108,59 @@ describe("preset preview invalidation", () => {
     expect(presetFieldChangeInvalidatesPreview("color-mode")).toBe(true);
     expect(presetFieldChangeInvalidatesPreview("preserve-all-streams")).toBe(true);
     expect(presetFieldChangeInvalidatesPreview("preset-name")).toBe(false);
+  });
+});
+
+describe("engine recovery notices", () => {
+  const labels = {
+    engineFallbackNotice: (engine: string, version: string) => `${engine} -> ${version}`,
+    engineFailedNotice: (engine: string, reason: string) => `${engine} failed: ${reason}`,
+  };
+
+  it("raises notices only for degraded engines", () => {
+    const recovery: { engine_recovery: EngineRecoveryOutcome[] } = {
+      engine_recovery: [
+        { outcome: "activated", engine_id: "formatwright-pdf", version: "26.02.0-0" },
+        {
+          outcome: "fell_back",
+          engine_id: "formatwright-media",
+          fallback: {
+            failed_version: "9.0",
+            failed_manifest_sha256: "ab".repeat(32),
+            reason: "hash mismatch",
+            fallback_version: "8.0",
+          },
+        },
+        { outcome: "failed", engine_id: "formatwright-image", failed_version: "1.0.0", reason: "no verifiable copy" },
+      ],
+    };
+    expect(engineRecoveryNotices(recovery, labels)).toEqual([
+      "formatwright-media -> 8.0",
+      "formatwright-image failed: no verifiable copy",
+    ]);
+    expect(engineRecoveryNotices(null, labels)).toEqual([]);
+    expect(engineRecoveryNotices({}, labels)).toEqual([]);
+  });
+
+  it("keeps missing fallback details honest instead of crashing", () => {
+    expect(
+      engineRecoveryNotices({ engine_recovery: [{ outcome: "fell_back", engine_id: "x" }] }, labels),
+    ).toEqual(["x -> ?"]);
+    expect(
+      engineRecoveryNotices({ engine_recovery: [{ outcome: "failed", engine_id: "y" }] }, labels),
+    ).toEqual(["y failed: "]);
+  });
+
+  it("maps per-engine badge state for the engines page", () => {
+    const outcomes: EngineRecoveryOutcome[] = [
+      { outcome: "activated", engine_id: "formatwright-pdf" },
+      { outcome: "fell_back", engine_id: "formatwright-media" },
+      { outcome: "failed", engine_id: "formatwright-image" },
+    ];
+    expect(engineRecoveryState(outcomes, "formatwright-pdf")).toBeNull();
+    expect(engineRecoveryState(outcomes, "formatwright-media")).toBe("fell-back");
+    expect(engineRecoveryState(outcomes, "formatwright-image")).toBe("failed");
+    expect(engineRecoveryState(outcomes, null)).toBeNull();
+    expect(engineRecoveryState(undefined, "formatwright-pdf")).toBeNull();
   });
 });

@@ -223,6 +223,10 @@ export const messages = {
     restoreScheduled: "恢复已安全安排。请完全退出并重新打开 FormatWright；下次启动会再次验证后恢复。",
     restoreCompleted: "应用状态恢复完成",
     restoreFailed: "应用状态恢复失败，现有数据保持不变",
+    engineFallbackNotice: "引擎 {engine} 活动版本校验失败，已自动回退到 {version}",
+    engineFailedNotice: "引擎 {engine} 没有可用的已验证版本：{reason}",
+    engineRolledBackBadge: "已回退",
+    engineRecoveryFailedBadge: "恢复失败",
   },
   en: {
     product: "FormatWright",
@@ -446,6 +450,10 @@ export const messages = {
     restoreScheduled: "Restore safely scheduled. Fully quit and reopen FormatWright; startup will verify it again before restoring.",
     restoreCompleted: "Application state restore completed",
     restoreFailed: "Application state restore failed; existing data was preserved",
+    engineFallbackNotice: "Engine {engine} failed verification and was automatically rolled back to {version}",
+    engineFailedNotice: "Engine {engine} has no verifiable installed version: {reason}",
+    engineRolledBackBadge: "Rolled back",
+    engineRecoveryFailedBadge: "Recovery failed",
   },
 } as const;
 
