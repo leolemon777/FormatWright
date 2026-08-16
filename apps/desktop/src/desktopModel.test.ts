@@ -2,14 +2,17 @@ import { describe, expect, it } from "vitest";
 
 import {
   JOB_PAGE_SIZE,
+  SUPPORTED_TARGET_FORMATS,
   elapsedProgressSeconds,
   isDirectoryOutput,
   jobListAriaAttributes,
   latestJobProgress,
   parseDesktopError,
+  presetFieldChangeInvalidatesPreview,
   progressForJob,
   recommendedTargets,
   suggestedOutput,
+  targetOptionViews,
 } from "./desktopModel";
 
 describe("desktop workflow model", () => {
@@ -63,5 +66,44 @@ describe("desktop workflow model", () => {
     expect(progressForJob(running, 4)).toBe(running);
     expect(elapsedProgressSeconds(running, 6_750)).toBe(2);
     expect(running.eta_milliseconds).toBeNull();
+  });
+});
+
+describe("target option views", () => {
+  it("keeps the submitted option value separate from the localized unavailable label", () => {
+    const routes = { png: { available: false }, jpg: { available: true } };
+    const views = targetOptionViews(["png", "jpg"], routes, "convert-file", "Missing");
+    const png = views.find((option) => option.value === "png");
+    expect(png).toEqual({ value: "png", label: "png — Missing", disabled: true });
+    expect(views.find((option) => option.value === "jpg")).toEqual({ value: "jpg", label: "jpg", disabled: false });
+  });
+
+  it("does not gate targets before capabilities load or in folder mode", () => {
+    expect(targetOptionViews(["png"], null, "convert-file", "Missing").find((option) => option.value === "png")?.disabled).toBe(false);
+    expect(targetOptionViews(["png"], { png: { available: false } }, "convert-folder", "Missing").find((option) => option.value === "png")?.disabled).toBe(false);
+    expect(targetOptionViews(["png"], { png: { available: false } }, "convert-folder", "Missing").find((option) => option.value === "png")?.label).toBe("png");
+  });
+
+  it("gates preset targets without relabeling them", () => {
+    const view = targetOptionViews(["png"], { png: { available: false } }, "preset", "Missing").find((option) => option.value === "png");
+    expect(view).toEqual({ value: "png", label: "png", disabled: true });
+  });
+
+  it("merges recommendations with the supported target list deterministically", () => {
+    const merged = targetOptionViews(["png"], null, "convert-file", "Missing").map((option) => option.value);
+    expect(merged).toEqual(["png", ...SUPPORTED_TARGET_FORMATS.filter((value) => value !== "png")]);
+    expect(targetOptionViews(["csv"], null, "preset", "Missing").map((option) => option.value)[0]).toBe("csv");
+  });
+});
+
+describe("preset preview invalidation", () => {
+  it("invalidates a stale preview for every conversion-affecting preset field except the name", () => {
+    expect(presetFieldChangeInvalidatesPreview("target")).toBe(true);
+    expect(presetFieldChangeInvalidatesPreview("quality")).toBe(true);
+    expect(presetFieldChangeInvalidatesPreview("width")).toBe(true);
+    expect(presetFieldChangeInvalidatesPreview("dpi")).toBe(true);
+    expect(presetFieldChangeInvalidatesPreview("color-mode")).toBe(true);
+    expect(presetFieldChangeInvalidatesPreview("preserve-all-streams")).toBe(true);
+    expect(presetFieldChangeInvalidatesPreview("preset-name")).toBe(false);
   });
 });

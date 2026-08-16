@@ -1,7 +1,7 @@
 # Windows Packaging Evidence
 
 - Status: unsigned self-contained release candidate; clean-machine certification pending
-- Updated: 2026-08-13
+- Updated: 2026-08-15
 - Host: Windows x86-64
 
 ## Configuration
@@ -30,14 +30,14 @@ The checksum generator hashes files in 1 MiB chunks, rejects missing/non-file in
 
 ## Current recorded build
 
-The final 2026-08-13 local rebuild after correcting and install-testing the Explorer quote contract produced:
+The final 2026-08-15 standard-configuration rebuild — after the target `<option>` submitted-value fix, preset-field preview invalidation, and the per-format isolated Release UI conversion harness — produced:
 
 | Artifact | Bytes | SHA-256 | Signature |
 |---|---:|---|---|
-| `FormatWright_0.1.0_x64-setup.exe` | 279,373,840 | `f5e18960f7e3f30c12d4b5d1b7a0f29ced88f5b72262f97c3821b37f4d0ea961` | NotSigned |
-| `formatwright-desktop.exe` | 15,537,152 | `2468875d39e724abbfe31c101c9b4e6ca6e72eedb90e56fbab865bebf4b0016d` | NotSigned |
+| `FormatWright_0.1.0_x64-setup.exe` | 282,440,776 | `a2d3861472b949f58fe9e6b17317f45d0d98d0102524432f8850074104ab5828` | NotSigned |
+| `formatwright-desktop.exe` (standard config) | 15,572,480 | `d92b5271d3d97fc8b92c26c7093b7c8324aae4f7733582f6a0108e7a7dcfa5cf` | NotSigned |
 
-The embedded resource directory contains bundle hash `21f46f92f63ae9fc31a059b3139b4edcf27d2fa9b7b6522fc34f13cb43c48823`, PDF manifest hash `e047b5e81f3f8abbc2329a91850ec570a718c7d0aed84c1016b9feefc88e894b`, and Media manifest hash `5bc2643953fc4f80ed7ad5abd5e74a20b0270e67ab9e04c8aa527e6e4ddebc73`.
+A byte scan of both standard artifacts is negative for the release-e2e DevTools arguments (`remote-debugging-port`, `force-renderer-accessibility`); those exist only in the separately built test binary documented in `docs/testing/DESKTOP_RELEASE_CONVERSION.md`. The embedded Starter resource tree remains bundle hash `21f46f92f63ae9fc31a059b3139b4edcf27d2fa9b7b6522fc34f13cb43c48823` with the PDF and Media manifest/SBOM/sources hashes recorded in `docs/testing/WINDOWS_STARTER.md`. The installer also embeds the WebView2 offline runtime fetched at build time, so its hash depends on that download as well as the pinned packs.
 
 ## Sandbox smoke
 
@@ -53,6 +53,8 @@ The installed `uninstall.exe /S` returned exit code 0. After two seconds, the ex
 The current unpackaged Release candidate was then started with embedded resources. Startup installed both `formatwright-pdf` and `formatwright-media` into the versioned application-data store and wrote active registry records. Exact-pack local E2E passed PDF→PNG, PDF→JPEG, GIF, and built-in structured conversion. See `docs/testing/WINDOWS_STARTER.md`.
 
 The 2026-08-13 current-user installed harness found and prevented a false-positive build-only result: literal NSIS `$"` tokens were present in the first registry command. After correction and rebuild, exact native quoting, actual Windows Shell verb cold launch, hot-instance forwarding, UIA path observation, zero-job behavior, negative missing-path handling, owned-key cleanup, unrelated-key preservation and install-root removal all passed. Both authoritative application-state roots were isolated and restored byte-for-byte. A clean offline VM remains required for release certification.
+
+The enhanced smoke was rerun on 2026-08-15 against the current installer (evidence `.artifacts/windows-explorer-installed-smoke/suite-14dd1eebb65946968758aeb25ebba1b3`): both Starter packs installed from the embedded resources, all four supply-chain sidecar hashes re-verified with the real CLI verifier and `review_status=incomplete` asserted, installed Shell verbs and single-instance forwarding re-checked, and uninstall again left no owned keys or install-root remnants with application state restored byte-for-byte.
 
 ## Release boundary
 

@@ -218,6 +218,33 @@ try {
     $jobsAfterColdOpenJson = ($jobsAfterColdOpen -join "`n")
     Assert-True ($jobsAfterColdOpenJson.Trim() -eq '[]') 'shell open created a durable Job without approval'
 
+    $engineRoot = Join-Path $env:APPDATA 'local.formatwright.desktop\engines'
+    $installedManifests = @(Get-ChildItem -LiteralPath $engineRoot -Filter 'manifest.json' -File -Recurse)
+    Assert-True ($installedManifests.Count -eq 2) 'installed Starter does not contain exactly two engine manifests'
+    $installedPackIds = @()
+    foreach ($manifestFile in $installedManifests) {
+        $manifest = Get-Content -LiteralPath $manifestFile.FullName -Raw | ConvertFrom-Json
+        $installedPackIds += [string]$manifest.engine_id
+        Assert-True ($null -ne $manifest.supply_chain) "installed pack has no supply-chain metadata: $($manifest.engine_id)"
+        $packRoot = Split-Path -Parent $manifestFile.FullName
+        foreach ($sidecar in @(
+            [pscustomobject]@{ Path = [string]$manifest.supply_chain.sbom_path; Hash = [string]$manifest.supply_chain.sbom_sha256 },
+            [pscustomobject]@{ Path = [string]$manifest.supply_chain.sources_path; Hash = [string]$manifest.supply_chain.sources_sha256 }
+        )) {
+            $sidecarPath = Join-Path $packRoot $sidecar.Path
+            Assert-True (Test-Path -LiteralPath $sidecarPath -PathType Leaf) "installed sidecar is missing: $sidecarPath"
+            $observedHash = (Get-FileHash -LiteralPath $sidecarPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            Assert-True ($observedHash -ceq $sidecar.Hash.ToLowerInvariant()) "installed sidecar hash differs: $sidecarPath"
+        }
+        $sourcesPath = Join-Path $packRoot ([string]$manifest.supply_chain.sources_path)
+        $sources = Get-Content -LiteralPath $sourcesPath -Raw | ConvertFrom-Json
+        Assert-True ($sources.review_status -ceq 'incomplete') 'development pack source review status is overstated'
+        $null = & $cliPath '--json' 'engines' 'verify' $manifestFile.FullName
+        Assert-True ($LASTEXITCODE -eq 0) "CLI rejected installed Starter pack: $($manifest.engine_id)"
+    }
+    $installedPackIds = @($installedPackIds | Sort-Object)
+    Assert-True (($installedPackIds -join ',') -ceq 'formatwright-media,formatwright-pdf') 'installed Starter pack identities differ'
+
     $second = Start-ExplorerVerb -Path $fixtureRoot
     $second.WaitForExit(30000) | Out-Null
     Assert-True $second.HasExited 'second instance did not exit'
@@ -261,6 +288,9 @@ try {
         hot_directory_path_visible = $directoryValues -contains $fixtureRoot
         single_instance_pid = $process.Id
         durable_jobs_created = 0
+        installed_pack_ids = $installedPackIds
+        installed_supply_chain_verified = $true
+        installed_source_review_status = 'incomplete'
         negative_missing_path_rejected = $true
         uninstall_exit_code = $uninstallResult
         owned_keys_removed = $true

@@ -1349,6 +1349,7 @@ Release 默认顺序：
 - `docs/testing/DESKTOP_MVP.md`：Phase 4 共享核心 Tauri 命令、双语普通/专家界面、持久任务/报告、原生启动与像素检查证据。
 - `docs/testing/DESKTOP_ACCESSIBILITY.md`：真实 Tauri/WebView2 自动可访问性树、首 Tab 跳转、200% 物理等效视口、RTL 路径、对比度/forced-colors/reduced-motion 与双语语义证据边界。
 - `docs/testing/WINDOWS_EXPLORER_INTEGRATION.md`：Windows 经典 Explorer 文件/目录入口、严格路径参数、单实例转发、安装/卸载键归属和隔离安装验收边界。
+- `docs/testing/DESKTOP_RELEASE_CONVERSION.md`：真实 Release UI 的 PDF→PNG/JPG CDP 转换证据，每格式独立进程与隔离应用状态、逐项 Pass 报告与确定性页命名边界。
 - `docs/testing/TEN_THOUSAND_CONVERSIONS.md`：10,000 个不同结构化输入的真实规划、原子入队、数据库重启、有界窗口执行、语义验证与提交证据。
 - `docs/security/FUZZING.md` 与 `fuzz/`：引擎 manifest、JSON/YAML/CSV/XML 解析边界的 libFuzzer/AddressSanitizer harness、定时 CI 与 Windows 有界 campaign 证据。
 - `docs/release/SBOM.md` 与 `scripts/generate_sbom.py`：锁定 Cargo/pnpm 依赖的 SPDX 2.3 应用 SBOM 生成与自校验证据；引擎包 SBOM 仍独立管理。

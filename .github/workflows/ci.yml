@@ -54,6 +54,8 @@ jobs:
         run: python3 scripts/check_repository.py
       - name: Application SBOM
         run: python3 scripts/generate_sbom.py
+      - name: Engine SBOM generator regression
+        run: python3 scripts/test_engine_sbom.py
       - name: Dependency audit tool
         run: cargo install cargo-audit --version 0.22.2 --locked
       - name: Dependency audit
@@ -104,6 +106,8 @@ jobs:
         run: rustup component add rustfmt clippy
       - name: Repository contracts
         run: python scripts/check_repository.py
+      - name: Engine SBOM generator regression
+        run: python scripts/test_engine_sbom.py
       - name: Format
         run: cargo fmt --all --check
       - name: Clippy

@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use formatwright_engine_sdk::{
-    EngineArchitecture, EngineManifest, EnginePlatform, ManifestLicense,
+    EngineArchitecture, EngineManifest, EnginePlatform, ManifestLicense, ManifestSupplyChain,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -20,6 +20,7 @@ pub struct VerifiedEnginePack {
     pub manifest_sha256: String,
     pub executables: BTreeMap<String, PathBuf>,
     pub runtime_files: Vec<PathBuf>,
+    pub supply_chain_files: Vec<PathBuf>,
     pub signature_present: bool,
 }
 
@@ -100,6 +101,10 @@ pub fn verify_engine_pack(manifest_path: impl AsRef<Path>) -> Result<VerifiedEng
     for license in &manifest.licenses {
         verify_license_files(root, license)?;
     }
+    let supply_chain_files = match &manifest.supply_chain {
+        Some(supply_chain) => verify_supply_chain_files(root, &manifest, supply_chain)?,
+        None => Vec::new(),
+    };
 
     let manifest_sha256 = format!("{:x}", Sha256::digest(&bytes));
     let signature_present = manifest.signature.is_some();
@@ -109,6 +114,7 @@ pub fn verify_engine_pack(manifest_path: impl AsRef<Path>) -> Result<VerifiedEng
         manifest_sha256,
         executables,
         runtime_files,
+        supply_chain_files,
         signature_present,
     })
 }
@@ -241,6 +247,15 @@ fn stage_verified_pack(source: &VerifiedEnginePack, staging: &Path) -> Result<()
             copy_pack_relative(source_root, staging, path, "source offer")?;
         }
     }
+    if let Some(supply_chain) = &source.manifest.supply_chain {
+        copy_pack_relative(source_root, staging, &supply_chain.sbom_path, "engine SBOM")?;
+        copy_pack_relative(
+            source_root,
+            staging,
+            &supply_chain.sources_path,
+            "engine source inventory",
+        )?;
+    }
     Ok(())
 }
 
@@ -305,6 +320,219 @@ fn verify_license_files(root: &Path, license: &ManifestLicense) -> Result<()> {
     Ok(())
 }
 
+fn verify_supply_chain_files(
+    root: &Path,
+    manifest: &EngineManifest,
+    supply_chain: &ManifestSupplyChain,
+) -> Result<Vec<PathBuf>> {
+    let mut paths = Vec::with_capacity(2);
+    for (purpose, relative, expected) in [
+        (
+            "engine SBOM",
+            &supply_chain.sbom_path,
+            &supply_chain.sbom_sha256,
+        ),
+        (
+            "engine source inventory",
+            &supply_chain.sources_path,
+            &supply_chain.sources_sha256,
+        ),
+    ] {
+        let path = resolve_pack_file(root, relative, purpose)?;
+        let observed = sha256_file(&path)?;
+        if !observed.eq_ignore_ascii_case(expected) {
+            return Err(engine_error(
+                format!("{purpose} hash mismatch"),
+                format!("expected {expected}, observed {observed}"),
+            ));
+        }
+        paths.push(path);
+    }
+
+    let sbom = read_json_object(&paths[0], "Engine SBOM")?;
+    if sbom.get("spdxVersion").and_then(serde_json::Value::as_str) != Some("SPDX-2.3")
+        || sbom.get("dataLicense").and_then(serde_json::Value::as_str) != Some("CC0-1.0")
+        || !sbom
+            .get("packages")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|packages| {
+                packages.iter().any(|package| {
+                    package.get("name").and_then(serde_json::Value::as_str)
+                        == Some(manifest.engine_id.as_str())
+                        && package
+                            .get("versionInfo")
+                            .and_then(serde_json::Value::as_str)
+                            == Some(manifest.version.as_str())
+                })
+            })
+    {
+        return Err(engine_error(
+            "Engine SBOM identity is invalid".to_owned(),
+            paths[0].display().to_string(),
+        ));
+    }
+    verify_sbom_inventory(root, manifest, supply_chain, &sbom)?;
+
+    let sources = read_json_object(&paths[1], "Engine source inventory")?;
+    if sources
+        .get("schema_version")
+        .and_then(serde_json::Value::as_u64)
+        != Some(1)
+        || sources.get("engine_id").and_then(serde_json::Value::as_str)
+            != Some(manifest.engine_id.as_str())
+        || sources.get("version").and_then(serde_json::Value::as_str)
+            != Some(manifest.version.as_str())
+        || sources
+            .get("artifacts")
+            .and_then(serde_json::Value::as_array)
+            .is_none_or(Vec::is_empty)
+    {
+        return Err(engine_error(
+            "Engine source inventory identity is invalid".to_owned(),
+            paths[1].display().to_string(),
+        ));
+    }
+    Ok(paths)
+}
+
+fn verify_sbom_inventory(
+    root: &Path,
+    manifest: &EngineManifest,
+    supply_chain: &ManifestSupplyChain,
+    sbom: &serde_json::Map<String, serde_json::Value>,
+) -> Result<()> {
+    let mut expected = BTreeMap::new();
+    for executable in &manifest.executables {
+        expected.insert(
+            portable_pack_path(&executable.relative_path),
+            executable.sha256.to_ascii_lowercase(),
+        );
+    }
+    for runtime_file in &manifest.runtime_files {
+        expected.insert(
+            portable_pack_path(&runtime_file.relative_path),
+            runtime_file.sha256.to_ascii_lowercase(),
+        );
+    }
+    for license in &manifest.licenses {
+        for (purpose, relative) in [
+            ("license notice", Some(&license.notice_path)),
+            ("source offer", license.source_offer_path.as_ref()),
+        ] {
+            let Some(relative) = relative else {
+                continue;
+            };
+            let path = resolve_pack_file(root, relative, purpose)?;
+            expected.insert(portable_pack_path(relative), sha256_file(&path)?);
+        }
+    }
+    expected.insert(
+        portable_pack_path(&supply_chain.sources_path),
+        supply_chain.sources_sha256.to_ascii_lowercase(),
+    );
+
+    let files = sbom
+        .get("files")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| {
+            engine_error(
+                "Engine SBOM has no file inventory".to_owned(),
+                supply_chain.sbom_path.display().to_string(),
+            )
+        })?;
+    let mut observed = BTreeMap::new();
+    for entry in files {
+        let entry = entry.as_object().ok_or_else(|| {
+            engine_error(
+                "Engine SBOM file entry is invalid".to_owned(),
+                supply_chain.sbom_path.display().to_string(),
+            )
+        })?;
+        let relative = entry
+            .get("fileName")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| {
+                engine_error(
+                    "Engine SBOM file entry has no name".to_owned(),
+                    supply_chain.sbom_path.display().to_string(),
+                )
+            })?;
+        let sha256 = entry
+            .get("checksums")
+            .and_then(serde_json::Value::as_array)
+            .and_then(|checksums| {
+                checksums.iter().find_map(|checksum| {
+                    let checksum = checksum.as_object()?;
+                    (checksum.get("algorithm")?.as_str()? == "SHA256")
+                        .then(|| checksum.get("checksumValue")?.as_str())
+                        .flatten()
+                })
+            })
+            .filter(|value| value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
+            .ok_or_else(|| {
+                engine_error(
+                    format!("Engine SBOM file has no valid SHA-256: {relative}"),
+                    supply_chain.sbom_path.display().to_string(),
+                )
+            })?;
+        if observed
+            .insert(relative.to_owned(), sha256.to_ascii_lowercase())
+            .is_some()
+        {
+            return Err(engine_error(
+                format!("Engine SBOM repeats a file: {relative}"),
+                supply_chain.sbom_path.display().to_string(),
+            ));
+        }
+    }
+    if observed != expected {
+        let missing = expected
+            .keys()
+            .filter(|path| !observed.contains_key(*path))
+            .cloned()
+            .collect::<Vec<_>>();
+        let unexpected = observed
+            .keys()
+            .filter(|path| !expected.contains_key(*path))
+            .cloned()
+            .collect::<Vec<_>>();
+        return Err(engine_error(
+            "Engine SBOM file inventory differs from the manifest-declared payload".to_owned(),
+            format!("missing={missing:?}, unexpected={unexpected:?}"),
+        ));
+    }
+    Ok(())
+}
+
+fn portable_pack_path(path: &Path) -> String {
+    path.components()
+        .map(|component| component.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn read_json_object(
+    path: &Path,
+    purpose: &str,
+) -> Result<serde_json::Map<String, serde_json::Value>> {
+    let bytes = fs::read(path).map_err(|error| {
+        engine_error(
+            format!("Cannot read {purpose}: {}", path.display()),
+            error.to_string(),
+        )
+    })?;
+    serde_json::from_slice::<serde_json::Value>(&bytes)
+        .map_err(|error| engine_error(format!("{purpose} is not valid JSON"), error.to_string()))?
+        .as_object()
+        .cloned()
+        .ok_or_else(|| {
+            engine_error(
+                format!("{purpose} must be a JSON object"),
+                path.display().to_string(),
+            )
+        })
+}
+
 fn verify_native_executable(path: &Path) -> Result<()> {
     #[cfg(windows)]
     {
@@ -365,13 +593,14 @@ mod tests {
     use formatwright_engine_sdk::{
         Capability, EngineArchitecture, EngineManifest, EnginePlatform, FormatWrightCompatibility,
         LossClass, ManifestExecutable, ManifestLicense, ManifestRuntimeFile, ManifestSource,
-        Operation,
+        ManifestSupplyChain, Operation,
     };
     use sha2::{Digest, Sha256};
     use tempfile::tempdir;
 
     use super::{
-        ENGINE_PROTOCOL_VERSION, activate_engine_pack, install_engine_pack, verify_engine_pack,
+        ENGINE_PROTOCOL_VERSION, activate_engine_pack, install_engine_pack, read_json_object,
+        verify_engine_pack,
     };
 
     fn manifest(binary_hash: String) -> EngineManifest {
@@ -410,6 +639,7 @@ mod tests {
                 notice_path: PathBuf::from("licenses/NOTICE.txt"),
                 source_offer_path: None,
             }],
+            supply_chain: None,
             capabilities: vec![Capability {
                 capability_id: "fixture.copy".to_owned(),
                 inputs: vec!["bin".to_owned()],
@@ -451,6 +681,17 @@ mod tests {
         )
         .expect("manifest fixture");
         (directory, manifest_path)
+    }
+
+    fn sbom_file(root: &std::path::Path, relative: &str) -> serde_json::Value {
+        let bytes = fs::read(root.join(relative)).expect("read SBOM fixture file");
+        serde_json::json!({
+            "fileName": relative,
+            "checksums": [{
+                "algorithm": "SHA256",
+                "checksumValue": format!("{:x}", Sha256::digest(bytes))
+            }]
+        })
     }
 
     #[test]
@@ -505,6 +746,152 @@ mod tests {
         .expect("tamper runtime file");
         let error = verify_engine_pack(&manifest_path).expect_err("runtime tamper must fail");
         assert!(error.message.contains("runtime file hash mismatch"));
+    }
+
+    #[test]
+    fn verifies_and_installs_supply_chain_sidecars() {
+        let (source_directory, manifest_path) = create_pack();
+        let root = source_directory.path();
+        let sbom_path = root.join("sbom.spdx.json");
+        let sources_path = root.join("sources.json");
+        fs::write(
+            &sources_path,
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "schema_version": 1,
+                "engine_id": "fixture-engine",
+                "version": "1.0.0",
+                "review_status": "incomplete",
+                "artifacts": [{"name": "fixture", "source_url": "https://example.invalid/source"}]
+            }))
+            .expect("serialize sources"),
+        )
+        .expect("write sources");
+        fs::write(
+            &sbom_path,
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "spdxVersion": "SPDX-2.3",
+                "dataLicense": "CC0-1.0",
+                "SPDXID": "SPDXRef-DOCUMENT",
+                "name": "fixture-engine-SBOM",
+                "packages": [{"name": "fixture-engine", "versionInfo": "1.0.0"}],
+                "files": [
+                    sbom_file(root, if cfg!(windows) { "bin/fixture.exe" } else { "bin/fixture.bin" }),
+                    sbom_file(root, "licenses/NOTICE.txt"),
+                    sbom_file(root, "runtime/fixture.dat"),
+                    sbom_file(root, "sources.json")
+                ]
+            }))
+            .expect("serialize SBOM"),
+        )
+        .expect("write SBOM");
+        let bytes = fs::read(&manifest_path).expect("read manifest");
+        let mut value = serde_json::from_slice::<EngineManifest>(&bytes).expect("parse manifest");
+        value.supply_chain = Some(ManifestSupplyChain {
+            sbom_path: PathBuf::from("sbom.spdx.json"),
+            sbom_sha256: format!("{:x}", Sha256::digest(fs::read(&sbom_path).expect("SBOM"))),
+            sources_path: PathBuf::from("sources.json"),
+            sources_sha256: format!(
+                "{:x}",
+                Sha256::digest(fs::read(&sources_path).expect("sources"))
+            ),
+        });
+        fs::write(
+            &manifest_path,
+            serde_json::to_vec_pretty(&value).expect("serialize manifest"),
+        )
+        .expect("rewrite manifest");
+
+        let verified = verify_engine_pack(&manifest_path).expect("supply chain pack");
+        assert_eq!(verified.supply_chain_files.len(), 2);
+        let store = tempdir().expect("temporary engine store");
+        let installed = install_engine_pack(&manifest_path, store.path()).expect("install pack");
+        assert_eq!(installed.supply_chain_files.len(), 2);
+        assert!(
+            installed
+                .supply_chain_files
+                .iter()
+                .all(|path| path.is_file())
+        );
+
+        let mut incomplete = read_json_object(&sbom_path, "test SBOM").expect("read SBOM");
+        incomplete
+            .get_mut("files")
+            .and_then(serde_json::Value::as_array_mut)
+            .expect("SBOM files")
+            .pop();
+        fs::write(
+            &sbom_path,
+            serde_json::to_vec_pretty(&incomplete).expect("serialize incomplete SBOM"),
+        )
+        .expect("write incomplete SBOM");
+        let mut value = serde_json::from_slice::<EngineManifest>(
+            &fs::read(&manifest_path).expect("read manifest"),
+        )
+        .expect("parse manifest");
+        value
+            .supply_chain
+            .as_mut()
+            .expect("supply chain")
+            .sbom_sha256 = format!(
+            "{:x}",
+            Sha256::digest(fs::read(&sbom_path).expect("incomplete SBOM"))
+        );
+        fs::write(
+            &manifest_path,
+            serde_json::to_vec_pretty(&value).expect("serialize manifest"),
+        )
+        .expect("rewrite manifest");
+        let error = verify_engine_pack(&manifest_path).expect_err("incomplete SBOM inventory");
+        assert!(error.message.contains("inventory differs"));
+    }
+
+    #[test]
+    fn rejects_a_tampered_or_wrong_identity_supply_chain_sidecar() {
+        let (directory, manifest_path) = create_pack();
+        let sbom_path = directory.path().join("sbom.spdx.json");
+        let sources_path = directory.path().join("sources.json");
+        fs::write(
+            &sbom_path,
+            br#"{"spdxVersion":"SPDX-2.3","dataLicense":"CC0-1.0","packages":[{"name":"wrong-engine","versionInfo":"1.0.0"}]}"#,
+        )
+        .expect("write SBOM");
+        fs::write(
+            &sources_path,
+            br#"{"schema_version":1,"engine_id":"fixture-engine","version":"1.0.0","artifacts":[{}]}"#,
+        )
+        .expect("write sources");
+        let bytes = fs::read(&manifest_path).expect("read manifest");
+        let mut value = serde_json::from_slice::<EngineManifest>(&bytes).expect("parse manifest");
+        value.supply_chain = Some(ManifestSupplyChain {
+            sbom_path: PathBuf::from("sbom.spdx.json"),
+            sbom_sha256: format!("{:x}", Sha256::digest(fs::read(&sbom_path).expect("SBOM"))),
+            sources_path: PathBuf::from("sources.json"),
+            sources_sha256: format!(
+                "{:x}",
+                Sha256::digest(fs::read(&sources_path).expect("sources"))
+            ),
+        });
+        fs::write(
+            &manifest_path,
+            serde_json::to_vec_pretty(&value).expect("serialize manifest"),
+        )
+        .expect("rewrite manifest");
+
+        let error = verify_engine_pack(&manifest_path).expect_err("wrong SBOM identity");
+        assert!(error.message.contains("SBOM identity"));
+
+        let value = serde_json::from_slice::<EngineManifest>(
+            &fs::read(&manifest_path).expect("read manifest"),
+        )
+        .expect("parse manifest");
+        fs::write(&sbom_path, b"tampered").expect("tamper SBOM");
+        fs::write(
+            &manifest_path,
+            serde_json::to_vec_pretty(&value).expect("serialize manifest"),
+        )
+        .expect("rewrite manifest");
+        let error = verify_engine_pack(&manifest_path).expect_err("tampered SBOM hash");
+        assert!(error.message.contains("SBOM hash mismatch"));
     }
 
     #[test]

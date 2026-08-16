@@ -138,6 +138,14 @@ pub struct ManifestLicense {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ManifestSupplyChain {
+    pub sbom_path: PathBuf,
+    pub sbom_sha256: String,
+    pub sources_path: PathBuf,
+    pub sources_sha256: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ManifestSignature {
     pub algorithm: String,
     pub key_id: String,
@@ -158,6 +166,8 @@ pub struct EngineManifest {
     pub runtime_files: Vec<ManifestRuntimeFile>,
     pub source: ManifestSource,
     pub licenses: Vec<ManifestLicense>,
+    #[serde(default)]
+    pub supply_chain: Option<ManifestSupplyChain>,
     pub capabilities: Vec<Capability>,
     #[serde(default)]
     pub signature: Option<ManifestSignature>,
@@ -253,6 +263,45 @@ impl EngineManifest {
                 ));
             }
         }
+        for license in &self.licenses {
+            for (purpose, path) in [
+                ("license notice", Some(&license.notice_path)),
+                ("source offer", license.source_offer_path.as_ref()),
+            ] {
+                let Some(path) = path else {
+                    continue;
+                };
+                validate_relative_path(path, purpose)?;
+                if !pack_paths.insert(path) {
+                    return manifest_error(format!("duplicate pack path {}", path.display()));
+                }
+            }
+        }
+        if let Some(supply_chain) = &self.supply_chain {
+            for (purpose, path, hash) in [
+                (
+                    "engine SBOM",
+                    &supply_chain.sbom_path,
+                    &supply_chain.sbom_sha256,
+                ),
+                (
+                    "engine source inventory",
+                    &supply_chain.sources_path,
+                    &supply_chain.sources_sha256,
+                ),
+            ] {
+                validate_relative_path(path, purpose)?;
+                validate_sha256(hash, purpose)?;
+                if !pack_paths.insert(path) {
+                    return manifest_error(format!("duplicate pack path {}", path.display()));
+                }
+            }
+            if supply_chain.sbom_path == supply_chain.sources_path {
+                return manifest_error(
+                    "engine SBOM and source inventory must be separate files".to_owned(),
+                );
+            }
+        }
         Ok(())
     }
 
@@ -273,10 +322,6 @@ impl EngineManifest {
         for license in &self.licenses {
             if license.spdx.trim().is_empty() {
                 return manifest_error("license SPDX expression is empty".to_owned());
-            }
-            validate_relative_path(&license.notice_path, "license notice")?;
-            if let Some(path) = &license.source_offer_path {
-                validate_relative_path(path, "source offer")?;
             }
         }
         Ok(())
@@ -412,6 +457,7 @@ mod tests {
                 notice_path: PathBuf::from("licenses/NOTICE.txt"),
                 source_offer_path: None,
             }],
+            supply_chain: None,
             capabilities: vec![Capability {
                 capability_id: "fixture.copy".to_owned(),
                 inputs: vec!["bin".to_owned()],

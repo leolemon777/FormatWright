@@ -5,6 +5,7 @@ param(
     [string]$FfmpegRoot,
     [string]$PopplerVersion = "26.02.0-0",
     [string]$FfmpegVersion = "9.0",
+    [long]$SourceDateEpoch = 0,
     [string]$OutputRoot = "dist/engine-packs/windows-x86_64/starter"
 )
 
@@ -77,6 +78,39 @@ function Write-Utf8File([string]$Path, [string]$Content) {
     [System.IO.File]::WriteAllText($Path, $Content, [System.Text.UTF8Encoding]::new($false))
 }
 
+function Add-SupplyChainFiles(
+    [string]$PackRoot,
+    [System.Collections.Specialized.OrderedDictionary]$Manifest,
+    [System.Collections.Specialized.OrderedDictionary]$Sources
+) {
+    $manifestPath = Join-Path $PackRoot "manifest.json"
+    $sourcesPath = Join-Path $PackRoot "sources.json"
+    $sbomPath = Join-Path $PackRoot "sbom.spdx.json"
+    Write-Utf8File $sourcesPath ($Sources | ConvertTo-Json -Depth 20)
+    $Manifest["supply_chain"] = [ordered]@{
+        sbom_path = "sbom.spdx.json"
+        sbom_sha256 = "0" * 64
+        sources_path = "sources.json"
+        sources_sha256 = Get-Sha256 $sourcesPath
+    }
+    Write-Utf8File $manifestPath ($Manifest | ConvertTo-Json -Depth 20)
+    & python (Join-Path $PSScriptRoot "generate_engine_sbom.py") `
+        --manifest $manifestPath `
+        --output $sbomPath `
+        --source-date-epoch $SourceDateEpoch
+    if ($LASTEXITCODE -ne 0) {
+        throw "Engine SBOM generation failed for $($Manifest.engine_id)"
+    }
+    $Manifest["supply_chain"].sbom_sha256 = Get-Sha256 $sbomPath
+    Write-Utf8File $manifestPath ($Manifest | ConvertTo-Json -Depth 20)
+    & python (Join-Path $PSScriptRoot "generate_engine_sbom.py") `
+        --manifest $manifestPath `
+        --verify $sbomPath
+    if ($LASTEXITCODE -ne 0) {
+        throw "Engine SBOM verification failed for $($Manifest.engine_id)"
+    }
+}
+
 try {
     $pdfRoot = Join-Path $staging "pdf"
     New-Item -ItemType Directory -Path $pdfRoot | Out-Null
@@ -138,7 +172,34 @@ Certification status: development/unverified; transitive dependency license inve
         )
         signature = $null
     }
-    Write-Utf8File (Join-Path $pdfRoot "manifest.json") ($pdfManifest | ConvertTo-Json -Depth 20)
+    $pdfSources = [ordered]@{
+        schema_version = 1
+        engine_id = "formatwright-pdf"
+        version = $PopplerVersion
+        review_status = "incomplete"
+        artifacts = @(
+            [ordered]@{
+                name = "oschwartz10612/poppler-windows"
+                artifact_type = "binary-distribution"
+                download_url = "https://github.com/oschwartz10612/poppler-windows/releases/download/v$PopplerVersion/Release-$PopplerVersion.zip"
+                sha256 = "993e4a94376ed712fafc7058d724ea0b943d118bbd2305cd9ed55174eb85cda5"
+                source_url = "https://poppler.freedesktop.org/poppler-$($PopplerVersion.Split('-')[0]).tar.xz"
+                source_revision = $PopplerVersion.Split('-')[0]
+                license_review_status = "incomplete"
+            },
+            [ordered]@{
+                name = "poppler-data"
+                artifact_type = "runtime-data"
+                download_url = "https://poppler.freedesktop.org/"
+                sha256 = $null
+                source_url = "https://poppler.freedesktop.org/"
+                source_revision = "bundled-by-poppler-windows-$PopplerVersion"
+                license_review_status = "incomplete"
+            }
+        )
+        completeness_notes = "The file-level SPDX inventory is complete for the declared pack payload. Transitive component attribution, source-offer and legal review remain incomplete; this pack is not Certified."
+    }
+    Add-SupplyChainFiles $pdfRoot $pdfManifest $pdfSources
 
     $mediaRoot = Join-Path $staging "media"
     New-Item -ItemType Directory -Path $mediaRoot | Out-Null
@@ -189,7 +250,25 @@ Certification status: development/unverified; GPL source-offer and patent/region
         )
         signature = $null
     }
-    Write-Utf8File (Join-Path $mediaRoot "manifest.json") ($mediaManifest | ConvertTo-Json -Depth 20)
+    $mediaSources = [ordered]@{
+        schema_version = 1
+        engine_id = "formatwright-media"
+        version = $FfmpegVersion
+        review_status = "incomplete"
+        artifacts = @(
+            [ordered]@{
+                name = "Gyan FFmpeg essentials"
+                artifact_type = "binary-distribution"
+                download_url = "https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-$FfmpegVersion-essentials_build.zip"
+                sha256 = "e6b54767a6065919048f1a098eb27211ca4e12b4348a05d88777a5855d0b6e71"
+                source_url = "https://ffmpeg.org/releases/ffmpeg-$FfmpegVersion.tar.xz"
+                source_revision = "n$FfmpegVersion"
+                license_review_status = "incomplete"
+            }
+        )
+        completeness_notes = "The file-level SPDX inventory is complete for the declared static binary pack payload. FFmpeg build-component attribution, corresponding-source mechanism, codec patent/region and legal review remain incomplete; this pack is not Certified."
+    }
+    Add-SupplyChainFiles $mediaRoot $mediaManifest $mediaSources
 
     $bundle = [ordered]@{
         schema_version = 1

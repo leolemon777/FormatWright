@@ -1,7 +1,7 @@
 # Application SBOM
 
 - Status: Phase 5 development evidence
-- Updated: 2026-08-12
+- Updated: 2026-08-13
 - Format: SPDX 2.3 JSON
 
 ## Generation
@@ -28,4 +28,4 @@ contains_windows_absolute_path=false
 
 This is a conservative workspace/application dependency inventory. Cargo metadata can include build or test-only packages; over-reporting is preferred to silently omitting a linked dependency. A release pipeline should eventually reconcile the inventory against each final target artifact.
 
-Third-party conversion engines remain separate programs even when a Starter pack is embedded in the Windows installer. The current development candidate includes pinned PDF and Media packs with manifests, file hashes, provenance, and notices, but their complete transitive library inventory, source-offer review, trusted signature, and pack SBOM remain release gates under `docs/security/ENGINE_SUPPLY_CHAIN.md`.
+Third-party conversion engines remain separate programs even when a Starter pack is embedded in the Windows installer. `scripts/generate_engine_sbom.py` now produces deterministic per-pack SPDX 2.3 file inventories, and the Manifest/Core verifier pins and validates each SBOM plus `sources.json` before install. This closes the missing-pack-SBOM implementation gap, but not the legal/certification gate: statically linked component attribution, corresponding-source mechanism, license/patent review, trusted signatures and revocation are still incomplete under `docs/security/ENGINE_SUPPLY_CHAIN.md`.

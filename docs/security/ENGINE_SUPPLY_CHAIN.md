@@ -1,8 +1,8 @@
 # Engine Supply Chain and Certification
 
-- Status: Initial
-- Version: 0.2
-- Updated: 2026-08-12
+- Status: File-inventory SBOM and runtime sidecar verification implemented; certification incomplete
+- Version: 0.3
+- Updated: 2026-08-13
 
 ## 1. Pack contents
 
@@ -17,7 +17,9 @@ engine-pack/
   README.txt
 ~~~
 
-The manifest lists every executable and shared library hash.
+The manifest lists every executable and shared library hash. Its optional `supply_chain` object pins `sbom.spdx.json` and `sources.json` by safe relative path and SHA-256. Core verifies both hashes and their engine/version identity before installation, copies them into the versioned store, and rejects tampering or mismatched identities.
+
+`scripts/generate_engine_sbom.py` creates a deterministic SPDX 2.3 JSON document from all Manifest-declared executables, runtime files, license/source-offer files, and `sources.json`. It records SHA-1 (required for SPDX package verification code) plus SHA-256 for each file. It is deliberately a **complete file inventory**, not a claim that every statically linked component has already been attributed and legally reviewed. `sources.json` keeps that review status explicit.
 
 For development and system-engine discovery, an exact executable can be selected with `FORMATWRIGHT_ENGINE_<NAME>` (for example `FORMATWRIGHT_ENGINE_PDFTOPPM`). Doctor resolves, version-probes, and hashes that exact file; queued jobs block if its version or SHA-256 differs from the immutable Plan. Release builds still require certified pack manifests rather than trusting an environment override.
 
@@ -70,7 +72,7 @@ States:
 
 A job pins a certified pack identity. New jobs may migrate after Doctor and fixture checks. Interrupted jobs never silently switch packs.
 
-The Windows v0.1 Starter implementation now contains Core (built-in structured conversions), PDF (pinned Poppler tools and declared runtime files), and Media (pinned FFmpeg/ffprobe). Document and Image remain optional packs until their redistribution and capability matrices pass. The installer carries Starter resources directly; first startup verifies, copies, and activates them through the versioned atomic registry path. These packs remain development/unverified until the license, source-offer, engine SBOM, signature/keyring, clean-VM, upgrade, rollback, and revocation gates pass.
+The Windows v0.1 Starter implementation now contains Core (built-in structured conversions), PDF (pinned Poppler tools and declared runtime files), and Media (pinned FFmpeg/ffprobe). The deterministic builder now emits per-pack `sbom.spdx.json` and `sources.json`; both are hashed by the Manifest and verified during import/install. Document and Image remain optional packs until their redistribution and capability matrices pass. The installer carries Starter resources directly; first startup verifies, copies, and activates them through the versioned atomic registry path. These packs remain development/unverified until transitive component attribution, license/source-offer and patent review, signature/keyring, clean-VM, upgrade, rollback, and revocation gates pass.
 
 ## 5. Updates and rollback
 
@@ -112,4 +114,6 @@ At engine launch:
 - License files present.
 - SBOM generated and parseable.
 
-The Apache application dependency inventory is generated separately with `scripts/generate_sbom.py` as SPDX 2.3 JSON. It covers locked Cargo packages and production pnpm packages without embedding local installation paths. Every distributable engine pack still requires its own transitive binary/library SBOM; the application inventory must not be presented as engine coverage.
+Automated evidence now also covers deterministic byte-identical SBOM generation, exact manifest-declared file coverage, traversal rejection, file tamper rejection, SBOM/source-inventory hash verification, engine/version identity verification, and preservation of both sidecars through atomic pack installation. The Windows Starter builder was run twice against the pinned archives: PDF Manifest/SBOM/sources hashes were respectively `f5856f84c902dc45b038109f529ae8721b33da58ff6c9e9cdd93b0928ca9a498`, `8a8ae7125871893dbd86b18a0b702ea282cbe129d793669520de88cd3b812f63`, and `7f5ccbe63e841bb4025d95c664bfd4876e1eb0b7b340dfbbb0735e3759ea60db`; Media hashes were `1af7d4e7d2f8a229d7326ba821b9a2ba439102bc76f60866b639b7a824889810`, `715e474e6efe89bdd0984de059a62124269aa179e158e13bf562e09e30c977cc`, and `0b343967f57c25c8152a44d72d46fe69263b1ac3d0aa0942df1a1fb77e4b0979`. All six were byte-identical across rebuilds and both final Manifests passed the real CLI verifier.
+
+The Apache application dependency inventory is generated separately with `scripts/generate_sbom.py` as SPDX 2.3 JSON. It covers locked Cargo packages and production pnpm packages without embedding local installation paths. The new engine file SBOMs must not be presented as full transitive component/legal coverage until `sources.json` reaches reviewed status and the source-offer/license gate is signed off.

@@ -211,6 +211,7 @@ fn engine_manifest() -> EngineManifest {
             notice_path: PathBuf::from("licenses/NOTICE.txt"),
             source_offer_path: None,
         }],
+        supply_chain: None,
         capabilities: vec![Capability {
             capability_id: "fixture.copy".to_owned(),
             inputs: vec!["bin".to_owned()],

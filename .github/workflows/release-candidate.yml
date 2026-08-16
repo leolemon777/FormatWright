@@ -29,6 +29,9 @@ jobs:
           cache: pnpm
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+      - name: Prepare pinned Windows Starter packs
+        shell: pwsh
+        run: scripts/prepare_windows_starter_pack.ps1
       - name: Build offline NSIS candidate
         run: pnpm --filter @formatwright/desktop tauri build --bundles nsis
       - name: Generate checksums

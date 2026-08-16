@@ -84,6 +84,17 @@
         }
       }
     },
+    "supply_chain": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["sbom_path", "sbom_sha256", "sources_path", "sources_sha256"],
+      "properties": {
+        "sbom_path": { "type": "string", "minLength": 1 },
+        "sbom_sha256": { "type": "string", "pattern": "^[A-Fa-f0-9]{64}$" },
+        "sources_path": { "type": "string", "minLength": 1 },
+        "sources_sha256": { "type": "string", "pattern": "^[A-Fa-f0-9]{64}$" }
+      }
+    },
     "capabilities": {
       "type": "array",
       "items": {

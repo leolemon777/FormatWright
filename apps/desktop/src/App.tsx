@@ -11,9 +11,11 @@ import {
   jobListAriaAttributes,
   latestJobProgress,
   parseDesktopError,
+  presetFieldChangeInvalidatesPreview,
   progressForJob,
   recommendedTargets,
   suggestedOutput,
+  targetOptionViews,
   type JobProgressUpdate,
 } from "./desktopModel";
 import { messages, type Language } from "./i18n";
@@ -1275,7 +1277,11 @@ export default function App() {
   const normalizedTarget = target === "jpeg" ? "jpg" : target === "yml" ? "yaml" : target;
   const route = capabilities?.routes[normalizedTarget];
   const routeAvailable = !capabilities || route?.available === true;
-  const targetOptions = Array.from(new Set([...recommendations, "jpg", "png", "webp", "avif", "mp4", "mp3", "m4a", "wav", "gif", "pdf", "docx", "json", "csv", "yaml", "xml"]));
+  const targetOptions = targetOptionViews(recommendations, capabilities ? capabilities.routes : null, convertMode === "file" ? "convert-file" : "convert-folder", copy.unavailable);
+  const presetTargetOptions = targetOptionViews(recommendations, capabilities ? capabilities.routes : null, "preset", copy.unavailable);
+  const applyPresetField = (field: Parameters<typeof presetFieldChangeInvalidatesPreview>[0]) => {
+    if (presetFieldChangeInvalidatesPreview(field)) setPreview(null);
+  };
   const tabs: Tab[] = ["convert", "jobs", "presets", "engines", "reports", "maintenance", "settings"];
   const recoveryCounts = Object.fromEntries(
     (recovery?.state_counts ?? []).map((entry) => [entry.state, entry.count]),
@@ -1347,7 +1353,7 @@ export default function App() {
               {convertMode === "folder" && <div className="form-field wide"><label htmlFor="input-folder">{copy.inputFolder}</label><span className="path-control"><input id="input-folder" dir="auto" spellCheck={false} value={folderInputRoot} onChange={(event) => { setFolderInputRoot(event.target.value); setFolderPreview(null); }} placeholder="C:\\…\\source-folder" /><button className="secondary" type="button" onClick={() => chooseFolderRoot("input")}>{copy.chooseInputFolder}</button></span></div>}
               {convertMode === "folder" && <div className="form-field wide"><label htmlFor="output-folder">{copy.outputFolder}</label><span className="path-control"><input id="output-folder" dir="auto" spellCheck={false} value={folderOutputRoot} onChange={(event) => { setFolderOutputRoot(event.target.value); setFolderPreview(null); }} placeholder="C:\\…\\output-folder" /><button className="secondary" type="button" onClick={() => chooseFolderRoot("output")}>{copy.chooseOutputFolder}</button></span></div>}
               <label>{copy.target}<select value={target} onChange={(event) => changeTarget(event.target.value)} disabled={convertMode === "file" && capabilityBusy}>
-                {targetOptions.map((value) => <option key={value} disabled={convertMode === "file" && capabilities ? !capabilities.routes[value]?.available : false}>{value}{convertMode === "file" && capabilities && !capabilities.routes[value]?.available ? ` — ${copy.unavailable}` : ""}</option>)}
+                {targetOptions.map((option) => <option key={option.value} value={option.value} disabled={option.disabled}>{option.label}</option>)}
               </select></label>
               <label>{copy.quality}<input type="number" min="1" max="100" value={quality} onChange={(event) => { setQuality(event.target.value); setPreview(null); }} disabled={target === "png"} /></label>
               {expert && <label>{copy.width}<input type="number" min="1" max="16384" value={width} onChange={(event) => { setWidth(event.target.value); setPreview(null); }} /></label>}
@@ -1463,7 +1469,7 @@ export default function App() {
           {presetNotice && <p className="success-notice" role="status" aria-live="polite">{presetNotice}</p>}
           <section className="preset-editor" aria-label={copy.presetEditor}>
             <div><p className="section-label">{editingPresetId ? copy.editPreset : copy.newPreset}</p><h2>{editingPresetId ? copy.editPreset : copy.saveCurrentSettings}</h2></div>
-            <div className="preset-fields"><label>{copy.presetName}<input maxLength={80} value={presetName} onChange={(event) => setPresetName(event.target.value)} /></label><label>{copy.target}<select value={target} onChange={(event) => changeTarget(event.target.value)}>{targetOptions.map((value) => <option key={value} disabled={capabilities ? !capabilities.routes[value]?.available : false}>{value}</option>)}</select></label><label>{copy.quality}<input type="number" min="1" max="100" value={quality} onChange={(event) => setQuality(event.target.value)} /></label><label>{copy.width}<input type="number" min="1" max="16384" value={width} onChange={(event) => setWidth(event.target.value)} /></label><label>{copy.dpi}<input type="number" min="36" max="600" value={dpi} onChange={(event) => setDpi(event.target.value)} /></label><label>{copy.colorMode}<select value={colorMode} onChange={(event) => setColorMode(event.target.value)}><option value="rgb">RGB</option><option value="gray">Gray</option></select></label><label className="checkbox-control"><input type="checkbox" checked={preserveAllStreams} onChange={(event) => setPreserveAllStreams(event.target.checked)} />{copy.preserveAllStreams}</label></div>
+            <div className="preset-fields"><label>{copy.presetName}<input maxLength={80} value={presetName} onChange={(event) => setPresetName(event.target.value)} /></label><label>{copy.target}<select value={target} onChange={(event) => changeTarget(event.target.value)}>{presetTargetOptions.map((option) => <option key={option.value} value={option.value} disabled={option.disabled}>{option.label}</option>)}</select></label><label>{copy.quality}<input type="number" min="1" max="100" value={quality} onChange={(event) => { setQuality(event.target.value); applyPresetField("quality"); }} /></label><label>{copy.width}<input type="number" min="1" max="16384" value={width} onChange={(event) => { setWidth(event.target.value); applyPresetField("width"); }} /></label><label>{copy.dpi}<input type="number" min="36" max="600" value={dpi} onChange={(event) => { setDpi(event.target.value); applyPresetField("dpi"); }} /></label><label>{copy.colorMode}<select value={colorMode} onChange={(event) => { setColorMode(event.target.value); applyPresetField("color-mode"); }}><option value="rgb">RGB</option><option value="gray">Gray</option></select></label><label className="checkbox-control"><input type="checkbox" checked={preserveAllStreams} onChange={(event) => { setPreserveAllStreams(event.target.checked); applyPresetField("preserve-all-streams"); }} />{copy.preserveAllStreams}</label></div>
             <div className="action-row"><button className="primary" type="button" disabled={presetBusy || presetName.trim().length === 0} onClick={savePreset}>{presetBusy ? copy.savingPreset : copy.savePreset}</button>{editingPresetId && <button className="secondary" type="button" onClick={resetPresetEditor}>{copy.cancelEdit}</button>}</div>
           </section>
           <div className="preset-list">{presets.length === 0 ? <p className="empty">{copy.noPresets}</p> : presets.map((preset) => <article key={preset.preset_id}><div><strong>{preset.name}</strong><small>{preset.target_format.toUpperCase()} · Q {preset.quality ?? "—"} · {preset.width ? `${preset.width}px` : copy.originalSize}</small></div><div className="preset-actions"><button type="button" onClick={() => applyPreset(preset)}>{copy.applyPreset}</button><button type="button" onClick={() => editPreset(preset)}>{copy.editPreset}</button><button className={pendingDeleteId === preset.preset_id ? "danger" : "secondary"} type="button" disabled={presetBusy} onClick={() => deletePreset(preset.preset_id)}>{pendingDeleteId === preset.preset_id ? copy.confirmDelete : copy.deletePreset}</button></div></article>)}</div>

@@ -159,14 +159,17 @@
 - [x] 离线 WebView2 NSIS 已实际构建，完成 SHA-256、沙箱静默安装、原生启动、卸载和零残留检查。
 - [x] 新增 scheduler/preset 后的 embedded release executable 已重新构建并通过原生像素/UIA 检查。
 - [x] Windows Starter 构建脚本固定 Poppler/FFmpeg 版本与 archive hash；manifest 覆盖 executable/runtime/license 文件，重复构建顶层清单哈希一致。
+- [x] 独立 Engine SPDX 2.3 文件 SBOM 与 `sources.json`：确定性生成、Manifest 路径/哈希绑定、Core 身份/篡改验证、原子安装复制和 CI 回归已完成；`sources.json` 明确保持 incomplete，不能替代 transitive component/许可证/源码义务审查。
 - [x] Tauri Windows bundle 内嵌 Starter；Release 首次启动验证后复制到版本化 store 并原子激活，ambient `PATH` 不参与生产解析。
+- [x] 2026-08-15 标准 NSIS 重建（不含任何测试 DevTools 参数）并重跑真实 current-user 安装烟测：双 pack 安装、四个供应链侧车哈希经真实 CLI 复验且 `review_status=incomplete`、Shell verb/单实例/负向路径、卸载键与安装根清理和应用状态逐字节恢复全部通过；安装器 282,440,776 bytes、SHA-256 `a2d3861472b949f58fe9e6b17317f45d0d98d0102524432f8850074104ab5828`（证据 `.artifacts/windows-explorer-installed-smoke/suite-14dd1eebb65946968758aeb25ebba1b3`）。
+- [x] Release UI 转换 E2E 改为每格式独立应用进程与隔离应用状态（PNG/JPG 各自冷启动、首装引擎、真实界面 Plan 确认与 Pass 报告、确定性页命名）；目标 `<option>` 提交值与预设字段失效旧 preview 已有前端回归。
 
 ### 3.6 当前自动化验证基线
 
 - [x] `cargo fmt --all --check`。
 - [x] `cargo clippy --workspace --all-targets --all-features -- -D warnings`。
-- [x] 188 项普通 Rust 测试通过（153 Core、9 Schema、22 Desktop、4 Engine SDK）；另有 2 项昂贵的 10k 同质/混合发布测试按设计默认忽略，均有显式 release 运行证据。
-- [x] 8 项前端测试、TypeScript check 和生产构建通过。
+- [x] 190 项普通 Rust 测试通过（155 Core、9 Schema、22 Desktop、4 Engine SDK）；另有 2 项昂贵的 10k 同质/混合发布测试按设计默认忽略，均有显式 release 运行证据。
+- [x] 13 项前端测试、TypeScript check 和生产构建通过（含目标 `<option>` 提交值与预设字段失效旧 preview 的回归）。
 - [x] Rust 1.88 MSRV 全 workspace locked check 通过。
 - [x] 8 个 Schema、12 个黄金工作流和必需文件的仓库合同检查通过。
 - [x] 图片、HEIC、音频、GIF、媒体、元数据、结构化、文档、PDF、Office、批量、混合调度、大文件、零网络和预设沙箱已有可复现脚本/文档。
@@ -178,7 +181,7 @@
 - [ ] **Windows 开箱可用纵向闭环**：确定版本、内嵌资源、本机首次启动安装和 Core/PDF/Media E2E 已完成；仍须在没有 FFmpeg、Poppler、LibreOffice、Pandoc、libvips 和开发缓存的离线干净虚拟机中通过安装后 UI 转换，并完成 Starter 供应链认证。
 - [x] **生产引擎解析与能力门控（实现）**：Release 只运行已激活 pack 中的精确二进制路径，禁止 ambient `PATH`、`.cmd`、`.bat`；UI/Planner/Backend 只展示和接受当前 capability snapshot 确实可执行的路线。R-009 关闭仍等待 Gate U 干净机证据。
 - [ ] **冻结产品决策**：名称/商标与域名、最低 OS、签名账户与预算、官方引擎包选择策略、PDF 默认引擎、测试语料许可证、AGPL 服务仓库边界。
-- [ ] **可信引擎供应链**：正式 release keyring、签名验证、密钥轮换/吊销、每个引擎的 SBOM/源码/构建 flags/许可证和认证记录。
+- [ ] **可信引擎供应链**：每包确定性文件 SBOM、来源记录和运行时验证已实现；仍需完整 transitive component 归属/源码义务/许可证与专利审查、正式 release keyring、签名验证、密钥轮换/吊销和认证记录。
 - [ ] **完整验证闭环**：每个对外支持的工作流都有类型专用必检项；Unknown 不计为 Pass；完成 Office/PDF 视觉差异阈值校准。
 - [ ] **三平台真实认证**：Windows 11、macOS arm64（及 x64 构建）、Ubuntu LTS 跑黄金语料、取消/进程树、Unicode/长路径、文件系统和离线门禁。
 - [ ] **OS 强制隔离**：Windows/macOS/Linux 上用可验证的系统机制阻断引擎网络与越权文件访问，而不只做套接字观测。
@@ -551,7 +554,7 @@ API 不直接接受宿主任意路径。请求引用预先授权的 workspace/ro
 ### Gate U：Windows 真正可用纵向闭环（3–7 天）
 
 - [ ] 冻结 Windows Starter pack：Core + PDF + Media；完成每个二进制与运行库的再分发/许可证审查，无法合法捆绑的能力不得进入 Starter 宣传。
-- [ ] 建立确定性 pack builder/stager：manifest、SHA-256、来源、许可证、版本锁与 Tauri/NSIS 内嵌已完成；完整 transitive SBOM/许可证审查仍待完成。
+- [ ] 建立确定性 pack builder/stager：manifest、SHA-256、来源、许可证、版本锁、每包 SPDX 文件清单及 Tauri/NSIS 内嵌已完成；完整 transitive component 归属、对应源码机制和许可证/专利审查仍待完成。
 - [ ] 实现版本化 pack store、原子 install/activate/rollback：install/activate 与 Release-only 精确 `EngineLocator` 已完成，ambient `PATH`/脚本/override 已关闭；多版本 rollback 与故障矩阵仍待完成。
 - [x] 让 Doctor、Planner、推荐格式、目标选择器和执行后端消费同一 capability snapshot；不可运行路线禁用并指出缺失 pack。
 - [ ] 重建 unsigned Windows RC，在完全没有相关系统工具和 Codex 开发环境的干净 VM 中离线安装，完成 JSON→YAML、PDF→PNG/JPG 和一条视频/音频转换，核对报告、输出和零网络。
@@ -590,7 +593,7 @@ API 不直接接受宿主任意路径。请求引用预先授权的 workspace/ro
 
 ### Gate 3：格式与安全认证（2–3 周，可与 Gate 2 后半并行）
 
-- [ ] 构建/审查官方引擎包，完成签名 keyring、吊销和 engine SBOM。
+- [ ] 构建/审查官方引擎包：文件级 engine SBOM 与来源 sidecar 已完成；继续 transitive component/法律审查、签名 keyring 和吊销。
 - [ ] 各文件族扩展语料和 validator；Office/PDF visual diff 校准。
 - [ ] OS 强制网络/文件/进程隔离，命令注入与恶意输入 campaign。
 - [ ] Windows 物理 10 GiB、低内存、磁盘满、removable、长路径门禁。

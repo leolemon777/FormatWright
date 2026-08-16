@@ -84,6 +84,50 @@ export function isDirectoryOutput(input: string, target: string): boolean {
   return extension === "pdf" && ["png", "jpg", "jpeg"].includes(target.toLowerCase());
 }
 
+export const SUPPORTED_TARGET_FORMATS: readonly string[] = [
+  "jpg", "png", "webp", "avif", "mp4", "mp3", "m4a", "wav", "gif", "pdf", "docx", "json", "csv", "yaml", "xml",
+];
+
+export type TargetRouteAvailability = { available: boolean };
+
+export type TargetOptionView = { value: string; label: string; disabled: boolean };
+
+export type TargetOptionScope = "convert-file" | "convert-folder" | "preset";
+
+// The submitted <option> value must stay the raw format id; the localized
+// "missing engine" marker belongs to the visible label only.
+export function targetOptionViews(
+  recommendations: readonly string[],
+  routes: Readonly<Record<string, TargetRouteAvailability>> | null,
+  scope: TargetOptionScope,
+  unavailableLabel: string,
+): TargetOptionView[] {
+  const values = Array.from(new Set([...recommendations, ...SUPPORTED_TARGET_FORMATS]));
+  return values.map((value) => {
+    const unavailable = scope !== "convert-folder" && routes !== null && routes[value]?.available !== true;
+    return {
+      value,
+      label: unavailable && scope === "convert-file" ? `${value} — ${unavailableLabel}` : value,
+      disabled: unavailable,
+    };
+  });
+}
+
+export type PresetFormField =
+  | "preset-name"
+  | "target"
+  | "quality"
+  | "width"
+  | "dpi"
+  | "color-mode"
+  | "preserve-all-streams";
+
+// Every preset field except the display name feeds conversion plan arguments;
+// changing one makes a previously rendered plan preview stale.
+export function presetFieldChangeInvalidatesPreview(field: PresetFormField): boolean {
+  return field !== "preset-name";
+}
+
 export function parseDesktopError(reason: unknown): DesktopError {
   const raw = reason instanceof Error ? reason.message : String(reason);
   try {

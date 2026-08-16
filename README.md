@@ -12,7 +12,7 @@ FormatWright is under active **Windows development Alpha**. The unsigned Windows
 - Living completed / pending checklist, architecture, and ordered gates: [docs/MASTER_EXECUTION_PLAN.md](docs/MASTER_EXECUTION_PLAN.md) (see §1.1 progress snapshot)
 - Requirement → code → evidence map: [docs/specs/TRACEABILITY.md](docs/specs/TRACEABILITY.md)
 
-**Latest engineering milestones (2026-08-13):**
+**Latest engineering milestones (2026-08-15):**
 1. CLI durable-queue execution runs through shared `JobExecutionService` in Core.
 2. Desktop binds execution to the visible Plan hash, persists reports before terminal state, and supports recoverable immediate pause plus per-job Resume/Retry.
 3. Queue execution closes worker/process-tree failures, normalizes Windows output identity, leaves no cancellation-link tasks, and keeps live history/paging/enqueue available through a separate SQLite connection.
@@ -21,6 +21,8 @@ FormatWright is under active **Windows development Alpha**. The unsigned Windows
 6. Windows NSIS now owns a classic Explorer file/directory entry; strict local-path parsing and single-instance forwarding pre-fill the existing Convert window without auto-running or starting a competing recovery process.
 7. A real current-user install smoke corrected NSIS registry quoting and now proves actual Shell verb cold/hot routing, one-process forwarding, zero auto-created jobs, exact uninstall ownership and byte-for-byte application-state restoration.
 8. A real Tauri/WebView2 automated accessibility gate now covers named controls/landmarks, first-Tab skip navigation, selected-state semantics, 200% physical-equivalent layout, bidi paths, reduced motion, forced colors/high contrast and bilingual document semantics.
+9. Every engine pack now ships a deterministic SPDX 2.3 file SBOM plus an explicit `sources.json` provenance sidecar; the manifest pins both hashes and Core re-verifies identity and exact inventory before and after atomic installation.
+10. The Release UI conversion gate now drives real PDF→PNG and PDF→JPEG conversions from per-format isolated processes with Pass validation reports, and the standard NSIS rebuild carries no test-only DevTools arguments.
 
 The next engineering gate moves into format/engine-supply-chain hardening, clean-VM install and release certification, while live screen-reader/physical-DPI/usability evidence remains in the Desktop gate. Release certification still requires a clean offline Windows VM and the supply-chain work above.
 
