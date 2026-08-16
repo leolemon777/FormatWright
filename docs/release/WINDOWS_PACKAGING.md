@@ -1,7 +1,7 @@
 # Windows Packaging Evidence
 
 - Status: unsigned self-contained release candidate; clean-machine certification pending
-- Updated: 2026-08-15
+- Updated: 2026-08-16
 - Host: Windows x86-64
 
 ## Configuration
@@ -30,12 +30,14 @@ The checksum generator hashes files in 1 MiB chunks, rejects missing/non-file in
 
 ## Current recorded build
 
-The final 2026-08-15 standard-configuration rebuild — after the target `<option>` submitted-value fix, preset-field preview invalidation, and the per-format isolated Release UI conversion harness — produced:
+The final 2026-08-16 standard-configuration rebuild — including the trusted-signature verification, versioned engine registry with startup fallback, and desktop recovery-outcome surfacing batches (ADR-0011 B1–B3) — produced:
 
 | Artifact | Bytes | SHA-256 | Signature |
 |---|---:|---|---|
-| `FormatWright_0.1.0_x64-setup.exe` | 282,440,776 | `a2d3861472b949f58fe9e6b17317f45d0d98d0102524432f8850074104ab5828` | NotSigned |
-| `formatwright-desktop.exe` (standard config) | 15,572,480 | `d92b5271d3d97fc8b92c26c7093b7c8324aae4f7733582f6a0108e7a7dcfa5cf` | NotSigned |
+| `FormatWright_0.1.0_x64-setup.exe` | 282,479,337 | `016c7cc657839560ae1b41a99c800bae865990041c71154b839cfe1ce55233be` | NotSigned |
+| `formatwright-desktop.exe` (standard config) | 15,787,008 | `3af8702b0c975db109001cf8c163d39556dcc954b381d2842ed9d86a88faf1b8` | NotSigned |
+
+The enhanced current-user install smoke passed against this installer (evidence `.artifacts/windows-explorer-installed-smoke/suite-ba4135da354340c798bbf511f94a66b3`).
 
 A byte scan of both standard artifacts is negative for the release-e2e DevTools arguments (`remote-debugging-port`, `force-renderer-accessibility`); those exist only in the separately built test binary documented in `docs/testing/DESKTOP_RELEASE_CONVERSION.md`. The embedded Starter resource tree remains bundle hash `21f46f92f63ae9fc31a059b3139b4edcf27d2fa9b7b6522fc34f13cb43c48823` with the PDF and Media manifest/SBOM/sources hashes recorded in `docs/testing/WINDOWS_STARTER.md`. The installer also embeds the WebView2 offline runtime fetched at build time, so its hash depends on that download as well as the pinned packs.
 
