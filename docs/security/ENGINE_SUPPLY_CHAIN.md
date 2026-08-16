@@ -87,6 +87,15 @@ The Windows v0.1 Starter implementation now contains Core (built-in structured c
 - At least one prior compatible certified pack remains available unless revoked.
 - Downgrade cannot read a newer incompatible job schema without an explicit safe path.
 
+### 5.1 Component inventory (batch C groundwork)
+
+`scripts/generate_engine_component_inventory.py` maps every Starter pack binary and FFmpeg configure flag onto a curated component knowledge base (70 components, 0 unmapped as of 2026-08-16) and emits the review workbook `ENGINE_COMPONENT_REVIEW.md`. Current build-license verdicts from real binary evidence:
+
+- `formatwright-media` (Gyan essentials 9.0): **GPL-3.0-or-later** (`--enable-gpl --enable-version3`, libx264/x265/xvid/vidstab/rubberband). Redistributable, but the Starter must ship or offer corresponding source and carry explicit GPL marking. No `--enable-nonfree` flag (the tool fails closed if one appears).
+- `formatwright-pdf` (Poppler 26.02.0): **GPL-2.0-or-later** core plus permissively-licensed runtime DLLs and Adobe-redistribution-terms cMap data.
+
+These are engineering facts for the review, not conclusions: every row in the workbook stays `pending` until the named sign-off from `PRODUCT_DECISIONS.md` #11 records the decision.
+
 ## 6. License gate
 
 Before certification:

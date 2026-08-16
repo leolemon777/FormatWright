@@ -1352,6 +1352,7 @@ Release 默认顺序：
 - `docs/testing/DESKTOP_RELEASE_CONVERSION.md`：真实 Release UI 的 PDF→PNG/JPG CDP 转换证据，每格式独立进程与隔离应用状态、逐项 Pass 报告与确定性页命名边界。
 - `docs/testing/CLEAN_VM_CERTIFICATION.md`：批次 D 干净离线 Win11 VM 认证 runbook 与自动化套件（环境干净断言、污染 PATH、安装后真实 UI 转换、卸载零残留）。
 - `docs/security/RELEASE_KEYRING_CEREMONY.md`：ADR-0011 发布密钥的离线生成、2-of-3 备份、签名与吊销仪式 runbook。
+- `docs/security/ENGINE_COMPONENT_REVIEW.md`：批次 C 组件审查工作簿（真实二进制提取的 70 组件许可/上游/专利清单，全部 pending 等签字）。
 - `docs/release/PRODUCT_DECISIONS.md`：等待所有者批准的冻结产品决策备忘录（名称/签名预算/最低 OS/密钥保管等，含推荐项）。
 - `docs/testing/TEN_THOUSAND_CONVERSIONS.md`：10,000 个不同结构化输入的真实规划、原子入队、数据库重启、有界窗口执行、语义验证与提交证据。
 - `docs/security/FUZZING.md` 与 `fuzz/`：引擎 manifest、JSON/YAML/CSV/XML 解析边界的 libFuzzer/AddressSanitizer harness、定时 CI 与 Windows 有界 campaign 证据。
