@@ -161,6 +161,7 @@
 - [x] Windows Starter 构建脚本固定 Poppler/FFmpeg 版本与 archive hash；manifest 覆盖 executable/runtime/license 文件，重复构建顶层清单哈希一致。
 - [x] 独立 Engine SPDX 2.3 文件 SBOM 与 `sources.json`：确定性生成、Manifest 路径/哈希绑定、Core 身份/篡改验证、原子安装复制和 CI 回归已完成；`sources.json` 明确保持 incomplete，不能替代 transitive component/许可证/源码义务审查。
 - [x] 引擎恢复状态贯通桌面 UI：启动恢复横幅按引擎列出自动回退/无可用版本通知（activated 不打扰），Engines 页为回退/失败的 pack 显示徽标；通知文案中英双语，纯函数回归覆盖降级细节缺失时的诚实呈现。
+- [x] 资源故障注入门禁（2026-08-16，批次 E）：磁盘满（专用 VHD 卷压至 512KB 可用）、输出目录写权限拒绝（icacls deny）、目标卷拔出（VHD detach）三场景全部满足失败契约——类型化退出码（5/5/2）、零提交输出、零 staged partial、job `failed` 或诚实的 `not-persisted`、输入哈希全程不变；VHD 仅按文件路径选择并在结束后清理；证据 `.artifacts/resource-failure-injection/suite-aa0bcf5eb3a9465f96079a8f62cb17d9`。
 - [x] 物理 10 GiB 门禁（2026-08-16，FW-NFR-001 物理版）：真实分配 10,747,106,438 字节 MKV（allocated=logical 非稀疏断言），identify 峰值 RSS 2.5 MiB、remux 转换峰值 RSS 14.2 MiB（门槛 160 MiB），21.5 GiB 实际流经引擎子进程，独立 ffprobe 验证 MP4 与 1728×60s 时长，job completed 零残留；证据 `.artifacts/large-file-physical/physical-1a177b08dfa64dcf8fddb72070460987`。
 - [x] 批次 C 组件清单工具与审查工作簿：`generate_engine_component_inventory.py` 从真实二进制提取 FFmpeg configure/库版本与 Poppler 版本，70 组件全部映射（0 未识别）；当前构建许可判定 Media=GPL-3.0-or-later（--enable-gpl+version3，无 nonfree）、PDF=GPL-2.0-or-later；`ENGINE_COMPONENT_REVIEW.md` 工作簿全部行保持 pending 等签字。
 - [x] 批次 C/D/冻结决策准备物就绪：`PRODUCT_DECISIONS.md`（12 项带推荐待批准）、`RELEASE_KEYRING_CEREMONY.md` + `release_keyring_tool.py`（dev 密钥彩排 keygen→sign→CLI Trusted 全通过）、`CLEAN_VM_CERTIFICATION.md` + `test_clean_vm_certification.ps1`（环境干净断言/污染 PATH/安装后 UI 转换/卸载零残留，VM 内执行）。
