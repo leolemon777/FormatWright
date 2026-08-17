@@ -42,9 +42,10 @@ Constraints:
 
 ## Verification
 
-- engine-sdk unit tests: sign/verify roundtrip; tampered canonical bytes → `InvalidSignature`; signature replayed over a different manifest → `InvalidSignature`; revoked key → `Revoked`; expired key → `Expired`; unknown key → `UnknownKey`; absent signature → `Unsigned`.
-- core: `verify_engine_pack_with_keyring` threads the trust state into `VerifiedEnginePack` while preserving all existing hash/supply-chain checks.
-- CLI: `formatwright engines verify <manifest> --keyring <keyring.json>` prints the trust state and fails closed on non-trusted states when a keyring is supplied.
+- engine-sdk unit tests: sign/verify roundtrip; tampered canonical bytes → `InvalidSignature`; signature replayed over a different manifest → `InvalidSignature`; revoked key → `Revoked`; expired key → `Expired`; unknown key → `UnknownKey`; absent signature → `Unsigned`; `derive_engine_certification` requires Trusted + complete review.
+- core: `verify_engine_pack_with_keyring` threads the trust state into `VerifiedEnginePack` while preserving all existing hash/supply-chain checks. Activation evaluates the embedded keyring (currently empty) and registers certification/trust/review for Doctor, Planner, and reports.
+- CLI: `formatwright engines verify <manifest> --keyring <keyring.json>` prints trust, review, and derived certification, and fails closed on non-trusted states when a keyring is supplied. Doctor prints the same derived certification.
+- Desktop Engines/Plan/Report surfaces show localized certification and never promote a trusted-but-unreviewed pack.
 
 ## Revisit when
 

@@ -5,7 +5,10 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::{OnceLock, RwLock};
 
-use formatwright_engine_sdk::{Certification, DoctorReport, EngineHealth, EngineIdentity};
+use formatwright_engine_sdk::{
+    Certification, DoctorReport, EngineHealth, EngineIdentity, SignatureTrust,
+    SupplyChainReviewStatus,
+};
 use sha2::{Digest, Sha256};
 use tokio::process::Command;
 
@@ -38,6 +41,9 @@ struct RegisteredEnginePath {
     path: PathBuf,
     manifest_sha256: String,
     pack_id: String,
+    certification: Certification,
+    signature_trust: Option<SignatureTrust>,
+    review_status: SupplyChainReviewStatus,
 }
 
 static REGISTERED_ENGINE_PATHS: OnceLock<RwLock<BTreeMap<String, RegisteredEnginePath>>> =
@@ -63,19 +69,28 @@ pub async fn doctor_with_policy(policy: EngineDiscoveryPolicy) -> DoctorReport {
         "qpdf",
     ] {
         let health = match inspect_engine_with_policy(executable, policy).await {
-            Ok(identity) => EngineHealth {
-                executable: executable.to_owned(),
-                available: true,
-                identity: Some(identity),
-                error_code: None,
-                message: "Available".to_owned(),
-            },
+            Ok(identity) => {
+                let registered = registered_engine_path(executable);
+                EngineHealth {
+                    executable: executable.to_owned(),
+                    available: true,
+                    identity: Some(identity),
+                    error_code: None,
+                    message: "Available".to_owned(),
+                    signature_trust: registered
+                        .as_ref()
+                        .and_then(|engine| engine.signature_trust.clone()),
+                    review_status: registered.as_ref().map(|engine| engine.review_status),
+                }
+            }
             Err(error) => EngineHealth {
                 executable: executable.to_owned(),
                 available: false,
                 identity: None,
                 error_code: Some(format!("{:?}", error.code)),
                 message: error.message,
+                signature_trust: None,
+                review_status: None,
             },
         };
         engines.insert(executable.to_owned(), health);
@@ -176,6 +191,8 @@ pub async fn inspect_engine_with_policy(
     } else {
         None
     };
+    let certification = registered_engine_path(executable)
+        .map_or(Certification::Unverified, |engine| engine.certification);
 
     Ok(EngineIdentity {
         engine_id: executable.to_ascii_lowercase(),
@@ -184,7 +201,7 @@ pub async fn inspect_engine_with_policy(
         binary_sha256,
         manifest_sha256,
         build_configuration,
-        certification: Certification::Unverified,
+        certification,
     })
 }
 
@@ -192,21 +209,34 @@ fn resolve_engine_path(
     executable: &str,
     policy: EngineDiscoveryPolicy,
 ) -> Option<(PathBuf, Option<String>)> {
-    if let Some(engine) = registered_engine_path(executable) {
+    choose_engine_path(
+        registered_engine_path(executable),
+        policy,
+        configured_engine_path(executable).or_else(|| find_executable(executable)),
+    )
+}
+
+fn choose_engine_path(
+    registered: Option<RegisteredEnginePath>,
+    policy: EngineDiscoveryPolicy,
+    development_candidate: Option<PathBuf>,
+) -> Option<(PathBuf, Option<String>)> {
+    if let Some(engine) = registered {
         return Some((engine.path, Some(engine.manifest_sha256)));
     }
     if policy == EngineDiscoveryPolicy::VerifiedPacksOnly {
         return None;
     }
-    configured_engine_path(executable)
-        .or_else(|| find_executable(executable))
-        .map(|path| (path, None))
+    development_candidate.map(|path| (path, None))
 }
 
-pub(crate) fn register_engine_pack_paths(
+pub(crate) fn register_engine_pack_paths_with_provenance(
     executables: &BTreeMap<String, PathBuf>,
     manifest_sha256: &str,
     pack_id: &str,
+    certification: Certification,
+    signature_trust: Option<&SignatureTrust>,
+    review_status: SupplyChainReviewStatus,
 ) -> Result<()> {
     let mut paths = REGISTERED_ENGINE_PATHS
         .get_or_init(|| RwLock::new(BTreeMap::new()))
@@ -250,6 +280,9 @@ pub(crate) fn register_engine_pack_paths(
                 path: path.clone(),
                 manifest_sha256: manifest_sha256.to_owned(),
                 pack_id: pack_id.to_owned(),
+                certification,
+                signature_trust: signature_trust.cloned(),
+                review_status,
             },
         );
     }
@@ -268,6 +301,23 @@ fn registered_engine_path(executable: &str) -> Option<RegisteredEnginePath> {
 #[cfg(test)]
 pub(crate) fn registered_engine_metadata(executable: &str) -> Option<(PathBuf, String)> {
     registered_engine_path(executable).map(|engine| (engine.path, engine.manifest_sha256))
+}
+
+#[cfg(test)]
+pub(crate) fn registered_engine_provenance(
+    executable: &str,
+) -> Option<(
+    Certification,
+    Option<SignatureTrust>,
+    SupplyChainReviewStatus,
+)> {
+    registered_engine_path(executable).map(|engine| {
+        (
+            engine.certification,
+            engine.signature_trust,
+            engine.review_status,
+        )
+    })
 }
 
 fn configured_engine_path(executable: &str) -> Option<PathBuf> {
@@ -446,10 +496,13 @@ fn bounded_text(bytes: &[u8]) -> String {
 mod tests {
     use std::collections::BTreeMap;
 
+    use std::path::PathBuf;
+
     use super::{
-        EngineDiscoveryPolicy, find_executable, inspect_engine_with_policy,
-        register_engine_pack_paths, resolve_engine_path,
+        EngineDiscoveryPolicy, RegisteredEnginePath, choose_engine_path, find_executable,
+        inspect_engine_with_policy, resolve_engine_path,
     };
+    use formatwright_engine_sdk::SupplyChainReviewStatus;
 
     #[test]
     fn finds_current_test_executable_by_explicit_path() {
@@ -463,12 +516,27 @@ mod tests {
         let current = std::env::current_exe().expect("current test executable");
         let mut first = BTreeMap::new();
         first.insert("collision-fixture".to_owned(), current.clone());
-        register_engine_pack_paths(&first, "manifest-a", "first-pack").expect("first registration");
+        super::register_engine_pack_paths_with_provenance(
+            &first,
+            "manifest-a",
+            "first-pack",
+            crate::Certification::Unverified,
+            None,
+            formatwright_engine_sdk::SupplyChainReviewStatus::Missing,
+        )
+        .expect("first registration");
 
         let mut second = BTreeMap::new();
         second.insert("collision-fixture".to_owned(), current);
-        let error = register_engine_pack_paths(&second, "manifest-b", "second-pack")
-            .expect_err("a second manifest must not replace the first");
+        let error = super::register_engine_pack_paths_with_provenance(
+            &second,
+            "manifest-b",
+            "second-pack",
+            crate::Certification::Unverified,
+            None,
+            formatwright_engine_sdk::SupplyChainReviewStatus::Missing,
+        )
+        .expect_err("a second manifest must not replace the first");
         assert!(error.message.contains("already claimed"));
     }
 
@@ -492,13 +560,97 @@ mod tests {
         let current = std::env::current_exe().expect("current test executable");
         let mut paths = BTreeMap::new();
         paths.insert(executable.to_owned(), current.clone());
-        register_engine_pack_paths(&paths, "strict-pack-manifest", "strict-pack")
-            .expect("register exact pack path");
+        super::register_engine_pack_paths_with_provenance(
+            &paths,
+            "strict-pack-manifest",
+            "strict-pack",
+            crate::Certification::Unverified,
+            None,
+            formatwright_engine_sdk::SupplyChainReviewStatus::Missing,
+        )
+        .expect("register exact pack path");
 
         let (path, manifest_sha256) =
             resolve_engine_path(executable, EngineDiscoveryPolicy::VerifiedPacksOnly)
                 .expect("production policy should select the registered exact path");
         assert_eq!(path, current);
         assert_eq!(manifest_sha256.as_deref(), Some("strict-pack-manifest"));
+    }
+
+    #[test]
+    fn registered_provenance_is_visible_to_doctor_without_promoting_hashes() {
+        use formatwright_engine_sdk::{Certification, SignatureTrust, SupplyChainReviewStatus};
+
+        let current = std::env::current_exe().expect("current test executable");
+        let mut paths = BTreeMap::new();
+        paths.insert("provenance-fixture".to_owned(), current);
+        let trust = SignatureTrust::Trusted {
+            key_id: "release-2026h2".to_owned(),
+        };
+        super::register_engine_pack_paths_with_provenance(
+            &paths,
+            "provenance-manifest",
+            "provenance-pack",
+            Certification::Unverified,
+            Some(&trust),
+            SupplyChainReviewStatus::Incomplete,
+        )
+        .expect("register provenance");
+
+        let (certification, trust, review) =
+            super::registered_engine_provenance("provenance-fixture")
+                .expect("registered provenance");
+        assert_eq!(certification, Certification::Unverified);
+        assert_eq!(
+            trust,
+            Some(SignatureTrust::Trusted {
+                key_id: "release-2026h2".to_owned()
+            })
+        );
+        assert_eq!(review, SupplyChainReviewStatus::Incomplete);
+    }
+
+    #[test]
+    fn production_policy_ignores_development_overrides_and_polluted_paths() {
+        let pack = PathBuf::from("C:/verified/pack/ffmpeg.exe");
+        let hostile = PathBuf::from("C:/hostile/ffmpeg.exe");
+        let registered = RegisteredEnginePath {
+            path: pack.clone(),
+            manifest_sha256: "aa".repeat(32),
+            pack_id: "verified-pack".to_owned(),
+            certification: crate::Certification::Unverified,
+            signature_trust: None,
+            review_status: SupplyChainReviewStatus::Missing,
+        };
+
+        let (release_path, manifest) = choose_engine_path(
+            Some(registered.clone()),
+            EngineDiscoveryPolicy::VerifiedPacksOnly,
+            Some(hostile.clone()),
+        )
+        .expect("registered pack is eligible in Release");
+        assert_eq!(release_path, pack);
+        assert_eq!(
+            manifest.as_deref(),
+            Some(registered.manifest_sha256.as_str())
+        );
+
+        let (development_path, _) = choose_engine_path(
+            Some(registered),
+            EngineDiscoveryPolicy::Development,
+            Some(hostile.clone()),
+        )
+        .expect("registered pack still wins in Development");
+        assert_eq!(development_path, pack);
+
+        assert!(
+            choose_engine_path(
+                None,
+                EngineDiscoveryPolicy::VerifiedPacksOnly,
+                Some(hostile)
+            )
+            .is_none(),
+            "Release must ignore PATH and FORMATWRIGHT_ENGINE_* candidates"
+        );
     }
 }

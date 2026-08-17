@@ -3,8 +3,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use formatwright_engine_sdk::{
-    EngineArchitecture, EngineManifest, EnginePlatform, ManifestLicense, ManifestSupplyChain,
-    ReleaseKeyring, SignatureTrust,
+    Certification, EngineArchitecture, EngineManifest, EnginePlatform, ManifestLicense,
+    ManifestSupplyChain, ReleaseKeyring, SignatureTrust, SupplyChainReviewStatus,
+    derive_engine_certification, engine_provenance_message, verify_manifest_signature,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -27,6 +28,71 @@ pub struct VerifiedEnginePack {
     /// no keyring was supplied, so trust was not evaluated; a present
     /// signature alone must never be read as trust.
     pub signature_trust: Option<SignatureTrust>,
+    /// Recorded `sources.json` review, or `Missing` when the sidecar is absent.
+    pub review_status: SupplyChainReviewStatus,
+}
+
+impl VerifiedEnginePack {
+    #[must_use]
+    pub fn certification(&self) -> Certification {
+        derive_engine_certification(self.signature_trust.as_ref(), self.review_status)
+    }
+
+    #[must_use]
+    pub fn provenance_message(&self) -> String {
+        engine_provenance_message(
+            self.signature_trust.as_ref(),
+            self.review_status,
+            self.signature_present,
+        )
+    }
+}
+
+/// Compiled-in release keyring (ADR-0011). Empty until the owner ceremony
+/// publishes a public key; an empty ring still evaluates `Unsigned` /
+/// `UnknownKey` instead of pretending trust was not considered.
+#[must_use]
+pub fn embedded_release_keyring() -> ReleaseKeyring {
+    ReleaseKeyring {
+        schema_version: formatwright_engine_sdk::RELEASE_KEYRING_SCHEMA_VERSION,
+        keys: Vec::new(),
+        revocations: Vec::new(),
+    }
+}
+
+fn apply_embedded_signature_trust(verified: &mut VerifiedEnginePack) {
+    let Ok(now_unix_ms) = unix_now_ms() else {
+        return;
+    };
+    let keyring = embedded_release_keyring();
+    if keyring.validate().is_err() {
+        return;
+    }
+    verified.signature_trust = Some(verify_manifest_signature(
+        &verified.manifest,
+        &keyring,
+        now_unix_ms,
+    ));
+}
+
+fn unix_now_ms() -> Result<u64> {
+    u64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| {
+                engine_error(
+                    format!("system clock is before the Unix epoch: {error}"),
+                    "Fix the system clock and retry.".to_owned(),
+                )
+            })?
+            .as_millis(),
+    )
+    .map_err(|error| {
+        engine_error(
+            format!("system clock overflowed keyring timestamps: {error}"),
+            "Fix the system clock and retry.".to_owned(),
+        )
+    })
 }
 
 /// Loads a pack manifest, validates static invariants, checks the host target,
@@ -73,6 +139,7 @@ pub fn verify_engine_pack(manifest_path: impl AsRef<Path>) -> Result<VerifiedEng
         .map_err(|error| {
             engine_error("Engine manifest is invalid".to_owned(), error.to_string())
         })?;
+    ensure_application_compatible(&manifest)?;
     verify_host_target(&manifest)?;
 
     let mut executables = BTreeMap::new();
@@ -106,9 +173,20 @@ pub fn verify_engine_pack(manifest_path: impl AsRef<Path>) -> Result<VerifiedEng
     for license in &manifest.licenses {
         verify_license_files(root, license)?;
     }
-    let supply_chain_files = match &manifest.supply_chain {
-        Some(supply_chain) => verify_supply_chain_files(root, &manifest, supply_chain)?,
-        None => Vec::new(),
+    let (supply_chain_files, review_status) = match &manifest.supply_chain {
+        Some(supply_chain) => {
+            let files = verify_supply_chain_files(root, &manifest, supply_chain)?;
+            let sources = read_json_object(&files[1], "Engine source inventory")?;
+            (
+                files,
+                SupplyChainReviewStatus::parse_recorded(
+                    sources
+                        .get("review_status")
+                        .and_then(serde_json::Value::as_str),
+                ),
+            )
+        }
+        None => (Vec::new(), SupplyChainReviewStatus::Missing),
     };
 
     let manifest_sha256 = format!("{:x}", Sha256::digest(&bytes));
@@ -122,6 +200,7 @@ pub fn verify_engine_pack(manifest_path: impl AsRef<Path>) -> Result<VerifiedEng
         supply_chain_files,
         signature_present,
         signature_trust: None,
+        review_status,
     })
 }
 
@@ -180,19 +259,24 @@ pub fn load_release_keyring(path: impl AsRef<Path>) -> Result<ReleaseKeyring> {
 }
 
 /// Verifies an engine pack and registers its exact executable paths for this
-/// process. Registered binaries retain `Unverified` certification until a
-/// release keyring validates the pack signature.
+/// process. Certification stays `Unverified` unless the embedded release
+/// keyring trusts the signature **and** `sources.json` records a completed
+/// human review.
 ///
 /// # Errors
 ///
 /// Returns the same verification errors as [`verify_engine_pack`], or an
 /// internal registry error if the verified paths cannot be activated.
 pub fn activate_engine_pack(manifest_path: impl AsRef<Path>) -> Result<VerifiedEnginePack> {
-    let verified = verify_engine_pack(manifest_path)?;
-    crate::doctor::register_engine_pack_paths(
+    let mut verified = verify_engine_pack(manifest_path)?;
+    apply_embedded_signature_trust(&mut verified);
+    crate::doctor::register_engine_pack_paths_with_provenance(
         &verified.executables,
         &verified.manifest_sha256,
         &verified.manifest.engine_id,
+        verified.certification(),
+        verified.signature_trust.as_ref(),
+        verified.review_status,
     )?;
     Ok(verified)
 }
@@ -593,6 +677,24 @@ fn read_json_object(
         })
 }
 
+fn ensure_application_compatible(manifest: &EngineManifest) -> Result<()> {
+    if manifest
+        .formatwright_compatibility
+        .contains(env!("CARGO_PKG_VERSION"))
+    {
+        return Ok(());
+    }
+    Err(engine_error(
+        format!(
+            "Engine pack requires FormatWright {}..{}, this application is {}",
+            manifest.formatwright_compatibility.minimum,
+            manifest.formatwright_compatibility.maximum_exclusive,
+            env!("CARGO_PKG_VERSION")
+        ),
+        "Import a pack built for this FormatWright version.".to_owned(),
+    ))
+}
+
 fn verify_native_executable(path: &Path) -> Result<()> {
     #[cfg(windows)]
     {
@@ -659,8 +761,9 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{
-        ENGINE_PROTOCOL_VERSION, activate_engine_pack, install_engine_pack, load_release_keyring,
-        read_json_object, verify_engine_pack, verify_engine_pack_with_keyring,
+        ENGINE_PROTOCOL_VERSION, activate_engine_pack, embedded_release_keyring,
+        install_engine_pack, load_release_keyring, read_json_object, verify_engine_pack,
+        verify_engine_pack_with_keyring,
     };
 
     fn manifest(binary_hash: String) -> EngineManifest {
@@ -863,6 +966,14 @@ mod tests {
 
         let verified = verify_engine_pack(&manifest_path).expect("supply chain pack");
         assert_eq!(verified.supply_chain_files.len(), 2);
+        assert_eq!(
+            verified.review_status,
+            formatwright_engine_sdk::SupplyChainReviewStatus::Incomplete
+        );
+        assert_eq!(
+            verified.certification(),
+            formatwright_engine_sdk::Certification::Unverified
+        );
         let store = tempdir().expect("temporary engine store");
         let installed = install_engine_pack(&manifest_path, store.path()).expect("install pack");
         assert_eq!(installed.supply_chain_files.len(), 2);
@@ -1055,6 +1166,223 @@ mod tests {
         assert_eq!(loaded, keyring);
         fs::write(&keyring_path, b"{\"schema_version\": 9}").expect("write bad keyring");
         assert!(load_release_keyring(&keyring_path).is_err());
+    }
+
+    #[test]
+    fn activate_applies_embedded_keyring_without_promoting_unsigned_packs() {
+        let (_directory, manifest_path) = create_pack();
+        let activated = activate_engine_pack(&manifest_path).expect("activate unsigned pack");
+        assert_eq!(
+            activated.signature_trust,
+            Some(formatwright_engine_sdk::SignatureTrust::Unsigned)
+        );
+        assert_eq!(
+            activated.review_status,
+            formatwright_engine_sdk::SupplyChainReviewStatus::Missing
+        );
+        assert_eq!(
+            activated.certification(),
+            formatwright_engine_sdk::Certification::Unverified
+        );
+        let (_, trust, review) =
+            crate::doctor::registered_engine_provenance("fixture").expect("registered provenance");
+        assert_eq!(
+            trust,
+            Some(formatwright_engine_sdk::SignatureTrust::Unsigned)
+        );
+        assert_eq!(
+            review,
+            formatwright_engine_sdk::SupplyChainReviewStatus::Missing
+        );
+        assert!(embedded_release_keyring().keys.is_empty());
+    }
+
+    fn write_signed_supply_chain_pack(review_status: &str) -> (tempfile::TempDir, PathBuf) {
+        use formatwright_engine_sdk::sign_manifest;
+        const SEED: [u8; 32] = [7; 32];
+        let (directory, manifest_path) = create_pack();
+        let root = directory.path();
+        let sbom_path = root.join("sbom.spdx.json");
+        let sources_path = root.join("sources.json");
+        fs::write(
+            &sources_path,
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "schema_version": 1,
+                "engine_id": "fixture-engine",
+                "version": "1.0.0",
+                "review_status": review_status,
+                "artifacts": [{"name": "fixture", "source_url": "https://example.invalid/source"}]
+            }))
+            .expect("serialize sources"),
+        )
+        .expect("write sources");
+        fs::write(
+            &sbom_path,
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "spdxVersion": "SPDX-2.3",
+                "dataLicense": "CC0-1.0",
+                "SPDXID": "SPDXRef-DOCUMENT",
+                "name": "fixture-engine-SBOM",
+                "packages": [{"name": "fixture-engine", "versionInfo": "1.0.0"}],
+                "files": [
+                    sbom_file(root, if cfg!(windows) { "bin/fixture.exe" } else { "bin/fixture.bin" }),
+                    sbom_file(root, "licenses/NOTICE.txt"),
+                    sbom_file(root, "runtime/fixture.dat"),
+                    sbom_file(root, "sources.json")
+                ]
+            }))
+            .expect("serialize SBOM"),
+        )
+        .expect("write SBOM");
+        let bytes = fs::read(&manifest_path).expect("read manifest");
+        let mut value = serde_json::from_slice::<EngineManifest>(&bytes).expect("parse manifest");
+        value.supply_chain = Some(ManifestSupplyChain {
+            sbom_path: PathBuf::from("sbom.spdx.json"),
+            sbom_sha256: format!("{:x}", Sha256::digest(fs::read(&sbom_path).expect("SBOM"))),
+            sources_path: PathBuf::from("sources.json"),
+            sources_sha256: format!(
+                "{:x}",
+                Sha256::digest(fs::read(&sources_path).expect("sources"))
+            ),
+        });
+        value.signature = Some(sign_manifest(&value, "release-2026h2", &SEED));
+        fs::write(
+            &manifest_path,
+            serde_json::to_vec_pretty(&value).expect("serialize signed manifest"),
+        )
+        .expect("write signed manifest");
+        (directory, manifest_path)
+    }
+
+    fn test_release_keyring() -> formatwright_engine_sdk::ReleaseKeyring {
+        use formatwright_engine_sdk::{ReleaseKey, ReleaseKeyring, ed25519_public_key_hex};
+        const SEED: [u8; 32] = [7; 32];
+        const NOW: u64 = 1_800_000_000_000;
+        ReleaseKeyring {
+            schema_version: 1,
+            keys: vec![ReleaseKey {
+                key_id: "release-2026h2".to_owned(),
+                algorithm: "ed25519".to_owned(),
+                purpose: "engine-manifest".to_owned(),
+                public_key: ed25519_public_key_hex(&SEED),
+                valid_from_unix_ms: NOW - 1_000,
+                valid_until_unix_ms: NOW + 1_000,
+            }],
+            revocations: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn trusted_signature_promotes_only_after_complete_review() {
+        use formatwright_engine_sdk::SupplyChainReviewStatus;
+        const NOW: u64 = 1_800_000_000_000;
+        let keyring = test_release_keyring();
+        let (_incomplete_dir, incomplete_manifest) = write_signed_supply_chain_pack("incomplete");
+        let trusted_incomplete =
+            verify_engine_pack_with_keyring(&incomplete_manifest, &keyring, NOW)
+                .expect("trusted pack");
+        assert_eq!(
+            trusted_incomplete.review_status,
+            SupplyChainReviewStatus::Incomplete
+        );
+        assert_eq!(
+            trusted_incomplete.certification(),
+            formatwright_engine_sdk::Certification::Unverified
+        );
+        assert!(
+            trusted_incomplete
+                .provenance_message()
+                .contains("review is incomplete")
+        );
+
+        let (_complete_dir, complete_manifest) = write_signed_supply_chain_pack("complete");
+        let trusted_complete = verify_engine_pack_with_keyring(&complete_manifest, &keyring, NOW)
+            .expect("certified pack");
+        assert_eq!(
+            trusted_complete.review_status,
+            SupplyChainReviewStatus::Complete
+        );
+        assert_eq!(
+            trusted_complete.certification(),
+            formatwright_engine_sdk::Certification::Certified
+        );
+    }
+
+    #[test]
+    fn rejects_an_incompatible_application_version() {
+        let (_directory, manifest_path) = create_pack();
+        let bytes = fs::read(&manifest_path).expect("read manifest");
+        let mut value = serde_json::from_slice::<EngineManifest>(&bytes).expect("parse manifest");
+        value.formatwright_compatibility.minimum = "9.0.0".to_owned();
+        value.formatwright_compatibility.maximum_exclusive = "10.0.0".to_owned();
+        fs::write(
+            &manifest_path,
+            serde_json::to_vec_pretty(&value).expect("serialize manifest"),
+        )
+        .expect("rewrite manifest");
+        let error = verify_engine_pack(&manifest_path).expect_err("future pack must fail");
+        assert!(
+            error
+                .message
+                .contains("requires FormatWright 9.0.0..10.0.0")
+        );
+        assert!(error.message.contains(env!("CARGO_PKG_VERSION")));
+    }
+
+    #[test]
+    fn rejects_a_protocol_mismatch_before_activation() {
+        let (_directory, manifest_path) = create_pack();
+        let bytes = fs::read(&manifest_path).expect("read manifest");
+        let mut value = serde_json::from_slice::<EngineManifest>(&bytes).expect("parse manifest");
+        value.protocol_version = ENGINE_PROTOCOL_VERSION + 1;
+        fs::write(
+            &manifest_path,
+            serde_json::to_vec_pretty(&value).expect("serialize manifest"),
+        )
+        .expect("rewrite manifest");
+        let error = verify_engine_pack(&manifest_path).expect_err("protocol mismatch must fail");
+        assert!(error.message.contains("Engine manifest is invalid"));
+        assert!(
+            error
+                .diagnostic
+                .is_some_and(|text| text.contains("protocol"))
+        );
+    }
+
+    #[test]
+    fn leftover_partial_staging_is_not_published() {
+        let (_source, manifest_path) = create_pack();
+        let store = tempdir().expect("store");
+        let installed = install_engine_pack(&manifest_path, store.path()).expect("install");
+        let version_root = store
+            .path()
+            .join("fixture-engine")
+            .join(&installed.manifest.version);
+        let leftover = version_root.join(format!(".{}.stale.partial", installed.manifest_sha256));
+        fs::create_dir_all(leftover.join("bin")).expect("leftover bin");
+        fs::write(leftover.join("manifest.json"), b"{\"schema_version\":1}").expect("leftover");
+        let entries = fs::read_dir(&version_root)
+            .expect("version root")
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().is_dir())
+            .count();
+        assert_eq!(entries, 2, "the leftover staging directory remains on disk");
+        let again =
+            install_engine_pack(&manifest_path, store.path()).expect("reuse installed pack");
+        assert_eq!(again.manifest_sha256, installed.manifest_sha256);
+        assert_eq!(
+            again
+                .manifest_path
+                .parent()
+                .and_then(std::path::Path::file_name)
+                .map(|name| name.to_string_lossy().into_owned())
+                .as_deref(),
+            Some(installed.manifest_sha256.as_str())
+        );
+        assert!(
+            leftover.is_dir(),
+            "reusing an installed pack must not delete leftover staging"
+        );
     }
 
     #[test]

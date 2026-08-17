@@ -51,13 +51,15 @@ pub use domain::{
     ReportRedaction, StreamKind, StreamProbe, ValidationCheck, ValidationReport, ValidationStatus,
 };
 pub use engine_pack::{
-    ENGINE_PROTOCOL_VERSION, VerifiedEnginePack, activate_engine_pack, install_engine_pack,
-    load_release_keyring, verify_engine_pack, verify_engine_pack_with_keyring,
+    ENGINE_PROTOCOL_VERSION, VerifiedEnginePack, activate_engine_pack, embedded_release_keyring,
+    install_engine_pack, load_release_keyring, verify_engine_pack, verify_engine_pack_with_keyring,
 };
 pub use error::{ErrorCode, FormatWrightError, Result, Stage};
 pub use fingerprint::{full_blake3, identify_artifact};
 pub use formatwright_engine_sdk::{
-    Certification, DoctorReport, EngineHealth, EngineIdentity, LossClass, Operation, SignatureTrust,
+    Certification, DoctorReport, EngineHealth, EngineIdentity, LossClass, Operation,
+    SignatureTrust, SupplyChainReviewStatus, derive_engine_certification,
+    engine_provenance_message,
 };
 pub use inspect::inspect_media;
 pub use job_store::{

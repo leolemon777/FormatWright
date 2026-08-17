@@ -771,6 +771,88 @@ mod tests {
     }
 
     #[test]
+    fn leftover_partial_directories_are_not_installed_versions() {
+        let source_root = tempdir().expect("source root");
+        let state_root = tempdir().expect("state root");
+        let store_root = state_root.path().join("engine-store");
+        let registry_root = state_root.path().join("engine-registry");
+        let registry = EngineRegistry::new(&registry_root, &store_root);
+
+        let first = install_version(&source_root, &store_root, "1.0.0", b"binary-one");
+        let verified = crate::engine_pack::verify_engine_pack(&first).expect("verify");
+        registry.set_active(&verified).expect("set active");
+
+        let leftover = store_root
+            .join("fixture-engine")
+            .join("2.0.0")
+            .join(format!(".{}.partial", "ab".repeat(32)));
+        fs::create_dir_all(leftover.join("bin")).expect("leftover");
+        fs::write(leftover.join("manifest.json"), b"{}").expect("leftover manifest");
+
+        let versions = registry
+            .installed_versions("fixture-engine")
+            .expect("versions");
+        assert_eq!(
+            versions
+                .iter()
+                .map(|version| version.version.as_str())
+                .collect::<Vec<_>>(),
+            ["1.0.0"]
+        );
+    }
+
+    #[test]
+    fn failed_upgrade_does_not_move_the_active_pointer() {
+        let source_root = tempdir().expect("source root");
+        let state_root = tempdir().expect("state root");
+        let store_root = state_root.path().join("engine-store");
+        let registry_root = state_root.path().join("engine-registry");
+        let registry = EngineRegistry::new(&registry_root, &store_root);
+
+        let first = install_version(&source_root, &store_root, "1.0.0", b"binary-one");
+        let verified = crate::engine_pack::verify_engine_pack(&first).expect("verify");
+        registry.set_active(&verified).expect("set active");
+
+        let pack_root = source_root.path().join("pack-2.0.0-bad");
+        fs::create_dir_all(pack_root.join("bin")).expect("bin");
+        fs::create_dir_all(pack_root.join("licenses")).expect("licenses");
+        let binary_path = pack_root.join(if cfg!(windows) {
+            "bin/fixture.exe"
+        } else {
+            "bin/fixture.bin"
+        });
+        fs::write(&binary_path, b"binary-two").expect("binary");
+        fs::write(pack_root.join("licenses/NOTICE.txt"), b"notice").expect("notice");
+        let mut value = manifest("2.0.0");
+        value.executables[0].sha256 = format!("{:x}", Sha256::digest(b"binary-two"));
+        value.protocol_version = crate::engine_pack::ENGINE_PROTOCOL_VERSION + 7;
+        let manifest_path = pack_root.join("manifest.json");
+        fs::write(
+            &manifest_path,
+            serde_json::to_vec_pretty(&value).expect("serialize"),
+        )
+        .expect("write bad upgrade");
+
+        let error = install_engine_pack(&manifest_path, &store_root)
+            .expect_err("incompatible upgrade must fail");
+        assert!(error.message.contains("Engine manifest is invalid"));
+        assert!(
+            !store_root.join("fixture-engine").join("2.0.0").is_dir()
+                || registry
+                    .installed_versions("fixture-engine")
+                    .expect("versions")
+                    .iter()
+                    .all(|version| version.version != "2.0.0")
+        );
+
+        let outcomes = registry.recover().expect("recover after failed upgrade");
+        assert!(matches!(
+            &outcomes[0],
+            super::EngineRecovery::Activated { version, .. } if version == "1.0.0"
+        ));
+    }
+
+    #[test]
     fn set_active_is_atomic_and_ignores_stale_partials() {
         let source_root = tempdir().expect("source root");
         let state_root = tempdir().expect("state root");

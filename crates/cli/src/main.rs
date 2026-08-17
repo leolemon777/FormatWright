@@ -506,11 +506,18 @@ async fn run(cli: Cli) -> Result<(), FormatWrightError> {
                 for (name, health) in report.engines {
                     if let Some(identity) = health.identity {
                         println!(
-                            "{name}: available\n  version: {}\n  path: {}\n  sha256: {}",
+                            "{name}: available\n  version: {}\n  path: {}\n  sha256: {}\n  certification: {:?}",
                             identity.version,
                             identity.binary_path.display(),
-                            identity.binary_sha256
+                            identity.binary_sha256,
+                            identity.certification
                         );
+                        if let Some(trust) = health.signature_trust {
+                            println!("  signature trust: {}", trust.status_name());
+                        }
+                        if let Some(review) = health.review_status {
+                            println!("  review status: {review:?}");
+                        }
                     } else {
                         println!("{name}: unavailable\n  reason: {}", health.message);
                     }
@@ -996,8 +1003,10 @@ async fn run(cli: Cli) -> Result<(), FormatWrightError> {
                     println!("executables verified: {}", verified.executables.len());
                     println!("signature present: {}", verified.signature_present);
                     if let Some(trust) = &verified.signature_trust {
-                        println!("signature trust: {trust:?}");
+                        println!("signature trust: {}", trust.status_name());
                     }
+                    println!("review status: {:?}", verified.review_status);
+                    println!("certification: {:?}", verified.certification());
                     Ok(())
                 }
             }

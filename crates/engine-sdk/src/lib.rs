@@ -17,6 +17,35 @@ pub enum Certification {
     Unverified,
 }
 
+/// Human supply-chain review recorded in `sources.json` (ADR-0011).
+///
+/// `Complete` may only be written by a signed review; verification never
+/// invents it from hashes or a trusted signature.
+#[derive(
+    Clone, Copy, Debug, Default, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum SupplyChainReviewStatus {
+    #[default]
+    Missing,
+    Incomplete,
+    Complete,
+}
+
+impl SupplyChainReviewStatus {
+    /// Parses a `sources.json` `review_status` value. Unknown or empty values
+    /// stay incomplete so they cannot promote a pack to certified.
+    #[must_use]
+    pub fn parse_recorded(value: Option<&str>) -> Self {
+        match value.map(str::trim) {
+            Some("complete") => Self::Complete,
+            Some("incomplete" | "pending") => Self::Incomplete,
+            Some(other) if !other.is_empty() => Self::Incomplete,
+            _ => Self::Missing,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum LossClass {
@@ -110,6 +139,29 @@ pub struct FormatWrightCompatibility {
     pub maximum_exclusive: String,
 }
 
+impl FormatWrightCompatibility {
+    /// Half-open range `[minimum, maximum_exclusive)` over dotted numeric
+    /// prefixes (`0.1.0`, `26.02.0-0`). Non-numeric suffixes are ignored.
+    #[must_use]
+    pub fn contains(&self, application_version: &str) -> bool {
+        version_in_half_open_range(application_version, &self.minimum, &self.maximum_exclusive)
+    }
+}
+
+fn version_in_half_open_range(version: &str, minimum: &str, maximum_exclusive: &str) -> bool {
+    let version = numeric_version_prefix(version);
+    let minimum = numeric_version_prefix(minimum);
+    let maximum = numeric_version_prefix(maximum_exclusive);
+    version >= minimum && version < maximum
+}
+
+fn numeric_version_prefix(value: &str) -> Vec<u64> {
+    value
+        .split(['.', '-'])
+        .map_while(|part| part.parse::<u64>().ok())
+        .collect()
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ManifestExecutable {
     pub name: String,
@@ -174,6 +226,73 @@ pub enum SignatureTrust {
     Revoked { key_id: String },
     Expired { key_id: String },
     InvalidSignature,
+}
+
+impl SignatureTrust {
+    #[must_use]
+    pub const fn status_name(&self) -> &'static str {
+        match self {
+            Self::Trusted { .. } => "trusted",
+            Self::Unsigned => "unsigned",
+            Self::UnknownKey { .. } => "unknown_key",
+            Self::Revoked { .. } => "revoked",
+            Self::Expired { .. } => "expired",
+            Self::InvalidSignature => "invalid_signature",
+        }
+    }
+}
+
+/// ADR-0011 promotion rule: only a trusted release signature **and** a
+/// completed human supply-chain review become `Certified`. Hash completeness
+/// or `signature_present` never promote.
+#[must_use]
+pub fn derive_engine_certification(
+    trust: Option<&SignatureTrust>,
+    review: SupplyChainReviewStatus,
+) -> Certification {
+    match (trust, review) {
+        (Some(SignatureTrust::Trusted { .. }), SupplyChainReviewStatus::Complete) => {
+            Certification::Certified
+        }
+        _ => Certification::Unverified,
+    }
+}
+
+/// Honest English provenance for CLI/Doctor. Desktop localizes from the same
+/// trust + review pair rather than this string.
+#[must_use]
+pub fn engine_provenance_message(
+    trust: Option<&SignatureTrust>,
+    review: SupplyChainReviewStatus,
+    signature_present: bool,
+) -> String {
+    match trust {
+        Some(SignatureTrust::Trusted { key_id }) if review == SupplyChainReviewStatus::Complete => {
+            format!("Certified: trusted signature from {key_id} and completed supply-chain review.")
+        }
+        Some(SignatureTrust::Trusted { key_id }) => {
+            format!(
+                "Signature trusted by {key_id}; supply-chain review is incomplete. Not certified."
+            )
+        }
+        Some(SignatureTrust::UnknownKey { key_id }) => {
+            format!("Signature key {key_id} is not in the release keyring.")
+        }
+        Some(SignatureTrust::Revoked { key_id }) => {
+            format!("Signature key {key_id} has been revoked.")
+        }
+        Some(SignatureTrust::Expired { key_id }) => {
+            format!("Signature key {key_id} is outside its validity window.")
+        }
+        Some(SignatureTrust::InvalidSignature) => "Manifest signature is invalid.".to_owned(),
+        Some(SignatureTrust::Unsigned) | None if signature_present => {
+            "Integrity verified; signature present but not yet trusted by a release keyring."
+                .to_owned()
+        }
+        Some(SignatureTrust::Unsigned) | None => {
+            "Integrity verified; unsigned pack remains unverified.".to_owned()
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
@@ -683,6 +802,10 @@ pub struct EngineHealth {
     pub identity: Option<EngineIdentity>,
     pub error_code: Option<String>,
     pub message: String,
+    #[serde(default)]
+    pub signature_trust: Option<SignatureTrust>,
+    #[serde(default)]
+    pub review_status: Option<SupplyChainReviewStatus>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -899,6 +1022,71 @@ mod tests {
             super::SignatureTrust::Expired {
                 key_id: "release-2026h2".to_owned()
             }
+        );
+    }
+
+    #[test]
+    fn compatibility_range_is_half_open_and_numeric() {
+        let range = super::FormatWrightCompatibility {
+            minimum: "0.1.0".to_owned(),
+            maximum_exclusive: "0.2.0".to_owned(),
+        };
+        assert!(range.contains("0.1.0"));
+        assert!(range.contains("0.1.9"));
+        assert!(!range.contains("0.2.0"));
+        assert!(!range.contains("0.0.9"));
+        assert!(range.contains("0.1.0-dev"));
+    }
+
+    #[test]
+    fn derive_certification_requires_trusted_signature_and_complete_review() {
+        let trusted = super::SignatureTrust::Trusted {
+            key_id: "release-2026h2".to_owned(),
+        };
+        assert_eq!(
+            super::derive_engine_certification(
+                Some(&trusted),
+                super::SupplyChainReviewStatus::Complete
+            ),
+            super::Certification::Certified
+        );
+        assert_eq!(
+            super::derive_engine_certification(
+                Some(&trusted),
+                super::SupplyChainReviewStatus::Incomplete
+            ),
+            super::Certification::Unverified
+        );
+        assert_eq!(
+            super::derive_engine_certification(
+                Some(&super::SignatureTrust::Unsigned),
+                super::SupplyChainReviewStatus::Complete
+            ),
+            super::Certification::Unverified
+        );
+        assert_eq!(
+            super::derive_engine_certification(None, super::SupplyChainReviewStatus::Complete),
+            super::Certification::Unverified
+        );
+        assert_eq!(
+            super::SupplyChainReviewStatus::parse_recorded(Some("complete")),
+            super::SupplyChainReviewStatus::Complete
+        );
+        assert_eq!(
+            super::SupplyChainReviewStatus::parse_recorded(Some("pending")),
+            super::SupplyChainReviewStatus::Incomplete
+        );
+        assert_eq!(
+            super::SupplyChainReviewStatus::parse_recorded(Some("surprise")),
+            super::SupplyChainReviewStatus::Incomplete
+        );
+        assert!(
+            super::engine_provenance_message(
+                Some(&trusted),
+                super::SupplyChainReviewStatus::Incomplete,
+                true
+            )
+            .contains("Not certified")
         );
     }
 
