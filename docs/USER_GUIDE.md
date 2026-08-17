@@ -16,7 +16,12 @@
 
 PDF-to-image conversion selects an output directory because every page is rendered. Other current workflows select one output file. Existing destinations are refused; silent overwrite is not supported.
 
-On an installed Windows development build, **Open in FormatWright** is available for files and directories in Explorer's classic context menu (normally **Show more options** on Windows 11). It opens or focuses FormatWright and fills the Convert input; it never starts a conversion without review. Network shares are intentionally rejected by the current local-path policy.
+On an installed Windows development build, Explorer's classic context menu (normally **Show more options** on Windows 11) has two kinds of FormatWright actions:
+
+- **Open in FormatWright** on any file or folder only fills the Convert page. It does not start work.
+- **Convert to …** on supported extensions (PDF→PNG/JPG, images→WebP, JSON/CSV/YAML/XML, common media) is an explicit approval, same as a one-shot CLI `convert`. FormatWright still builds a Plan, validates, and refuses to overwrite. Unsupported files stay review-only.
+
+Network shares are rejected by the current local-path policy. Choosing a Convert verb on a folder is ignored.
 
 ## Presets
 
@@ -26,7 +31,7 @@ Open **Presets** to name and save the current target, quality, width, DPI, color
 
 ## Engines
 
-**Engines** runs Doctor without downloading anything. The Windows candidate installs its embedded Starter packs into a versioned application-data store on first launch. A local engine pack can also be imported by selecting its `manifest.json`; FormatWright verifies protocol, platform/architecture, canonical paths, executable/runtime hashes, and declared license files, then copies only declared files into the same store and atomically switches the active registry record. Every pack is re-verified at startup. Packs remain `Unverified` until the release keyring cryptographically trusts their signatures.
+**Engines** runs Doctor without downloading anything. The Windows candidate installs its embedded Starter packs into a versioned application-data store on first launch. A local engine pack can also be imported by selecting its `manifest.json`; FormatWright verifies protocol, platform/architecture, canonical paths, executable/runtime hashes, and declared license files, then copies only declared files into the same store and atomically switches the active registry record. Every pack is re-verified at startup. Doctor, Plan steps, and ValidationReport all show the same derived certification. A trusted signature alone is displayed as “signature trusted, review incomplete”; `Certified` requires that trust **and** a completed human supply-chain review. Hash completeness or a present signature never promote a pack.
 
 For development only, an exact system executable can be selected before startup with `FORMATWRIGHT_ENGINE_<NAME>`, such as `FORMATWRIGHT_ENGINE_FFMPEG` or `FORMATWRIGHT_ENGINE_PDFTOPPM`. Release ignores `PATH` and these overrides; production capability comes only from an activated verified pack.
 

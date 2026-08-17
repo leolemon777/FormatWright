@@ -3,13 +3,17 @@ import { describe, expect, it } from "vitest";
 import {
   JOB_PAGE_SIZE,
   SUPPORTED_TARGET_FORMATS,
+  certificationLabel,
   elapsedProgressSeconds,
   engineRecoveryNotices,
   engineRecoveryState,
   isDirectoryOutput,
   jobListAriaAttributes,
   latestJobProgress,
+  normalizeShellTarget,
+  packBadgeKind,
   parseDesktopError,
+  qualityFieldApplies,
   presetFieldChangeInvalidatesPreview,
   progressForJob,
   recommendedTargets,
@@ -24,6 +28,8 @@ describe("desktop workflow model", () => {
     expect(recommendedTargets("report.pdf")).toEqual(["png", "jpg"]);
     expect(recommendedTargets("report.docx")).toEqual(["pdf"]);
     expect(recommendedTargets("notes.md")).toEqual(["pdf", "docx"]);
+    expect(recommendedTargets("C:\\\\桌面\\\\新建 XLS 工作表.xls")).toEqual([]);
+    expect(recommendedTargets("unknown.bin")).toEqual([]);
   });
 
   it("suggests a directory for multi-page PDF rendering", () => {
@@ -74,28 +80,56 @@ describe("desktop workflow model", () => {
 
 describe("target option views", () => {
   it("keeps the submitted option value separate from the localized unavailable label", () => {
-    const routes = { png: { available: false }, jpg: { available: true } };
-    const views = targetOptionViews(["png", "jpg"], routes, "convert-file", "Missing");
+    const routes = { png: { available: false, missing_engines: ["ffmpeg"] }, jpg: { available: true } };
+    const views = targetOptionViews(["png", "jpg"], routes, "convert-file", { missing: "Missing", unsupported: "Unsupported" });
     const png = views.find((option) => option.value === "png");
     expect(png).toEqual({ value: "png", label: "png — Missing", disabled: true });
     expect(views.find((option) => option.value === "jpg")).toEqual({ value: "jpg", label: "jpg", disabled: false });
   });
 
+  it("hides unsupported pairs once capabilities are known", () => {
+    const routes = {
+      png: { available: true },
+      jpg: { available: true },
+      webp: { available: false, missing_engines: ["ffmpeg"] },
+      mp4: { available: false, missing_engines: [] },
+    };
+    const views = targetOptionViews(["png", "jpg"], routes, "convert-file", { missing: "Missing", unsupported: "Unsupported" });
+    expect(views.map((option) => option.value)).toEqual(["png", "jpg", "webp"]);
+    expect(views.find((option) => option.value === "webp")).toEqual({
+      value: "webp",
+      label: "webp — Missing",
+      disabled: true,
+    });
+  });
+
+  it("treats a right-click convert target as an explicit allowed format", () => {
+    expect(normalizeShellTarget("PNG")).toBe("png");
+    expect(normalizeShellTarget(".jpeg")).toBe("jpg");
+    expect(normalizeShellTarget("yml")).toBe("yaml");
+    expect(normalizeShellTarget("exe")).toBeNull();
+    expect(qualityFieldApplies("jpg")).toBe(true);
+    expect(qualityFieldApplies("png")).toBe(false);
+    expect(qualityFieldApplies("yaml")).toBe(false);
+  });
+
   it("does not gate targets before capabilities load or in folder mode", () => {
-    expect(targetOptionViews(["png"], null, "convert-file", "Missing").find((option) => option.value === "png")?.disabled).toBe(false);
-    expect(targetOptionViews(["png"], { png: { available: false } }, "convert-folder", "Missing").find((option) => option.value === "png")?.disabled).toBe(false);
-    expect(targetOptionViews(["png"], { png: { available: false } }, "convert-folder", "Missing").find((option) => option.value === "png")?.label).toBe("png");
+    const labels = { missing: "Missing", unsupported: "Unsupported" };
+    expect(targetOptionViews(["png"], null, "convert-file", labels).find((option) => option.value === "png")?.disabled).toBe(false);
+    expect(targetOptionViews(["png"], { png: { available: false } }, "convert-folder", labels).find((option) => option.value === "png")?.disabled).toBe(false);
+    expect(targetOptionViews(["png"], { png: { available: false } }, "convert-folder", labels).find((option) => option.value === "png")?.label).toBe("png");
   });
 
   it("gates preset targets without relabeling them", () => {
-    const view = targetOptionViews(["png"], { png: { available: false } }, "preset", "Missing").find((option) => option.value === "png");
+    const view = targetOptionViews(["png"], { png: { available: false } }, "preset", { missing: "Missing", unsupported: "Unsupported" }).find((option) => option.value === "png");
     expect(view).toEqual({ value: "png", label: "png", disabled: true });
   });
 
   it("merges recommendations with the supported target list deterministically", () => {
-    const merged = targetOptionViews(["png"], null, "convert-file", "Missing").map((option) => option.value);
+    const labels = { missing: "Missing", unsupported: "Unsupported" };
+    const merged = targetOptionViews(["png"], null, "convert-file", labels).map((option) => option.value);
     expect(merged).toEqual(["png", ...SUPPORTED_TARGET_FORMATS.filter((value) => value !== "png")]);
-    expect(targetOptionViews(["csv"], null, "preset", "Missing").map((option) => option.value)[0]).toBe("csv");
+    expect(targetOptionViews(["csv"], null, "preset", labels).map((option) => option.value)[0]).toBe("csv");
   });
 });
 
@@ -162,5 +196,42 @@ describe("engine recovery notices", () => {
     expect(engineRecoveryState(outcomes, "formatwright-image")).toBe("failed");
     expect(engineRecoveryState(outcomes, null)).toBeNull();
     expect(engineRecoveryState(undefined, "formatwright-pdf")).toBeNull();
+  });
+});
+
+describe("engine certification display", () => {
+  it("never treats a trusted signature or a present signature as certified", () => {
+    expect(
+      packBadgeKind({
+        valid: true,
+        signature_present: true,
+        signature_trust: { status: "trusted", key_id: "release-2026h2" },
+        review_status: "incomplete",
+        certification: "unverified",
+      }),
+    ).toBe("trusted-incomplete");
+    expect(
+      packBadgeKind({
+        valid: true,
+        signature_present: true,
+        signature_trust: { status: "unsigned" },
+        review_status: "complete",
+        certification: "unverified",
+      }),
+    ).toBe("unsigned");
+    expect(
+      packBadgeKind({
+        valid: true,
+        signature_present: true,
+        signature_trust: { status: "trusted", key_id: "release-2026h2" },
+        review_status: "complete",
+        certification: "certified",
+      }),
+    ).toBe("certified");
+    expect(certificationLabel("experimental", {
+      certified: "Certified",
+      experimental: "Experimental",
+      unverified: "Unverified",
+    })).toBe("Experimental");
   });
 });

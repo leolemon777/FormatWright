@@ -57,12 +57,13 @@ export function recommendedTargets(path: string): string[] {
     return ["m4a", "mp3", "wav"];
   }
   if (["docx", "pptx", "xlsx"].includes(extension)) return ["pdf"];
+  if (["xls", "xlsm", "xlsb"].includes(extension)) return [];
   if (["md", "markdown", "html", "htm"].includes(extension)) return ["pdf", "docx"];
   if (extension === "pdf") return ["png", "jpg"];
   if (["csv", "json", "yaml", "yml", "xml"].includes(extension)) {
     return ["json", "csv", "yaml", "xml"];
   }
-  return ["mp4", "webp", "pdf"];
+  return [];
 }
 
 export function suggestedOutput(input: string, target: string): string {
@@ -88,29 +89,73 @@ export const SUPPORTED_TARGET_FORMATS: readonly string[] = [
   "jpg", "png", "webp", "avif", "mp4", "mp3", "m4a", "wav", "gif", "pdf", "docx", "json", "csv", "yaml", "xml",
 ];
 
-export type TargetRouteAvailability = { available: boolean };
+export type TargetRouteAvailability = {
+  available: boolean;
+  missing_engines?: readonly string[];
+};
 
 export type TargetOptionView = { value: string; label: string; disabled: boolean };
 
 export type TargetOptionScope = "convert-file" | "convert-folder" | "preset";
 
-// The submitted <option> value must stay the raw format id; the localized
-// "missing engine" marker belongs to the visible label only.
+export type TargetUnavailableLabels = {
+  missing: string;
+  unsupported: string;
+};
+
+function isRelevantConvertTarget(
+  route: TargetRouteAvailability | undefined,
+): boolean {
+  return route?.available === true || (route?.missing_engines?.length ?? 0) > 0;
+}
+
+// HowToConvert-style picker: once capabilities are known, hide pairs this
+// input cannot use. Keep missing-engine routes so the user can see the pack gap.
 export function targetOptionViews(
   recommendations: readonly string[],
   routes: Readonly<Record<string, TargetRouteAvailability>> | null,
   scope: TargetOptionScope,
-  unavailableLabel: string,
+  unavailableLabels: TargetUnavailableLabels,
 ): TargetOptionView[] {
-  const values = Array.from(new Set([...recommendations, ...SUPPORTED_TARGET_FORMATS]));
+  const candidates = Array.from(new Set([...recommendations, ...SUPPORTED_TARGET_FORMATS]));
+  const values = scope === "convert-file" && routes !== null
+    ? candidates.filter((value) => isRelevantConvertTarget(routes[value]))
+    : candidates;
   return values.map((value) => {
-    const unavailable = scope !== "convert-folder" && routes !== null && routes[value]?.available !== true;
+    const route = routes?.[value];
+    const unavailable = scope !== "convert-folder" && routes !== null && route?.available !== true;
+    const reason = (route?.missing_engines?.length ?? 0) > 0
+      ? unavailableLabels.missing
+      : unavailableLabels.unsupported;
     return {
       value,
-      label: unavailable && scope === "convert-file" ? `${value} — ${unavailableLabel}` : value,
+      label: unavailable && scope === "convert-file" ? `${value} — ${reason}` : value,
       disabled: unavailable,
     };
   });
+}
+
+export function qualityFieldApplies(target: string): boolean {
+  return ["jpg", "jpeg", "webp", "avif", "mp3", "m4a", "gif"].includes(target.toLowerCase());
+}
+
+export const SHELL_CONVERT_TARGETS: readonly string[] = [
+  "jpg", "png", "webp", "avif", "mp4", "mp3", "m4a", "wav", "gif", "pdf", "docx", "json", "csv", "yaml", "xml",
+];
+
+export function normalizeShellTarget(value: string | null | undefined): string | null {
+  const normalized = (value ?? "").trim().replace(/^\./, "").toLowerCase();
+  if (normalized === "jpeg") return "jpg";
+  if (normalized === "yml") return "yaml";
+  return SHELL_CONVERT_TARGETS.includes(normalized) ? normalized : null;
+}
+
+export function inputHasRunnableFamily(
+  routes: Readonly<Record<string, TargetRouteAvailability>> | null | undefined,
+): boolean {
+  return Object.values(routes ?? {}).some(
+    (route) => route.available || (route.missing_engines?.length ?? 0) > 0,
+  );
 }
 
 export type EngineRecoveryOutcome = {
@@ -176,6 +221,51 @@ export type PresetFormField =
 // changing one makes a previously rendered plan preview stale.
 export function presetFieldChangeInvalidatesPreview(field: PresetFormField): boolean {
   return field !== "preset-name";
+}
+
+export type SignatureTrustView = {
+  status: string;
+  key_id?: string;
+};
+
+export type EnginePackTrustView = {
+  valid: boolean;
+  signature_present: boolean;
+  signature_trust?: SignatureTrustView | null;
+  review_status?: string | null;
+  certification?: string | null;
+};
+
+export type PackBadgeKind =
+  | "certified"
+  | "trusted-incomplete"
+  | "untrusted"
+  | "unsigned"
+  | "invalid";
+
+export function packBadgeKind(pack: EnginePackTrustView): PackBadgeKind {
+  if (!pack.valid) return "invalid";
+  if (pack.certification === "certified") return "certified";
+  const trust = pack.signature_trust?.status;
+  if (trust === "trusted") return "trusted-incomplete";
+  if (
+    trust === "revoked" ||
+    trust === "expired" ||
+    trust === "invalid_signature" ||
+    trust === "unknown_key"
+  ) {
+    return "untrusted";
+  }
+  return "unsigned";
+}
+
+export function certificationLabel(
+  certification: string | undefined,
+  labels: { certified: string; experimental: string; unverified: string },
+): string {
+  if (certification === "certified") return labels.certified;
+  if (certification === "experimental") return labels.experimental;
+  return labels.unverified;
 }
 
 export function parseDesktopError(reason: unknown): DesktopError {

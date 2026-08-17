@@ -1,0 +1,54 @@
+# Registers current-user Explorer convert verbs for a local desktop exe.
+# Use this to try FileConverter-style right-click without rebuilding NSIS.
+param(
+    [string]$Executable = (Join-Path $PSScriptRoot '..\target\release\formatwright-desktop.exe'),
+    [switch]$Remove
+)
+
+$ErrorActionPreference = 'Stop'
+$exe = [System.IO.Path]::GetFullPath($Executable)
+$verbs = @(
+    @{ Assoc = '.pdf'; Verb = 'FormatWright.ToPng'; Target = 'png'; Label = 'Convert to PNG' },
+    @{ Assoc = '.pdf'; Verb = 'FormatWright.ToJpg'; Target = 'jpg'; Label = 'Convert to JPG' },
+    @{ Assoc = '.png'; Verb = 'FormatWright.ToWebp'; Target = 'webp'; Label = 'Convert to WebP' },
+    @{ Assoc = '.jpg'; Verb = 'FormatWright.ToWebp'; Target = 'webp'; Label = 'Convert to WebP' },
+    @{ Assoc = '.jpeg'; Verb = 'FormatWright.ToWebp'; Target = 'webp'; Label = 'Convert to WebP' },
+    @{ Assoc = '.json'; Verb = 'FormatWright.ToYaml'; Target = 'yaml'; Label = 'Convert to YAML' },
+    @{ Assoc = '.csv'; Verb = 'FormatWright.ToJson'; Target = 'json'; Label = 'Convert to JSON' },
+    @{ Assoc = '.yaml'; Verb = 'FormatWright.ToJson'; Target = 'json'; Label = 'Convert to JSON' },
+    @{ Assoc = '.yml'; Verb = 'FormatWright.ToJson'; Target = 'json'; Label = 'Convert to JSON' },
+    @{ Assoc = '.xml'; Verb = 'FormatWright.ToJson'; Target = 'json'; Label = 'Convert to JSON' },
+    @{ Assoc = '.mp4'; Verb = 'FormatWright.ToMp3'; Target = 'mp3'; Label = 'Convert to MP3' },
+    @{ Assoc = '.mkv'; Verb = 'FormatWright.ToMp4'; Target = 'mp4'; Label = 'Convert to MP4' },
+    @{ Assoc = '.mov'; Verb = 'FormatWright.ToMp4'; Target = 'mp4'; Label = 'Convert to MP4' },
+    @{ Assoc = '.avi'; Verb = 'FormatWright.ToMp4'; Target = 'mp4'; Label = 'Convert to MP4' },
+    @{ Assoc = '.webm'; Verb = 'FormatWright.ToMp4'; Target = 'mp4'; Label = 'Convert to MP4' },
+    @{ Assoc = '.mp3'; Verb = 'FormatWright.ToWav'; Target = 'wav'; Label = 'Convert to WAV' },
+    @{ Assoc = '.wav'; Verb = 'FormatWright.ToMp3'; Target = 'mp3'; Label = 'Convert to MP3' }
+)
+
+foreach ($item in $verbs) {
+    $key = "Registry::HKEY_CURRENT_USER\Software\Classes\SystemFileAssociations\$($item.Assoc)\shell\$($item.Verb)"
+    if ($Remove) {
+        if (Test-Path -LiteralPath $key) {
+            Remove-Item -LiteralPath $key -Recurse -Force
+        }
+        continue
+    }
+    if (-not (Test-Path -LiteralPath $exe)) {
+        throw "desktop executable not found: $exe"
+    }
+    New-Item -Path $key -Force | Out-Null
+    New-ItemProperty -LiteralPath $key -Name 'MUIVerb' -Value $item.Label -Force | Out-Null
+    New-ItemProperty -LiteralPath $key -Name 'Icon' -Value "$exe,0" -Force | Out-Null
+    $commandKey = Join-Path $key 'command'
+    New-Item -Path $commandKey -Force | Out-Null
+    Set-ItemProperty -LiteralPath $commandKey -Name '(default)' -Value ('"' + $exe + '" --shell-convert --to ' + $item.Target + ' "%1"')
+}
+
+if ($Remove) {
+    Write-Host 'Removed current-user FormatWright convert verbs.'
+} else {
+    Write-Host "Registered convert verbs for $exe"
+    Write-Host 'Classic Explorer: right-click a PDF and choose Convert to PNG (Windows 11: Show more options).'
+}

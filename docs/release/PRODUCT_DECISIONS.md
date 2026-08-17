@@ -24,6 +24,12 @@ Review each row, edit the **Decision** field (or write an alternative), and date
 | 11 | Transitive review sign-off authority | project maintainer / external counsel | **Maintainer signs file-level inventory; external counsel reviews only FFmpeg/Poppler legal questions** | Full counsel review of every file is cost-prohibitive; targeted review covers the actual risk (codec patents, LGPL/GPL boundaries) | 🔴 |
 | 12 | Non-redistributable component policy (if FFmpeg build fails review) | switch FFmpeg build / demote Media pack to optional | **Demote to optional pack first (fast), switch build second (correct)** | Keeps a shippable Starter in every scenario; per SPEC_PLAN §13.2 no unclear-license engine enters the certified set | 🟡 |
 
+## Owner decision — 2026-08-16
+
+- **Drag-and-drop simplicity (HowToConvert-style) and Explorer one-click convert (FileConverter-style) are both in scope.**
+- Not in scope: matching HowToConvert's thousands of format pairs.
+- Right-click **Convert to X** counts as Plan approval; Open-in remains preview-only.
+
 ## Already-decided (recorded for completeness)
 
 - Apache-2.0 (core/CLI/desktop/SDK), AGPL-3.0 (future hosted service), CC BY 4.0 (docs) — SPEC_PLAN §13.1.

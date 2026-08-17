@@ -12,15 +12,16 @@ use std::time::Instant;
 use formatwright_core::{
     ApplicationSettings, ApplicationSettingsService, ApplicationStateLayout,
     ApplicationStateService, BatchRecord, BulkActionReport, BulkJobAction, BulkJobService,
-    CapabilitySnapshot, CompactReport, ConversionPreset, ConversionService, DoctorReport,
-    EngineDiscoveryPolicy, EngineRegistry, FolderBatchService, FolderDiskBudget,
+    CapabilitySnapshot, Certification, CompactReport, ConversionPreset, ConversionService,
+    DoctorReport, EngineDiscoveryPolicy, EngineRegistry, FolderBatchService, FolderDiskBudget,
     FolderMappingEntry, IntegrityReport, JobCreateRequest, JobExecutionService, JobQueryPage,
     JobRecord, JobRecoveryService, JobSelectionQuery, JobState, JobStateCount, MaintenanceService,
     MaintenanceStatus, PRESET_SCHEMA_VERSION, Plan, PlanRequest, PresetLibrary, Probe,
     QueueProgressUpdate, QueueRunReport, QueueWindowControl, ReportService, RevalidationService,
-    SelectionSnapshot, SqliteJobStore, StagedCleanupReport, StateBundleBackupReport,
-    StateBundleOptions, StateBundlePreflightReport, ValidationReport, VerifiedEnginePack,
-    activate_engine_pack, capability_snapshot_for_input, cleanup_staged_output, prepare_conversion,
+    SelectionSnapshot, SignatureTrust, SqliteJobStore, StagedCleanupReport,
+    StateBundleBackupReport, StateBundleOptions, StateBundlePreflightReport,
+    SupplyChainReviewStatus, ValidationReport, VerifiedEnginePack, activate_engine_pack,
+    capability_snapshot_for_input, cleanup_staged_output, prepare_conversion,
 };
 use queue_bridge::{DEFAULT_BATCH_JOBS, DEFAULT_BENCHMARK_JOBS, QueueBatchIter};
 use serde::{Deserialize, Serialize};
@@ -47,7 +48,7 @@ struct DesktopState {
     operation_gate: Mutex<DesktopOperationGate>,
     folder_previews: Mutex<HashMap<Uuid, DesktopFolderPreviewCache>>,
     revalidations: Mutex<HashSet<Uuid>>,
-    shell_open_paths: Arc<Mutex<VecDeque<PathBuf>>>,
+    shell_open_paths: Arc<Mutex<VecDeque<DesktopShellOpen>>>,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -112,11 +113,17 @@ struct DesktopRecipeExport {
     plan: Plan,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 struct DesktopShellOpen {
     path: PathBuf,
     directory: bool,
+    convert_to: Option<String>,
 }
+
+const ALLOWED_SHELL_CONVERT_TARGETS: &[&str] = &[
+    "jpg", "png", "webp", "avif", "mp4", "mp3", "m4a", "wav", "gif", "pdf", "docx", "json", "csv",
+    "yaml", "xml",
+];
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -348,6 +355,9 @@ struct DesktopEnginePackSummary {
     manifest_sha256: Option<String>,
     executable_names: Vec<String>,
     signature_present: bool,
+    signature_trust: Option<SignatureTrust>,
+    review_status: SupplyChainReviewStatus,
+    certification: Certification,
     valid: bool,
     message: String,
 }
@@ -448,6 +458,9 @@ async fn list_imported_engine_packs(
                 manifest_sha256: None,
                 executable_names: Vec::new(),
                 signature_present: false,
+                signature_trust: None,
+                review_status: SupplyChainReviewStatus::Missing,
+                certification: Certification::Unverified,
                 valid: false,
                 message: error.message,
             },
@@ -1399,25 +1412,70 @@ fn unix_ms_now() -> i64 {
         .unwrap_or_default()
 }
 
-fn shell_open_path_from_args<I, S>(arguments: I) -> Option<PathBuf>
+fn normalize_shell_convert_target(value: &str) -> Option<String> {
+    let normalized = value.trim().trim_start_matches('.').to_ascii_lowercase();
+    let normalized = match normalized.as_str() {
+        "jpeg" => "jpg".to_owned(),
+        "yml" => "yaml".to_owned(),
+        other => other.to_owned(),
+    };
+    ALLOWED_SHELL_CONVERT_TARGETS
+        .contains(&normalized.as_str())
+        .then_some(normalized)
+}
+
+fn parse_shell_invocation<I, S>(arguments: I) -> Option<(PathBuf, Option<String>)>
 where
     I: IntoIterator<Item = S>,
     S: Into<std::ffi::OsString>,
 {
     let mut arguments = arguments.into_iter().map(Into::into);
     let _executable = arguments.next()?;
+    let mut path = None;
+    let mut convert_to = None;
+    let mut saw_open = false;
+    let mut saw_convert = false;
     while let Some(argument) = arguments.next() {
         if argument == "--shell-open" {
-            return arguments.next().map(PathBuf::from);
+            saw_open = true;
+            path = arguments.next().map(PathBuf::from);
+        } else if argument == "--shell-convert" {
+            saw_convert = true;
+        } else if argument == "--to" {
+            convert_to = arguments
+                .next()
+                .and_then(|value| normalize_shell_convert_target(&value.to_string_lossy()));
+        } else if path.is_none()
+            && (saw_open || saw_convert)
+            && !argument.to_string_lossy().starts_with('-')
+        {
+            path = Some(PathBuf::from(argument));
         }
+    }
+    let path = path?;
+    if saw_convert {
+        return Some((path, Some(convert_to?)));
+    }
+    if saw_open {
+        return Some((path, None));
     }
     None
 }
 
-fn validated_shell_open_path(
+#[cfg(test)]
+fn shell_open_path_from_args<I, S>(arguments: I) -> Option<PathBuf>
+where
+    I: IntoIterator<Item = S>,
+    S: Into<std::ffi::OsString>,
+{
+    let (path, convert_to) = parse_shell_invocation(arguments)?;
+    convert_to.is_none().then_some(path)
+}
+
+fn validated_shell_request(
     arguments: impl IntoIterator<Item = std::ffi::OsString>,
-) -> Option<PathBuf> {
-    let requested = shell_open_path_from_args(arguments)?;
+) -> Option<DesktopShellOpen> {
+    let (requested, convert_to) = parse_shell_invocation(arguments)?;
     if !requested.is_absolute() {
         return None;
     }
@@ -1433,6 +1491,9 @@ fn validated_shell_open_path(
         return None;
     }
     let canonical = requested.canonicalize().ok()?;
+    if convert_to.is_some() && !canonical.is_file() {
+        return None;
+    }
     if !canonical.is_file() && !canonical.is_dir() {
         return None;
     }
@@ -1444,35 +1505,57 @@ fn validated_shell_open_path(
     ) {
         return None;
     }
-    Some(requested)
+    Some(DesktopShellOpen {
+        path: requested,
+        directory: canonical.is_dir(),
+        convert_to,
+    })
+}
+
+#[cfg(test)]
+fn validated_shell_open_path(
+    arguments: impl IntoIterator<Item = std::ffi::OsString>,
+) -> Option<PathBuf> {
+    let request = validated_shell_request(arguments)?;
+    request.convert_to.is_none().then_some(request.path)
 }
 
 fn desktop_shell_open_from_args(
     arguments: impl IntoIterator<Item = std::ffi::OsString>,
 ) -> Option<DesktopShellOpen> {
-    let path = validated_shell_open_path(arguments)?;
-    let directory = path.is_dir();
-    Some(DesktopShellOpen { path, directory })
+    validated_shell_request(arguments)
 }
 
-fn enqueue_shell_open_path(pending: &Mutex<VecDeque<PathBuf>>, path: PathBuf) {
+fn enqueue_shell_request(pending: &Mutex<VecDeque<DesktopShellOpen>>, request: DesktopShellOpen) {
     if let Ok(mut pending) = pending.lock() {
         if pending.len() >= MAX_PENDING_SHELL_OPEN_PATHS {
             pending.pop_front();
         }
-        pending.push_back(path);
+        pending.push_back(request);
     }
+}
+
+#[cfg(test)]
+fn enqueue_shell_open_path(pending: &Mutex<VecDeque<DesktopShellOpen>>, path: PathBuf) {
+    enqueue_shell_request(
+        pending,
+        DesktopShellOpen {
+            path,
+            directory: false,
+            convert_to: None,
+        },
+    );
 }
 
 fn handle_second_instance(
     app: &tauri::AppHandle,
     arguments: Vec<String>,
-    shell_open_paths: &Mutex<VecDeque<PathBuf>>,
+    shell_open_paths: &Mutex<VecDeque<DesktopShellOpen>>,
 ) {
     if let Some(shell_open) =
         desktop_shell_open_from_args(arguments.into_iter().map(std::ffi::OsString::from))
     {
-        enqueue_shell_open_path(shell_open_paths, shell_open.path);
+        enqueue_shell_request(shell_open_paths, shell_open);
         let _ = app.emit("formatwright://shell-open-requested", ());
     }
     if let Some(window) = app.get_webview_window("main") {
@@ -1485,9 +1568,7 @@ fn handle_second_instance(
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)] // Tauri commands receive managed state through this extractor.
 fn get_desktop_shell_open(state: tauri::State<'_, DesktopState>) -> Option<DesktopShellOpen> {
-    let path = state.shell_open_paths.lock().ok()?.pop_front()?;
-    let directory = path.is_dir();
-    Some(DesktopShellOpen { path, directory })
+    state.shell_open_paths.lock().ok()?.pop_front()
 }
 
 fn report_for_export(mut report: ValidationReport, redact_paths: bool) -> ValidationReport {
@@ -1997,13 +2078,11 @@ fn valid_engine_summary(verified: &VerifiedEnginePack) -> DesktopEnginePackSumma
         manifest_sha256: Some(verified.manifest_sha256.clone()),
         executable_names: verified.executables.keys().cloned().collect(),
         signature_present: verified.signature_present,
+        signature_trust: verified.signature_trust.clone(),
+        review_status: verified.review_status,
+        certification: verified.certification(),
         valid: true,
-        message: if verified.signature_present {
-            "Integrity verified; signature present but not yet trusted by a release keyring."
-                .to_owned()
-        } else {
-            "Integrity verified; unsigned pack remains unverified.".to_owned()
-        },
+        message: verified.provenance_message(),
     }
 }
 
@@ -2105,7 +2184,7 @@ fn recover_desktop_jobs(
 
 fn setup_desktop(
     app: &mut tauri::App,
-    shell_open_paths: Arc<Mutex<VecDeque<PathBuf>>>,
+    shell_open_paths: Arc<Mutex<VecDeque<DesktopShellOpen>>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let data_directory = app.path().app_data_dir()?;
     let resource_directory = app.path().resource_dir()?;
@@ -2155,9 +2234,8 @@ fn setup_desktop(
     let settings = ApplicationSettingsService::new(&settings_path)
         .read()
         .map_err(|error| Box::<dyn std::error::Error>::from(error.to_string()))?;
-    let shell_open_path = validated_shell_open_path(std::env::args_os());
-    if let Some(path) = shell_open_path {
-        enqueue_shell_open_path(&shell_open_paths, path);
+    if let Some(request) = validated_shell_request(std::env::args_os()) {
+        enqueue_shell_request(&shell_open_paths, request);
     }
     app.manage(DesktopState {
         store: Mutex::new(store),
@@ -2267,10 +2345,11 @@ mod tests {
         DESKTOP_JOB_PAGE_LIMIT, DesktopConversionRequest, DesktopOperationGate,
         MAX_PENDING_SHELL_OPEN_PATHS, acquire_active_operation, acquire_maintenance_operation,
         acquire_queue_window, apply_pending_restore, backup_path, bundled_manifest_paths,
-        desktop_job_page_limit, enqueue_shell_open_path, load_preset_library, pending_restore_path,
-        persist_preset_library, prepare_approved_desktop_conversion, recover_desktop_jobs,
-        report_for_export, requeue_job, run_queue_window_on_database, shell_open_path_from_args,
-        stage_pending_restore, validated_shell_open_path, write_desktop_export_noclobber,
+        desktop_job_page_limit, enqueue_shell_open_path, load_preset_library,
+        parse_shell_invocation, pending_restore_path, persist_preset_library,
+        prepare_approved_desktop_conversion, recover_desktop_jobs, report_for_export, requeue_job,
+        run_queue_window_on_database, shell_open_path_from_args, stage_pending_restore,
+        validated_shell_open_path, validated_shell_request, write_desktop_export_noclobber,
     };
 
     fn plan(output_path: PathBuf) -> Plan {
@@ -2726,10 +2805,68 @@ mod tests {
         }
         let pending = pending.into_inner().expect("pending paths");
         assert_eq!(pending.len(), MAX_PENDING_SHELL_OPEN_PATHS);
-        assert_eq!(pending.front(), Some(&PathBuf::from("1")));
         assert_eq!(
-            pending.back(),
-            Some(&PathBuf::from(MAX_PENDING_SHELL_OPEN_PATHS.to_string()))
+            pending.front().map(|request| request.path.clone()),
+            Some(PathBuf::from("1"))
+        );
+        assert_eq!(
+            pending.back().map(|request| request.path.clone()),
+            Some(PathBuf::from(MAX_PENDING_SHELL_OPEN_PATHS.to_string()))
+        );
+    }
+
+    #[test]
+    fn shell_convert_requires_an_allowed_target_and_a_real_file() {
+        let suite = tempdir().expect("suite");
+        let input = suite.path().join("manual.pdf");
+        fs::write(&input, b"%PDF-1.4").expect("input");
+        let parsed = parse_shell_invocation([
+            "formatwright-desktop.exe",
+            "--shell-convert",
+            "--to",
+            "PNG",
+            input.to_str().expect("utf8"),
+        ]);
+        assert_eq!(parsed, Some((input.clone(), Some("png".to_owned()))));
+        assert_eq!(
+            parse_shell_invocation([
+                "formatwright-desktop.exe",
+                "--shell-convert",
+                input.to_str().expect("utf8"),
+                "--to",
+                "jpeg",
+            ]),
+            Some((input.clone(), Some("jpg".to_owned())))
+        );
+        assert_eq!(
+            parse_shell_invocation([
+                "formatwright-desktop.exe",
+                "--shell-convert",
+                "--to",
+                "exe",
+                input.to_str().expect("utf8"),
+            ]),
+            None
+        );
+        let request = validated_shell_request([
+            "formatwright-desktop.exe".into(),
+            "--shell-convert".into(),
+            "--to".into(),
+            "png".into(),
+            input.clone().into_os_string(),
+        ])
+        .expect("valid convert request");
+        assert_eq!(request.convert_to.as_deref(), Some("png"));
+        assert!(!request.directory);
+        assert_eq!(
+            validated_shell_request([
+                "formatwright-desktop.exe".into(),
+                "--shell-convert".into(),
+                "--to".into(),
+                "png".into(),
+                suite.path().as_os_str().to_os_string(),
+            ]),
+            None
         );
     }
 

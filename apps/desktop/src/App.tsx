@@ -6,14 +6,18 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   JOB_PAGE_SIZE,
+  certificationLabel,
   elapsedProgressSeconds,
   engineRecoveryNotices,
   engineRecoveryState,
+  inputHasRunnableFamily,
   isDirectoryOutput,
   jobListAriaAttributes,
   latestJobProgress,
+  packBadgeKind,
   parseDesktopError,
   presetFieldChangeInvalidatesPreview,
+  qualityFieldApplies,
   progressForJob,
   recommendedTargets,
   suggestedOutput,
@@ -88,7 +92,7 @@ type JobRecord = {
   updated_unix_ms: number;
 };
 
-type ShellOpen = { path: string; directory: boolean };
+type ShellOpen = { path: string; directory: boolean; convert_to?: string | null };
 
 type JobQueryPage = {
   jobs: JobRecord[];
@@ -204,7 +208,13 @@ type FolderQueueResult = {
 type DoctorReport = {
   engines: Record<
     string,
-    { available: boolean; message: string; identity?: { version: string; certification: string } }
+    {
+      available: boolean;
+      message: string;
+      identity?: { version: string; certification: string };
+      signature_trust?: { status: string; key_id?: string } | null;
+      review_status?: string | null;
+    }
   >;
 };
 
@@ -228,6 +238,9 @@ type EnginePackSummary = {
   manifest_sha256?: string;
   executable_names: string[];
   signature_present: boolean;
+  signature_trust?: { status: string; key_id?: string } | null;
+  review_status?: string | null;
+  certification?: string | null;
   valid: boolean;
   message: string;
 };
@@ -380,6 +393,8 @@ export default function App() {
   const jobQuery = useRef({ batchId: "", state: "", search: "", offset: 0 });
   const jobRefreshSequence = useRef(0);
   const mounted = useRef(true);
+  const pendingShellConvert = useRef<string | null>(null);
+  const shellConvertRunning = useRef(false);
   const copy = messages[language];
   jobQuery.current = {
     batchId: jobBatchId,
@@ -553,10 +568,10 @@ export default function App() {
   }, [inputPath]);
 
   function selectInput(path: string) {
-    const recommended = recommendedTargets(path)[0];
+    const recommended = recommendedTargets(path)[0] ?? "";
     setInputPath(path);
     setTarget(recommended);
-    setOutputPath(suggestedOutput(path, recommended));
+    setOutputPath(recommended ? suggestedOutput(path, recommended) : "");
     setPreview(null);
     setReport(null);
     setError(null);
@@ -564,12 +579,20 @@ export default function App() {
 
   function applyShellOpen(shellOpen: ShellOpen) {
     if (shellOpen.directory) {
+      pendingShellConvert.current = null;
       setFolderInputRoot(shellOpen.path);
       setFolderPreview(null);
       setConvertMode("folder");
     } else {
       selectInput(shellOpen.path);
       setConvertMode("file");
+      if (shellOpen.convert_to) {
+        setTarget(shellOpen.convert_to);
+        setOutputPath(suggestedOutput(shellOpen.path, shellOpen.convert_to));
+        pendingShellConvert.current = shellOpen.convert_to;
+      } else {
+        pendingShellConvert.current = null;
+      }
     }
     setTab("convert");
   }
@@ -721,6 +744,46 @@ export default function App() {
       setBusy(null);
     }
   }
+
+  useEffect(() => {
+    const wanted = pendingShellConvert.current;
+    if (!wanted || shellConvertRunning.current || capabilityBusy || busy !== null) return;
+    if (!inputPath || target !== wanted || !outputPath || !capabilities) return;
+    const route = capabilities.routes[wanted];
+    if (!route?.available) {
+      pendingShellConvert.current = null;
+      return;
+    }
+    shellConvertRunning.current = true;
+    pendingShellConvert.current = null;
+    void (async () => {
+      setBusy("plan");
+      setError(null);
+      try {
+        const nextPreview = await invoke<Preview>("preview_conversion", { request: request() });
+        if (!mounted.current) return;
+        setPreview(nextPreview);
+        setBusy("run");
+        const result = await invoke<{ job: JobRecord; report: ValidationReport }>(
+          "run_desktop_conversion",
+          { request: request(nextPreview.plan.plan_hash) },
+        );
+        if (!mounted.current) return;
+        setReport(result.report);
+        setActiveJobId(null);
+        setTab("reports");
+        await refreshJobs();
+      } catch (reason) {
+        if (mounted.current) {
+          setPreview(null);
+          setError(parseDesktopError(reason));
+        }
+      } finally {
+        shellConvertRunning.current = false;
+        if (mounted.current) setBusy(null);
+      }
+    })();
+  }, [inputPath, outputPath, target, capabilities, capabilityBusy, busy]);
 
   async function cancel() {
     if (activeJobId) await invoke("cancel_desktop_job", { jobId: activeJobId });
@@ -1281,8 +1344,9 @@ export default function App() {
   const normalizedTarget = target === "jpeg" ? "jpg" : target === "yml" ? "yaml" : target;
   const route = capabilities?.routes[normalizedTarget];
   const routeAvailable = !capabilities || route?.available === true;
-  const targetOptions = targetOptionViews(recommendations, capabilities ? capabilities.routes : null, convertMode === "file" ? "convert-file" : "convert-folder", copy.unavailable);
-  const presetTargetOptions = targetOptionViews(recommendations, capabilities ? capabilities.routes : null, "preset", copy.unavailable);
+  const unavailableLabels = { missing: copy.unavailable, unsupported: copy.unsupported };
+  const targetOptions = targetOptionViews(recommendations, capabilities ? capabilities.routes : null, convertMode === "file" ? "convert-file" : "convert-folder", unavailableLabels);
+  const presetTargetOptions = targetOptionViews(recommendations, capabilities ? capabilities.routes : null, "preset", unavailableLabels);
   const applyPresetField = (field: Parameters<typeof presetFieldChangeInvalidatesPreview>[0]) => {
     if (presetFieldChangeInvalidatesPreview(field)) setPreview(null);
   };
@@ -1364,14 +1428,14 @@ export default function App() {
               <label>{copy.target}<select value={target} onChange={(event) => changeTarget(event.target.value)} disabled={convertMode === "file" && capabilityBusy}>
                 {targetOptions.map((option) => <option key={option.value} value={option.value} disabled={option.disabled}>{option.label}</option>)}
               </select></label>
-              <label>{copy.quality}<input type="number" min="1" max="100" value={quality} onChange={(event) => { setQuality(event.target.value); setPreview(null); }} disabled={target === "png"} /></label>
+              {qualityFieldApplies(target) && <label>{copy.quality}<input type="number" min="1" max="100" value={quality} onChange={(event) => { setQuality(event.target.value); setPreview(null); }} /></label>}
               {expert && <label>{copy.width}<input type="number" min="1" max="16384" value={width} onChange={(event) => { setWidth(event.target.value); setPreview(null); }} /></label>}
               {expert && <label>{copy.dpi}<input type="number" min="36" max="600" value={dpi} onChange={(event) => { setDpi(event.target.value); setPreview(null); }} /></label>}
               {expert && <label>{copy.colorMode}<select value={colorMode} onChange={(event) => { setColorMode(event.target.value); setPreview(null); }}><option value="rgb">RGB</option><option value="gray">Gray</option></select></label>}
               {expert && <label className="checkbox-control"><input type="checkbox" checked={preserveAllStreams} onChange={(event) => { setPreserveAllStreams(event.target.checked); setPreview(null); }} />{copy.preserveAllStreams}</label>}
             </div>
 
-            {inputPath && (capabilityBusy ? <p className="capability-notice" role="status">{copy.capabilityLoading}</p> : route && !route.available ? <p className="capability-notice capability-blocked" role="status"><strong>{copy.routeUnavailable}</strong>{route.missing_engines.length > 0 ? ` ${copy.missingEngines}: ${route.missing_engines.join(", ")}.` : ` ${route.message}`}</p> : capabilities && !Object.values(capabilities.routes).some((candidate) => candidate.available) ? <p className="capability-notice capability-blocked" role="status">{copy.noAvailableTargets}</p> : null)}
+            {inputPath && (capabilityBusy ? <p className="capability-notice" role="status">{copy.capabilityLoading}</p> : route && !route.available ? <p className="capability-notice capability-blocked" role="status"><strong>{copy.routeUnavailable}</strong>{route.missing_engines.length > 0 ? ` ${copy.missingEngines}: ${route.missing_engines.join(", ")}.` : ` ${route.message}`}</p> : capabilities && !Object.values(capabilities.routes).some((candidate) => candidate.available) ? <p className="capability-notice capability-blocked" role="status">{inputHasRunnableFamily(capabilities.routes) ? copy.noAvailableTargets : copy.inputNotSupported}</p> : null)}
 
             <div className="preset-row" aria-label="Presets">
               <button type="button" disabled={capabilities ? !capabilities.routes.webp?.available : false} onClick={() => { changeTarget("webp"); setQuality("78"); }}>{copy.presetImage}</button>
@@ -1488,8 +1552,8 @@ export default function App() {
       {tab === "engines" && (
         <section className="page-card">
           <div className="page-heading"><div><p className="section-label">LOCAL INVENTORY</p><h1>{copy.doctor}</h1><p>{copy.doctorHint}</p></div><div className="heading-actions"><button className="secondary" type="button" disabled={engineBusy} onClick={importEnginePack}>{engineBusy ? copy.verifyingEnginePack : copy.importEnginePack}</button><button type="button" onClick={refreshEngines}>{copy.refresh}</button></div></div>
-          {!doctor ? <p className="empty">{copy.importHint}</p> : <div className="engine-grid">{Object.entries(doctor.engines).map(([name, health]) => <article key={name}><strong>{name}</strong><span className={`status ${health.available ? "status-completed" : "status-failed"}`}>{health.available ? `✓ ${copy.available}` : `× ${copy.unavailable}`}</span><small>{health.identity?.version ?? health.message}</small></article>)}</div>}
-          <div className="pack-section"><p className="section-label">{copy.importedPacks}</p>{enginePacks.length === 0 ? <p className="empty">{copy.noImportedPacks}</p> : <div className="pack-list">{enginePacks.map((pack) => <article key={pack.manifest_sha256 ?? pack.manifest_path}><div><strong>{pack.engine_id ?? copy.invalidPack} {pack.version ?? ""}</strong><small><bdi>{pack.manifest_path}</bdi></small><small>{pack.executable_names.join(", ") || pack.message}</small></div><div className="pack-status">{engineRecoveryState(recovery?.engine_recovery, pack.engine_id) === "fell-back" && <span className="status status-warning">{copy.engineRolledBackBadge}</span>}{engineRecoveryState(recovery?.engine_recovery, pack.engine_id) === "failed" && <span className="status status-failed">{copy.engineRecoveryFailedBadge}</span>}<span className={`status ${pack.valid ? "status-warning" : "status-failed"}`}>{pack.valid ? (pack.signature_present ? copy.signaturePending : copy.unverified) : copy.invalidPack}</span></div></article>)}</div>}</div>
+          {!doctor ? <p className="empty">{copy.importHint}</p> : <div className="engine-grid">{Object.entries(doctor.engines).map(([name, health]) => <article key={name}><strong>{name}</strong><span className={`status ${health.available ? "status-completed" : "status-failed"}`}>{health.available ? `✓ ${copy.available}` : `× ${copy.unavailable}`}</span><small>{health.identity?.version ?? health.message}</small>{health.identity && <small>{certificationLabel(health.identity.certification, copy)}</small>}</article>)}</div>}
+          <div className="pack-section"><p className="section-label">{copy.importedPacks}</p>{enginePacks.length === 0 ? <p className="empty">{copy.noImportedPacks}</p> : <div className="pack-list">{enginePacks.map((pack) => <article key={pack.manifest_sha256 ?? pack.manifest_path}><div><strong>{pack.engine_id ?? copy.invalidPack} {pack.version ?? ""}</strong><small><bdi>{pack.manifest_path}</bdi></small><small>{pack.executable_names.join(", ")}</small><small>{pack.valid ? packReviewText(pack, copy) : pack.message}</small></div><div className="pack-status">{engineRecoveryState(recovery?.engine_recovery, pack.engine_id) === "fell-back" && <span className="status status-warning">{copy.engineRolledBackBadge}</span>}{engineRecoveryState(recovery?.engine_recovery, pack.engine_id) === "failed" && <span className="status status-failed">{copy.engineRecoveryFailedBadge}</span>}<span className={`status ${packBadgeStatusClass(packBadgeKind(pack))}`}>{packBadgeText(pack, copy)}</span></div></article>)}</div>}</div>
         </section>
       )}
 
@@ -1536,7 +1600,7 @@ export default function App() {
 }
 
 function PlanView({ preview, expert, copy }: { preview: Preview; expert: boolean; copy: (typeof messages)[Language] }) {
-  return <section className="plan-card" aria-live="polite"><div className="plan-heading"><div><p className="section-label">{copy.detected}</p><h2>{preview.probe.format.id.toUpperCase()} → {preview.plan.target_format.toUpperCase()}</h2></div><span className={`loss loss-${preview.plan.steps.some((step) => step.loss_class === "lossy") ? "lossy" : "safe"}`}>{preview.plan.steps.map((step) => step.loss_class).join(" · ")}</span></div><div className="change-grid"><ChangeList title={copy.preserved} values={preview.plan.changes.preserved} symbol="✓" /><ChangeList title={copy.changed} values={preview.plan.changes.changed} symbol="△" /><ChangeList title={copy.dropped} values={preview.plan.changes.dropped} symbol="−" /><ChangeList title={copy.unknown} values={preview.plan.changes.unknown} symbol="?" /></div><h3>{copy.engineSteps}</h3><ol className="steps">{preview.plan.steps.map((step) => <li key={step.step_id}><div><strong>{step.engine.engine_id}</strong><small>{step.operation} · {step.engine.certification}</small></div><code>{step.capability_id}</code>{expert && <pre>{JSON.stringify(step.arguments, null, 2)}</pre>}</li>)}</ol>{expert && <p className="typed-note">{copy.commandBoundary}<br /><code>{preview.plan.plan_hash}</code></p>}</section>;
+  return <section className="plan-card" aria-live="polite"><div className="plan-heading"><div><p className="section-label">{copy.detected}</p><h2>{preview.probe.format.id.toUpperCase()} → {preview.plan.target_format.toUpperCase()}</h2></div><span className={`loss loss-${preview.plan.steps.some((step) => step.loss_class === "lossy") ? "lossy" : "safe"}`}>{preview.plan.steps.map((step) => step.loss_class).join(" · ")}</span></div><div className="change-grid"><ChangeList title={copy.preserved} values={preview.plan.changes.preserved} symbol="✓" /><ChangeList title={copy.changed} values={preview.plan.changes.changed} symbol="△" /><ChangeList title={copy.dropped} values={preview.plan.changes.dropped} symbol="−" /><ChangeList title={copy.unknown} values={preview.plan.changes.unknown} symbol="?" /></div><h3>{copy.engineSteps}</h3><ol className="steps">{preview.plan.steps.map((step) => <li key={step.step_id}><div><strong>{step.engine.engine_id}</strong><small>{step.operation} · {certificationLabel(step.engine.certification, copy)}</small></div><code>{step.capability_id}</code>{expert && <pre>{JSON.stringify(step.arguments, null, 2)}</pre>}</li>)}</ol>{expert && <p className="typed-note">{copy.commandBoundary}<br /><code>{preview.plan.plan_hash}</code></p>}</section>;
 }
 
 function ChangeList({ title, values, symbol }: { title: string; values: string[]; symbol: string }) {
@@ -1546,7 +1610,46 @@ function ChangeList({ title, values, symbol }: { title: string; values: string[]
 function ReportView({ report, copy }: { report: ValidationReport; copy: (typeof messages)[Language] }) {
   const passed = report.checks.filter((check) => check.required && check.status === "pass").length;
   const required = report.checks.filter((check) => check.required).length;
-  return <div className="report-body"><div className="report-summary"><div><span>{copy.requiredChecks}</span><strong>{passed}/{required}</strong></div><div><span>{copy.openPathHint}</span><strong><bdi>{report.output.display_path ?? "—"}</bdi></strong></div></div><div className="check-list">{report.checks.map((check) => <article key={check.code}><span aria-hidden="true">{check.status === "pass" ? "✓" : check.status === "fail" ? "×" : "!"}</span><div><strong>{check.code}</strong><small>{check.message}</small></div><em>{check.status}</em></article>)}</div></div>;
+  return <div className="report-body"><div className="report-summary"><div><span>{copy.requiredChecks}</span><strong>{passed}/{required}</strong></div><div><span>{copy.openPathHint}</span><strong><bdi>{report.output.display_path ?? "—"}</bdi></strong></div></div>{report.engines.length > 0 && <div className="engine-used"><p className="section-label">{copy.usedEngines}</p><ul>{report.engines.map((engine) => <li key={`${engine.engine_id}-${engine.version}`}><strong>{engine.engine_id}</strong> {engine.version} · {certificationLabel(engine.certification, copy)}</li>)}</ul></div>}<div className="check-list">{report.checks.map((check) => <article key={check.code}><span aria-hidden="true">{check.status === "pass" ? "✓" : check.status === "fail" ? "×" : "!"}</span><div><strong>{check.code}</strong><small>{check.message}</small></div><em>{check.status}</em></article>)}</div></div>;
+}
+
+function packBadgeStatusClass(kind: ReturnType<typeof packBadgeKind>) {
+  switch (kind) {
+    case "certified":
+      return "status-completed";
+    case "trusted-incomplete":
+    case "unsigned":
+      return "status-warning";
+    case "untrusted":
+    case "invalid":
+      return "status-failed";
+  }
+}
+
+function packReviewText(pack: EnginePackSummary, copy: (typeof messages)[Language]) {
+  switch (pack.review_status) {
+    case "complete":
+      return copy.reviewComplete;
+    case "incomplete":
+      return copy.reviewIncomplete;
+    default:
+      return copy.reviewMissing;
+  }
+}
+
+function packBadgeText(pack: EnginePackSummary, copy: (typeof messages)[Language]) {
+  switch (packBadgeKind(pack)) {
+    case "certified":
+      return copy.certified;
+    case "trusted-incomplete":
+      return copy.signatureTrustedIncomplete;
+    case "untrusted":
+      return copy.signatureUntrusted;
+    case "unsigned":
+      return pack.signature_present ? copy.signaturePending : copy.unverified;
+    case "invalid":
+      return copy.invalidPack;
+  }
 }
 
 function formatBytes(bytes: number) {
