@@ -4,6 +4,8 @@
 - 版本：0.7
 - 更新：2026-08-13
 - 产品范围与发布门槛来源：[`SPEC_PLAN.md`](../SPEC_PLAN.md)
+- VOC 驱动的开发顺序（拖放 + 右键，不拼格式数）：[`VOC_BACKLOG.md`](VOC_BACKLOG.md)
+- Windows 日常双入口规格：[`specs/WINDOWS_DAILY_USE_SPEC_PLAN.md`](specs/WINDOWS_DAILY_USE_SPEC_PLAN.md)
 - 逐需求证据来源：[`docs/specs/TRACEABILITY.md`](specs/TRACEABILITY.md)
 - 活跃缺陷与关闭证据：[`docs/DEFECT_REGISTER.md`](DEFECT_REGISTER.md)
 
@@ -189,7 +191,7 @@
 - [ ] **Windows 开箱可用纵向闭环**：确定版本、内嵌资源、本机首次启动安装和 Core/PDF/Media E2E 已完成；仍须在没有 FFmpeg、Poppler、LibreOffice、Pandoc、libvips 和开发缓存的离线干净虚拟机中通过安装后 UI 转换，并完成 Starter 供应链认证。
 - [x] **生产引擎解析与能力门控（实现）**：Release 只运行已激活 pack 中的精确二进制路径，禁止 ambient `PATH`、`.cmd`、`.bat`；UI/Planner/Backend 只展示和接受当前 capability snapshot 确实可执行的路线。R-009 关闭仍等待 Gate U 干净机证据。
 - [ ] **冻结产品决策**：名称/商标与域名、最低 OS、签名账户与预算、官方引擎包选择策略、PDF 默认引擎、测试语料许可证、AGPL 服务仓库边界。
-- [ ] **可信引擎供应链**：每包确定性文件 SBOM、来源记录、运行时验证、可信签名验证（ADR-0011：canonical bytes、Ed25519、版本化 keyring、六态判定、CLI fail-closed，已用真实 PDF 包和第三方签名器交叉验证）与多版本注册表（启动自动回滚、显式失败上报、手动回滚 + 未授权降级拦截）已实现；仍需正式 release 密钥与签名仪式、认证状态贯通 Doctor/Planner/UI/报告、完整 transitive component 归属/源码义务/许可证与专利审查和认证记录。
+- [ ] **可信引擎供应链**：每包确定性文件 SBOM、来源记录、运行时验证、可信签名验证（ADR-0011：canonical bytes、Ed25519、版本化 keyring、六态判定、CLI fail-closed，已用真实 PDF 包和第三方签名器交叉验证）与多版本注册表（启动自动回滚、显式失败上报、手动回滚 + 未授权降级拦截）已实现；Doctor / 激活路径 / Plan / ValidationReport 已共用“Trusted + 完成审查才 Certified”推导，嵌入 keyring 目前为空，因此出厂 Starter 诚实保持 Unsigned/Unverified。仍需正式 release 密钥与签名仪式、完整 transitive component 归属/源码义务/许可证与专利审查和认证记录。
 - [ ] **完整验证闭环**：每个对外支持的工作流都有类型专用必检项；Unknown 不计为 Pass；完成 Office/PDF 视觉差异阈值校准。
 - [ ] **三平台真实认证**：Windows 11、macOS arm64（及 x64 构建）、Ubuntu LTS 跑黄金语料、取消/进程树、Unicode/长路径、文件系统和离线门禁。
 - [ ] **OS 强制隔离**：Windows/macOS/Linux 上用可验证的系统机制阻断引擎网络与越权文件访问，而不只做套接字观测。
@@ -563,10 +565,10 @@ API 不直接接受宿主任意路径。请求引用预先授权的 workspace/ro
 
 - [ ] 冻结 Windows Starter pack：Core + PDF + Media；完成每个二进制与运行库的再分发/许可证审查，无法合法捆绑的能力不得进入 Starter 宣传。
 - [ ] 建立确定性 pack builder/stager：manifest、SHA-256、来源、许可证、版本锁、每包 SPDX 文件清单及 Tauri/NSIS 内嵌已完成；完整 transitive component 归属、对应源码机制和许可证/专利审查仍待完成。
-- [ ] 实现版本化 pack store、原子 install/activate/rollback：install/activate 与 Release-only 精确 `EngineLocator` 已完成，ambient `PATH`/脚本/override 已关闭；多版本 rollback 与故障矩阵仍待完成。
+- [x] 实现版本化 pack store、原子 install/activate/rollback：install/activate 与 Release-only 精确 `EngineLocator` 已完成，ambient `PATH`/脚本/override 已关闭；多版本 rollback、半安装忽略、失败升级不移动 active、兼容版本拒绝已有回归。
 - [x] 让 Doctor、Planner、推荐格式、目标选择器和执行后端消费同一 capability snapshot；不可运行路线禁用并指出缺失 pack。
 - [ ] 重建 unsigned Windows RC，在完全没有相关系统工具和 Codex 开发环境的干净 VM 中离线安装，完成 JSON→YAML、PDF→PNG/JPG 和一条视频/音频转换，核对报告、输出和零网络。
-- [ ] 为缺包、hash 篡改、版本不兼容、撤销、半安装、升级失败回滚和恶意 PATH 注入建立自动化负向测试。
+- [x] 为缺包、hash 篡改、版本不兼容、撤销、半安装、升级失败回滚和恶意 PATH 注入建立自动化负向测试。
 
 退出：关闭 R-008/R-009；用户无需安装开发工具、修改 PATH 或理解引擎细节即可完成 Starter 工作流；UI 不再推荐任何后端不能执行的路线。
 
