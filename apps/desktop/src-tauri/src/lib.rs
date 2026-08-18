@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 mod queue_bridge;
+mod shell_convert;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::OpenOptions;
@@ -24,6 +25,10 @@ use formatwright_core::{
     capability_snapshot_for_input, cleanup_staged_output, prepare_conversion,
 };
 use queue_bridge::{DEFAULT_BATCH_JOBS, DEFAULT_BENCHMARK_JOBS, QueueBatchIter};
+use shell_convert::{
+    CONVERT_MERGE_QUIET, DesktopShellOpenBatch, ShellConvertCoordinator, plan_convert_outputs,
+    should_run_immediately, surviving_convert_items,
+};
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager};
 use tempfile::TempPath;
@@ -49,6 +54,7 @@ struct DesktopState {
     folder_previews: Mutex<HashMap<Uuid, DesktopFolderPreviewCache>>,
     revalidations: Mutex<HashSet<Uuid>>,
     shell_open_paths: Arc<Mutex<VecDeque<DesktopShellOpen>>>,
+    convert_batches: Arc<Mutex<ShellConvertCoordinator>>,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -118,6 +124,12 @@ struct DesktopShellOpen {
     path: PathBuf,
     directory: bool,
     convert_to: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+struct DesktopDropClassification {
+    kind: String,
+    path: Option<PathBuf>,
 }
 
 const ALLOWED_SHELL_CONVERT_TARGETS: &[&str] = &[
@@ -338,6 +350,18 @@ struct DesktopPreview {
 struct DesktopRunResult {
     job: JobRecord,
     report: ValidationReport,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct DesktopIngestResult {
+    ran_immediately: bool,
+    batch_id: Option<Uuid>,
+    queued: usize,
+    job: Option<JobRecord>,
+    report: Option<ValidationReport>,
+    skipped_conflict: usize,
+    skipped_disk: usize,
+    rejected: usize,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -575,6 +599,191 @@ async fn queue_desktop_conversion(
     };
     let _ = window.emit("formatwright://job-updated", &job);
     Ok(job)
+}
+
+fn empty_ingest_result(skipped_conflict: usize, skipped_disk: usize, rejected: usize) -> DesktopIngestResult {
+    DesktopIngestResult {
+        ran_immediately: false,
+        batch_id: None,
+        queued: 0,
+        job: None,
+        report: None,
+        skipped_conflict,
+        skipped_disk,
+        rejected,
+    }
+}
+
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+async fn ingest_shell_convert(
+    store: &Mutex<SqliteJobStore>,
+    job_database_path: &Path,
+    reports_directory: &Path,
+    queue_control: &Mutex<Option<QueueWindowControl>>,
+    cancellations: &Mutex<HashMap<Uuid, CancellationToken>>,
+    window: Option<&tauri::WebviewWindow>,
+    paths: Vec<PathBuf>,
+    target: String,
+) -> Result<DesktopIngestResult, String> {
+    let planned = plan_convert_outputs(&paths, &target);
+    let skipped_conflict = planned.iter().filter(|item| item.skipped_conflict).count();
+    let rejected_files = planned.iter().filter(|item| item.rejected).count();
+    let mut requests = Vec::new();
+    let mut rejected = rejected_files;
+    for item in surviving_convert_items(&planned) {
+        let plan_request = PlanRequest {
+            target_format: target.clone(),
+            output_path: Some(item.output.clone()),
+            preserve_all_streams: true,
+            ..PlanRequest::default()
+        };
+        match prepare_conversion(&item.input, &plan_request).await {
+            Ok((_probe, plan, _)) => requests.push(JobCreateRequest {
+                input_path: item.input.clone(),
+                output_path: item.output.clone(),
+                plan,
+            }),
+            Err(_) => rejected += 1,
+        }
+    }
+    let mut skipped_disk = 0;
+    if !requests.is_empty() {
+        let mut kept = Vec::new();
+        let mut by_parent: HashMap<PathBuf, Vec<JobCreateRequest>> = HashMap::new();
+        for request in requests {
+            let parent = request
+                .output_path
+                .parent()
+                .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
+            by_parent.entry(parent).or_default().push(request);
+        }
+        for (parent, group) in by_parent {
+            match FolderBatchService::disk_budget(&parent, &group, 4) {
+                Ok(budget) if budget.sufficient => kept.extend(group),
+                _ => skipped_disk += group.len(),
+            }
+        }
+        requests = kept;
+    }
+    if requests.is_empty() {
+        return Ok(empty_ingest_result(skipped_conflict, skipped_disk, rejected));
+    }
+    let queue_busy = queue_control
+        .lock()
+        .map_or(true, |guard| guard.is_some());
+    if should_run_immediately(paths.len(), queue_busy) && requests.len() == 1 {
+        let request = requests.remove(0);
+        let prepared = prepare_conversion(
+            &request.input_path,
+            &PlanRequest {
+                target_format: target,
+                output_path: Some(request.output_path.clone()),
+                preserve_all_streams: true,
+                ..PlanRequest::default()
+            },
+        )
+        .await
+        .map_err(serialize_error)?;
+        formatwright_core::ensure_plan_approved(&prepared.1, Some(prepared.1.plan_hash.as_str()))
+            .map_err(serialize_error)?;
+        let cancellation = CancellationToken::new();
+        let mut execution_store =
+            SqliteJobStore::open(job_database_path).map_err(serialize_error)?;
+        let result = ConversionService::run_prepared(
+            &mut execution_store,
+            &ReportService::new(reports_directory),
+            &prepared.0,
+            &prepared.1,
+            &prepared.2,
+            &prepared.1.plan_hash,
+            cancellation.clone(),
+            |job| {
+                if job.state == JobState::Running
+                    && let Ok(mut tokens) = cancellations.lock()
+                {
+                    tokens.insert(job.id, cancellation.clone());
+                }
+                if let Some(window) = window {
+                    let _ = window.emit("formatwright://job-updated", job);
+                }
+            },
+        )
+        .await
+        .map_err(serialize_error)?;
+        if let Ok(mut tokens) = cancellations.lock() {
+            tokens.remove(&result.job.id);
+        }
+        return Ok(DesktopIngestResult {
+            ran_immediately: true,
+            batch_id: None,
+            queued: 0,
+            job: Some(result.job),
+            report: Some(result.report),
+            skipped_conflict,
+            skipped_disk,
+            rejected,
+        });
+    }
+    let batch = {
+        let mut store = lock(store)?;
+        store
+            .create_queued_batch(
+                &format!("Explorer: {} files → {target}", requests.len()),
+                &requests,
+            )
+            .map_err(serialize_error)?
+    };
+    if let Some(window) = window {
+        let _ = window.emit("formatwright://job-updated", ());
+    }
+    Ok(DesktopIngestResult {
+        ran_immediately: false,
+        batch_id: Some(batch.id),
+        queued: requests.len(),
+        job: None,
+        report: None,
+        skipped_conflict,
+        skipped_disk,
+        rejected,
+    })
+}
+
+#[tauri::command]
+async fn ingest_shell_convert_paths(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, DesktopState>,
+    paths: Vec<PathBuf>,
+    target: String,
+) -> Result<DesktopIngestResult, String> {
+    ingest_shell_convert(
+        &state.store,
+        &state.job_database_path,
+        &state.reports_directory,
+        &state.queue_control,
+        &state.cancellations,
+        Some(&window),
+        paths,
+        target,
+    )
+    .await
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+fn take_desktop_shell_convert_batch(
+    state: tauri::State<'_, DesktopState>,
+) -> Option<DesktopShellOpenBatch> {
+    state.convert_batches.lock().ok()?.take_ready()
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+fn desktop_queue_window_busy(state: tauri::State<'_, DesktopState>) -> bool {
+    state
+        .queue_control
+        .lock()
+        .ok()
+        .is_some_and(|guard| guard.is_some())
 }
 
 #[tauri::command]
@@ -1472,44 +1681,104 @@ where
     convert_to.is_none().then_some(path)
 }
 
+fn path_is_local_absolute(path: &Path) -> bool {
+    if !path.is_absolute() {
+        return false;
+    }
+    #[cfg(windows)]
+    {
+        matches!(
+            path.components().next(),
+            Some(std::path::Component::Prefix(prefix))
+                if matches!(
+                    prefix.kind(),
+                    std::path::Prefix::Disk(_) | std::path::Prefix::VerbatimDisk(_)
+                )
+        )
+    }
+    #[cfg(not(windows))]
+    {
+        true
+    }
+}
+
+fn canonical_is_local_disk(path: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        matches!(
+            path.components().next(),
+            Some(std::path::Component::Prefix(prefix))
+                if matches!(prefix.kind(), std::path::Prefix::VerbatimDisk(_))
+        )
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+        true
+    }
+}
+
+fn classify_local_absolute_path(requested: &Path) -> DesktopDropClassification {
+    if !path_is_local_absolute(requested) {
+        return DesktopDropClassification {
+            kind: "rejected".to_owned(),
+            path: None,
+        };
+    }
+    let Ok(canonical) = requested.canonicalize() else {
+        return DesktopDropClassification {
+            kind: "rejected".to_owned(),
+            path: None,
+        };
+    };
+    if !canonical_is_local_disk(&canonical) {
+        return DesktopDropClassification {
+            kind: "rejected".to_owned(),
+            path: None,
+        };
+    }
+    if canonical.is_file() {
+        return DesktopDropClassification {
+            kind: "file".to_owned(),
+            path: Some(requested.to_path_buf()),
+        };
+    }
+    if canonical.is_dir() {
+        return DesktopDropClassification {
+            kind: "directory".to_owned(),
+            path: Some(requested.to_path_buf()),
+        };
+    }
+    DesktopDropClassification {
+        kind: "rejected".to_owned(),
+        path: None,
+    }
+}
+
 fn validated_shell_request(
     arguments: impl IntoIterator<Item = std::ffi::OsString>,
 ) -> Option<DesktopShellOpen> {
     let (requested, convert_to) = parse_shell_invocation(arguments)?;
-    if !requested.is_absolute() {
-        return None;
+    let classified = classify_local_absolute_path(&requested);
+    match classified.kind.as_str() {
+        "file" => Some(DesktopShellOpen {
+            path: requested,
+            directory: false,
+            convert_to,
+        }),
+        "directory" if convert_to.is_none() => Some(DesktopShellOpen {
+            path: requested,
+            directory: true,
+            convert_to: None,
+        }),
+        _ => None,
     }
-    #[cfg(windows)]
-    if !matches!(
-        requested.components().next(),
-        Some(std::path::Component::Prefix(prefix))
-            if matches!(
-                prefix.kind(),
-                std::path::Prefix::Disk(_) | std::path::Prefix::VerbatimDisk(_)
-            )
-    ) {
-        return None;
-    }
-    let canonical = requested.canonicalize().ok()?;
-    if convert_to.is_some() && !canonical.is_file() {
-        return None;
-    }
-    if !canonical.is_file() && !canonical.is_dir() {
-        return None;
-    }
-    #[cfg(windows)]
-    if !matches!(
-        canonical.components().next(),
-        Some(std::path::Component::Prefix(prefix))
-            if matches!(prefix.kind(), std::path::Prefix::VerbatimDisk(_))
-    ) {
-        return None;
-    }
-    Some(DesktopShellOpen {
-        path: requested,
-        directory: canonical.is_dir(),
-        convert_to,
-    })
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)] // Tauri commands receive owned IPC values.
+fn classify_desktop_drop_path(path: PathBuf) -> DesktopDropClassification {
+    classify_local_absolute_path(&path)
 }
 
 #[cfg(test)]
@@ -1547,16 +1816,56 @@ fn enqueue_shell_open_path(pending: &Mutex<VecDeque<DesktopShellOpen>>, path: Pa
     );
 }
 
+fn schedule_convert_quiet_flush(
+    app: tauri::AppHandle,
+    coordinator: Arc<Mutex<ShellConvertCoordinator>>,
+    generation: u64,
+) {
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(CONVERT_MERGE_QUIET).await;
+        let flushed = coordinator.lock().ok().is_some_and(|mut guard| {
+            guard.generation == generation && guard.flush_quiet().is_some()
+        });
+        if flushed {
+            let _ = app.emit("formatwright://shell-convert-batch", ());
+        }
+    });
+}
+
+fn accept_desktop_shell_request(
+    app: &tauri::AppHandle,
+    shell_open_paths: &Mutex<VecDeque<DesktopShellOpen>>,
+    convert_batches: &Arc<Mutex<ShellConvertCoordinator>>,
+    request: DesktopShellOpen,
+) {
+    if let Some(target) = request.convert_to.clone() {
+        let (outcome, generation) = {
+            let Ok(mut coordinator) = convert_batches.lock() else {
+                return;
+            };
+            let outcome = coordinator.push(target, request.path);
+            (outcome, coordinator.generation)
+        };
+        if outcome.flushed_ready {
+            let _ = app.emit("formatwright://shell-convert-batch", ());
+        }
+        schedule_convert_quiet_flush(app.clone(), Arc::clone(convert_batches), generation);
+        return;
+    }
+    enqueue_shell_request(shell_open_paths, request);
+    let _ = app.emit("formatwright://shell-open-requested", ());
+}
+
 fn handle_second_instance(
     app: &tauri::AppHandle,
     arguments: Vec<String>,
     shell_open_paths: &Mutex<VecDeque<DesktopShellOpen>>,
+    convert_batches: &Arc<Mutex<ShellConvertCoordinator>>,
 ) {
     if let Some(shell_open) =
         desktop_shell_open_from_args(arguments.into_iter().map(std::ffi::OsString::from))
     {
-        enqueue_shell_request(shell_open_paths, shell_open);
-        let _ = app.emit("formatwright://shell-open-requested", ());
+        accept_desktop_shell_request(app, shell_open_paths, convert_batches, shell_open);
     }
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
@@ -1568,7 +1877,38 @@ fn handle_second_instance(
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)] // Tauri commands receive managed state through this extractor.
 fn get_desktop_shell_open(state: tauri::State<'_, DesktopState>) -> Option<DesktopShellOpen> {
-    state.shell_open_paths.lock().ok()?.pop_front()
+    let mut pending = state.shell_open_paths.lock().ok()?;
+    while let Some(request) = pending.pop_front() {
+        if request.convert_to.is_none() {
+            return Some(request);
+        }
+    }
+    None
+}
+
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value, clippy::unnecessary_wraps)]
+fn show_desktop_toast(app: tauri::AppHandle, title: String, body: String) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        let escaped_title = title.replace('\'', "''");
+        let escaped_body = body.replace('\'', "''");
+        let script = format!(
+            "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null; $template = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02); $text = $template.GetElementsByTagName('text'); $text.Item(0).AppendChild($template.CreateTextNode('{escaped_title}')) > $null; $text.Item(1).AppendChild($template.CreateTextNode('{escaped_body}')) > $null; $toast = [Windows.UI.Notifications.ToastNotification]::new($template); [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('FormatWright').Show($toast)"
+        );
+        let _ = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-Command", &script])
+            .status();
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.show();
+        }
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (app, title, body);
+        Ok(())
+    }
 }
 
 fn report_for_export(mut report: ValidationReport, redact_paths: bool) -> ValidationReport {
@@ -2185,6 +2525,7 @@ fn recover_desktop_jobs(
 fn setup_desktop(
     app: &mut tauri::App,
     shell_open_paths: Arc<Mutex<VecDeque<DesktopShellOpen>>>,
+    convert_batches: Arc<Mutex<ShellConvertCoordinator>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let data_directory = app.path().app_data_dir()?;
     let resource_directory = app.path().resource_dir()?;
@@ -2235,7 +2576,12 @@ fn setup_desktop(
         .read()
         .map_err(|error| Box::<dyn std::error::Error>::from(error.to_string()))?;
     if let Some(request) = validated_shell_request(std::env::args_os()) {
-        enqueue_shell_request(&shell_open_paths, request);
+        accept_desktop_shell_request(
+            app.handle(),
+            &shell_open_paths,
+            &convert_batches,
+            request,
+        );
     }
     app.manage(DesktopState {
         store: Mutex::new(store),
@@ -2254,6 +2600,7 @@ fn setup_desktop(
         folder_previews: Mutex::new(HashMap::new()),
         revalidations: Mutex::new(HashSet::new()),
         shell_open_paths,
+        convert_batches,
     });
     Ok(())
 }
@@ -2267,14 +2614,23 @@ fn setup_desktop(
 pub fn run() {
     let shell_open_paths = Arc::new(Mutex::new(VecDeque::new()));
     let forwarded_shell_open_paths = Arc::clone(&shell_open_paths);
+    let convert_batches = Arc::new(Mutex::new(ShellConvertCoordinator::new()));
+    let forwarded_convert_batches = Arc::clone(&convert_batches);
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(
             move |app, arguments, _working_directory| {
-                handle_second_instance(app, arguments, &forwarded_shell_open_paths);
+                handle_second_instance(
+                    app,
+                    arguments,
+                    &forwarded_shell_open_paths,
+                    &forwarded_convert_batches,
+                );
             },
         ))
         .plugin(tauri_plugin_dialog::init())
-        .setup(move |app| setup_desktop(app, Arc::clone(&shell_open_paths)))
+        .setup(move |app| {
+            setup_desktop(app, Arc::clone(&shell_open_paths), Arc::clone(&convert_batches))
+        })
         .invoke_handler(tauri::generate_handler![
             run_queue_bridge_benchmark,
             desktop_doctor,
@@ -2291,6 +2647,11 @@ pub fn run() {
             cancel_desktop_queue_window,
             cancel_desktop_job,
             get_desktop_shell_open,
+            classify_desktop_drop_path,
+            take_desktop_shell_convert_batch,
+            desktop_queue_window_busy,
+            ingest_shell_convert_paths,
+            show_desktop_toast,
             requeue_desktop_job,
             cleanup_desktop_job_staging,
             list_desktop_jobs,
@@ -2327,7 +2688,7 @@ mod tests {
     use std::fs;
     use std::fs::OpenOptions;
     use std::io::Write;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::sync::mpsc;
     use std::time::Duration;
 
@@ -2345,8 +2706,9 @@ mod tests {
         DESKTOP_JOB_PAGE_LIMIT, DesktopConversionRequest, DesktopOperationGate,
         MAX_PENDING_SHELL_OPEN_PATHS, acquire_active_operation, acquire_maintenance_operation,
         acquire_queue_window, apply_pending_restore, backup_path, bundled_manifest_paths,
-        desktop_job_page_limit, enqueue_shell_open_path, load_preset_library,
-        parse_shell_invocation, pending_restore_path, persist_preset_library,
+        classify_local_absolute_path, desktop_job_page_limit, enqueue_shell_open_path,
+        ingest_shell_convert, load_preset_library, parse_shell_invocation, pending_restore_path,
+        persist_preset_library,
         prepare_approved_desktop_conversion, recover_desktop_jobs, report_for_export, requeue_job,
         run_queue_window_on_database, shell_open_path_from_args, stage_pending_restore,
         validated_shell_open_path, validated_shell_request, write_desktop_export_noclobber,
@@ -2865,6 +3227,98 @@ mod tests {
                 "--to".into(),
                 "png".into(),
                 suite.path().as_os_str().to_os_string(),
+            ]),
+            None
+        );
+    }
+
+    #[test]
+    fn classify_desktop_drop_path_accepts_local_file_and_directory() {
+        let suite = tempdir().expect("suite");
+        let file = suite.path().join("photo.png");
+        fs::write(&file, b"png").expect("file");
+        let file_class = classify_local_absolute_path(&file);
+        assert_eq!(file_class.kind, "file");
+        assert_eq!(file_class.path.as_deref(), Some(file.as_path()));
+        let dir_class = classify_local_absolute_path(suite.path());
+        assert_eq!(dir_class.kind, "directory");
+        assert_eq!(dir_class.path.as_deref(), Some(suite.path()));
+        assert_eq!(
+            classify_local_absolute_path(Path::new("relative-drop.bin")).kind,
+            "rejected"
+        );
+        #[cfg(windows)]
+        assert_eq!(
+            classify_local_absolute_path(Path::new(r"\\server\share\album")).kind,
+            "rejected"
+        );
+    }
+
+    #[test]
+    fn ingest_all_conflict_creates_zero_batch_rows() {
+        let suite = tempdir().expect("suite");
+        let database = suite.path().join("jobs.sqlite3");
+        let reports = suite.path().join("reports");
+        fs::create_dir_all(&reports).expect("reports");
+        let store = std::sync::Mutex::new(SqliteJobStore::open(&database).expect("store"));
+        let queue = std::sync::Mutex::new(None);
+        let cancellations = std::sync::Mutex::new(std::collections::HashMap::new());
+        let input = suite.path().join("notes.json");
+        fs::write(&input, br#"[{"id":1}]"#).expect("input");
+        fs::write(suite.path().join("notes.converted.yaml"), b"exists: true\n").expect("conflict");
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        let result = runtime
+            .block_on(ingest_shell_convert(
+                &store,
+                &database,
+                &reports,
+                &queue,
+                &cancellations,
+                None,
+                vec![input],
+                "yaml".to_owned(),
+            ))
+            .expect("ingest");
+        assert!(!result.ran_immediately);
+        assert!(result.batch_id.is_none());
+        assert_eq!(result.queued, 0);
+        assert_eq!(result.skipped_conflict, 1);
+        assert_eq!(
+            store
+                .lock()
+                .expect("store")
+                .list_batches_page(10, 0)
+                .expect("batches")
+                .len(),
+            0
+        );
+    }
+
+    #[test]
+    fn parse_shell_invocation_prefers_convert_when_both_markers_are_present() {
+        let parsed = parse_shell_invocation([
+            "formatwright-desktop.exe",
+            "--shell-open",
+            r"C:\in\manual.pdf",
+            "--shell-convert",
+            "--to",
+            "png",
+        ]);
+        assert_eq!(
+            parsed,
+            Some((PathBuf::from(r"C:\in\manual.pdf"), Some("png".to_owned())))
+        );
+        assert_eq!(
+            parse_shell_invocation([
+                "formatwright-desktop.exe",
+                "--shell-open",
+                r"C:\in\manual.pdf",
+                "--shell-convert",
+                "--to",
+                "exe",
             ]),
             None
         );

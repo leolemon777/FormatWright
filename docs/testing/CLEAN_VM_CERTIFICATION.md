@@ -35,7 +35,7 @@ The suite asserts, in order:
 - Silent `/S` install succeeds; the installed standard binary does **not** embed the test DevTools argument.
 - First launch of the **installed** app installs both Starter packs from embedded resources while hostile `.cmd` wrappers sit earlier on PATH (Release must resolve exact pack paths, never PATH).
 - Real UI PDF→PNG and PDF→JPEG conversions pass through `scripts/test_desktop_release_conversion.ps1` with per-format isolated processes (evidence under `.artifacts/clean-vm-certification/vm-*/ui-conversions/`).
-- `uninstall.exe /S` removes the install root, both app-state roots, and FormatWright's two owned shell keys.
+- `uninstall.exe /S` removes the install root, both app-state roots, and FormatWright's owned shell keys (`FormatWright` Open-in plus the 17 generated Convert verbs). It must **not** look for the obsolete `FormatWrightConvert` name.
 
 ## Manual checklist (not yet automated — record screenshots + notes)
 

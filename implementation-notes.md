@@ -1,6 +1,89 @@
 # Implementation Notes
 
-## Current milestone — PR-01 dirty-tree snapshot (2026-08-17)
+## Current milestone — Chicago 95 desktop chrome (2026-08-18)
+
+### Spec Interpretation
+- User asked to restyle the entire desktop UI from `plastic-fly-44-2a81bc35` (Chicago 95). Product behavior stays: Plan, queue, Explorer convert, no new formats.
+
+### Decisions Made
+- Vend `system.css` as `apps/desktop/src/chicago95.css`. Strip Google Font `@import` because Tauri CSP is `style-src 'self'`; UI uses Tahoma / MS Sans Serif / Courier New fallbacks offline.
+- Main window `decorations: false` with a real Win95 title bar (min/max/close via `core:window:default`).
+- Existing convert/jobs/presets/engines/reports/maintenance/settings flows keep their logic; chrome is windows, folder tabs, beveled controls, teal desktop.
+
+### Changes From Spec
+- Daily-use spec did not require this visual language. Native OS title bar is gone in desktop/e2e/accessibility window configs.
+
+### Verification
+- Desktop vitest + `tsc -b` after markup wrap.
+
+### Risks / Follow-up
+- Pixelify Sans / VT323 not bundled; look is workstation-like on Windows, not pixel-perfect vs the marketing preview.
+- Accessibility snapshots that assumed a dark modern shell will need a re-run.
+
+## Previous milestone — HowToConvert live-site snapshot (2026-08-18)
+
+### Spec Interpretation
+- Docs-only: refresh competitor facts from howtoconvert.co. Do not change product scope or start Wave 5 items.
+
+### Decisions Made
+- SPEC_PLAN §1.1/§1.3 record WASM upsell, shell-to-user-installed engines, no Explorer, 5 devices, still-Beta pricing.
+- VOC Wave 1 remains the UX steal; Wave 5 now names crop/trim/WASM/PATH-install as forbidden.
+- FORMAT_SUPPORT_MATRIX GW-04: Architecture Spike → Experimental on Windows. Certified stays empty.
+
+### Changes From Spec
+- None. Plan allowed the matrix status fix as optional; it is included.
+
+### Verification
+- Read-back of the three edited sections.
+
+### Risks / Follow-up
+- GOLDEN_WORKFLOWS.md GW-04 contract text was not rewritten; TRACEABILITY still says the slice is in progress.
+
+## Previous milestone — Wave 1 ingest / toast / plain copy + testdrive (2026-08-17)
+
+### Spec Interpretation
+- Remaining Wave-1: 800ms file-list ingest (PR-06), toast without tray (PR-07), plain-language Plan/errors (PR-08). Then hand a Release testdrive, no commit.
+
+### Decisions Made
+- Convert verbs go through `ShellConvertCoordinator` (800ms same-target reset, mix-target flush) and `ingest_shell_convert_paths`. Open-in stays on the old FIFO.
+- Toast is a Win32 toast via PowerShell (`show_desktop_toast`). No tray, no keep-alive, no settings schema, no new npm package.
+- Basic-mode Plan uses `plainLossSummary`; banners use `basicModeFailureCopy` instead of `route.message`.
+
+### Changes From Spec
+- Toast is not `tauri-plugin-notification` (avoids a lockfile/plugin surface for testdrive). Click-to-focus is “show main window” after the toast command.
+
+### Verification
+- desktopModel + shell_convert + ingest unit tests; Release desktop sequential launch; two CLI JSON→YAML converts.
+
+### Risks / Follow-up
+- Installed NSIS smoke not re-run. R-008/R-009 still not Closed.
+
+## Previous milestone — Wave 1 daily-use (PR-01b through PR-05 + PR-02) (2026-08-17)
+
+### Spec Interpretation
+- `WINDOWS_DAILY_USE_SPEC_PLAN.md` Wave 1 exit: PR-02 + PR-03 + PR-05, recommended PR-04, plus PR-01b pending pin.
+- Convert to X still uses the existing `pendingShellConvert` preview+run effect (PR-06 ingest is later). PR-01b only stops that pending from leaking across user edits and capability auto-target.
+
+### Decisions Made
+- `defaultPlanConstraints` resets quality/width/dpi/colorMode to null on new input and shell convert.
+- Capability snapshot keeps a pending wanted target; unavailable wanted clears pending and does not jump to `firstRecommended`.
+- Success stays on Convert; `setTab("reports")` remains only for explicit report browsing.
+- Empty-state cards probe `C:\formatwright-probe.pdf` / `.mkv` through the existing snapshot command (extension-only).
+- Drop folders go through `classify_desktop_drop_path` (same local-disk rules as shell).
+- Explorer verbs come from `explorer-verbs.json` via `scripts/generate_explorer_verbs.ps1`.
+
+### Changes From Spec
+- PR-06 800ms ingest / `ingest_shell_convert_paths` not implemented. N=1 Explorer convert still uses the frontend effect.
+- Installed Explorer convert smoke is in the script contract but was not executed here (needs a fresh NSIS build + isolated install).
+
+### Verification
+- Targeted desktopModel vitest, desktop `shell_` / classify Rust tests, `generate_explorer_verbs.ps1 -Check`.
+
+### Risks / Follow-up
+- PR-06 still required to merge Explorer multi-select and to honor queue-window busy.
+- Do not mark R-008/R-009 Closed without a clean VM.
+
+## Previous milestone — PR-01 dirty-tree snapshot (2026-08-17)
 
 ### Spec Interpretation
 - `docs/specs/WINDOWS_DAILY_USE_SPEC_PLAN.md` KD-13: PR-01 is a rollback snapshot of work already in the dirty tree. No Wave-1 behavior.

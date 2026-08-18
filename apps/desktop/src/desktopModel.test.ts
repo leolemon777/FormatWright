@@ -4,7 +4,9 @@ import {
   JOB_PAGE_SIZE,
   SUPPORTED_TARGET_FORMATS,
   certificationLabel,
+  defaultPlanConstraints,
   elapsedProgressSeconds,
+  emptyStateCardAvailability,
   engineRecoveryNotices,
   engineRecoveryState,
   isDirectoryOutput,
@@ -13,14 +15,21 @@ import {
   normalizeShellTarget,
   packBadgeKind,
   parseDesktopError,
+  localizeDesktopError,
+  pdfPageCountFromReport,
+  plainLossSummary,
   qualityFieldApplies,
   presetFieldChangeInvalidatesPreview,
   progressForJob,
   recommendedTargets,
+  resolvePendingCapabilityTarget,
+  basicModeFailureCopy,
+  suggestedConvertedName,
   suggestedOutput,
   targetOptionViews,
   type EngineRecoveryOutcome,
 } from "./desktopModel";
+import { messages } from "./i18n";
 
 describe("desktop workflow model", () => {
   it("recommends content-family targets from a dropped path", () => {
@@ -49,6 +58,36 @@ describe("desktop workflow model", () => {
     expect(
       parseDesktopError('{"code":"OUTPUT_CONFLICT","stage":"commit","message":"Exists"}'),
     ).toMatchObject({ code: "OUTPUT_CONFLICT", stage: "commit", message: "Exists" });
+  });
+
+  it("shows folder-overlap and code titles in Chinese instead of Core English", () => {
+    const parsed = parseDesktopError(JSON.stringify({
+      code: "POLICY_BLOCKED",
+      stage: "plan",
+      message: "Folder batch input and output roots must not overlap",
+      user_action: "Choose two separate local folders.",
+    }));
+    expect(parsed.recovery).toBe("Choose two separate local folders.");
+    const localized = localizeDesktopError(parsed, messages["zh-CN"]);
+    expect(localized.title).toBe("策略拦住 · 计划");
+    expect(localized.message).toContain("不能套在一起");
+    expect(localized.recovery).toContain("互不包含");
+    expect(localized.message).not.toMatch(/Folder batch/);
+  });
+
+  it("translates an empty folder-route error into Chinese", () => {
+    const localized = localizeDesktopError(
+      parseDesktopError(JSON.stringify({
+        code: "UNSUPPORTED",
+        stage: "plan",
+        message: "No file in the selected folder can use this conversion route",
+        user_action: "Choose another target or a folder containing supported inputs.",
+      })),
+      messages["zh-CN"],
+    );
+    expect(localized.title).toBe("不支持 · 计划");
+    expect(localized.message).toContain("没有文件能走");
+    expect(localized.recovery).toContain("换一个目标格式");
   });
 
   it("keeps large job histories bounded while exposing global list positions", () => {
@@ -113,6 +152,68 @@ describe("target option views", () => {
     expect(qualityFieldApplies("yaml")).toBe(false);
   });
 
+  it("uses CLI-default plan constraints instead of leftover form values", () => {
+    expect(defaultPlanConstraints("png")).toEqual({
+      quality: null,
+      width: null,
+      dpi: null,
+      colorMode: null,
+      preserveAllStreams: true,
+    });
+    expect(defaultPlanConstraints("jpg")).toEqual(defaultPlanConstraints("png"));
+  });
+
+  it("pins a pending shell-convert target and fails honestly when that route is missing", () => {
+    const routes = {
+      png: { available: true, target_format: "png" },
+      jpg: { available: true, target_format: "jpg" },
+      webp: { available: false, missing_engines: ["ffmpeg"], target_format: "webp" },
+    };
+    expect(
+      resolvePendingCapabilityTarget({
+        pendingWanted: "png",
+        currentTarget: "jpg",
+        inputPath: "C:\\\\in\\\\manual.pdf",
+        routes,
+      }),
+    ).toEqual({ target: "png", clearPending: false });
+    expect(
+      resolvePendingCapabilityTarget({
+        pendingWanted: "webp",
+        currentTarget: "webp",
+        inputPath: "C:\\\\in\\\\manual.pdf",
+        routes,
+      }),
+    ).toEqual({ target: null, clearPending: true });
+    expect(
+      resolvePendingCapabilityTarget({
+        pendingWanted: null,
+        currentTarget: "mp4",
+        inputPath: "C:\\\\in\\\\manual.pdf",
+        routes,
+      }),
+    ).toEqual({ target: "png", clearPending: false });
+  });
+
+  it("keeps the JSON empty-state card available and greys PDF/video from probe routes", () => {
+    expect(emptyStateCardAvailability("json-yaml", null)).toEqual({
+      available: true,
+      missingEngines: [],
+    });
+    expect(
+      emptyStateCardAvailability("pdf-png", { png: { available: false, missing_engines: ["pdftoppm"] } }),
+    ).toEqual({ available: false, missingEngines: ["pdftoppm"] });
+    expect(emptyStateCardAvailability("video-mp4", { mp4: { available: true } })).toEqual({
+      available: true,
+      missingEngines: [],
+    });
+  });
+
+  it("reads PDF page count from the validation check and never invents 15", () => {
+    expect(pdfPageCountFromReport({ checks: [{ code: "PDF_PAGE_COUNT", observed: 3 }] })).toBe(3);
+    expect(pdfPageCountFromReport({ checks: [{ code: "OUTPUT_HASH", observed: "abc" }] })).toBeNull();
+  });
+
   it("does not gate targets before capabilities load or in folder mode", () => {
     const labels = { missing: "Missing", unsupported: "Unsupported" };
     expect(targetOptionViews(["png"], null, "convert-file", labels).find((option) => option.value === "png")?.disabled).toBe(false);
@@ -136,12 +237,48 @@ describe("target option views", () => {
 describe("preset preview invalidation", () => {
   it("invalidates a stale preview for every conversion-affecting preset field except the name", () => {
     expect(presetFieldChangeInvalidatesPreview("target")).toBe(true);
-    expect(presetFieldChangeInvalidatesPreview("quality")).toBe(true);
+    expect(presetFieldChangeInvalidatesPreview("quality", "jpg")).toBe(true);
+    expect(presetFieldChangeInvalidatesPreview("quality", "png")).toBe(false);
     expect(presetFieldChangeInvalidatesPreview("width")).toBe(true);
     expect(presetFieldChangeInvalidatesPreview("dpi")).toBe(true);
     expect(presetFieldChangeInvalidatesPreview("color-mode")).toBe(true);
     expect(presetFieldChangeInvalidatesPreview("preserve-all-streams")).toBe(true);
     expect(presetFieldChangeInvalidatesPreview("preset-name")).toBe(false);
+  });
+});
+
+describe("plain language and suggested names", () => {
+  it("names colliding stems with a converted segment", () => {
+    const first = suggestedConvertedName("C:/album/photo.jpg", "webp", []);
+    expect(first).toBe("C:/album/photo.converted.webp");
+    expect(suggestedConvertedName("C:/album/photo.png", "webp", [first])).toBe(
+      "C:/album/photo.from-png.converted.webp",
+    );
+  });
+
+  it("ranks loss summaries in the specified order", () => {
+    expect(plainLossSummary({ steps: [{ loss_class: "lossy" }], changes: { dropped: [] } })).toBe("lossy");
+    expect(plainLossSummary({
+      steps: [{ loss_class: "container-only" }],
+      changes: { dropped: ["subtitle-track"] },
+    })).toBe("drop-tracks");
+    expect(plainLossSummary({ steps: [{ loss_class: "unknown" }], changes: { dropped: [] } })).toBe("unknown");
+    expect(plainLossSummary({ steps: [{ loss_class: "none" }], changes: { dropped: [] } })).toBe("container");
+    expect(plainLossSummary({ steps: [{ loss_class: "lossless" }], changes: { dropped: [] } })).toBe("lossless");
+  });
+
+  it("maps basic-mode failures without interpolating engine English", () => {
+    const labels = {
+      oldExcel: "old-excel",
+      unsupported: "unsupported-pair",
+      engineMissing: "missing:{names}",
+      outputConflict: "exists",
+      policyBlocked: "no-plan",
+    };
+    expect(basicModeFailureCopy("C:\\\\a.xls", { code: "UNSUPPORTED", message: "engine English" }, [], labels)).toBe("old-excel");
+    expect(basicModeFailureCopy("C:\\\\a.xlsx", { code: "UNSUPPORTED", message: "engine English" }, [], labels)).toBe("unsupported-pair");
+    expect(basicModeFailureCopy("C:\\\\a.xlsx", { code: "ENGINE_MISSING", message: "missing soffice" }, ["soffice"], labels)).toBe("missing:soffice");
+    expect(basicModeFailureCopy("C:\\\\a.json", { code: "OUTPUT_CONFLICT", message: "Exists" }, [], labels)).toBe("exists");
   });
 });
 

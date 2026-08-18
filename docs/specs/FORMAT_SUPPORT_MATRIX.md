@@ -2,7 +2,7 @@
 
 - Status: Phase 0 baseline
 - Version: 0.1
-- Updated: 2026-08-10
+- Updated: 2026-08-18
 
 ## 1. Support labels
 
@@ -47,7 +47,7 @@ Minimum exact OS releases must be frozen in ADR-0005 after Tauri, WebView, code-
 | GW-01 | HEIC, HEIF | JPG, PNG | libvips target; libheif development fallback | Experimental on Windows |
 | GW-02 | PNG, JPG | WebP, AVIF | libvips (FFmpeg development fallback) | Experimental on Windows |
 | GW-03 | Supported image directory | WebP, AVIF, JPG, PNG | libvips (FFmpeg development fallback) | Experimental on Windows |
-| GW-04 | MOV, MKV, AVI, WebM | MP4 | FFmpeg | Architecture Spike |
+| GW-04 | MOV, MKV, AVI, WebM | MP4 | FFmpeg | Experimental on Windows |
 | GW-05 | Video containers with audio | MP3, M4A, WAV | FFmpeg | Experimental on Windows |
 | GW-06 | Supported video | GIF | FFmpeg | Experimental on Windows |
 | GW-07 | FLAC, WAV, MP3, AAC, M4A, OGG, Opus | Selected audio target | FFmpeg | Experimental on Windows |
@@ -56,6 +56,8 @@ Minimum exact OS releases must be frozen in ADR-0005 after Tauri, WebView, code-
 | GW-10 | Markdown, HTML | PDF, DOCX | Pandoc + LibreOffice + Poppler validation | Experimental on Windows |
 | GW-11 | CSV, JSON, YAML, XML | CSV, JSON, YAML, XML | Rust native | Experimental on Windows |
 | GW-12 | Supported media/document | Cleaned copy | Type-specific adapter | Experimental media slice on Windows |
+
+Windows Starter Media（FFmpeg）为本机 GW-04/05/06/07 切片提供 Experimental 证据（沙箱 remux、Explorer Convert to MP4 等）。全部行仍非 Certified：干净机 / 全 fixture / 签名包未关闭。
 
 ## 5. MP4 planning baseline
 

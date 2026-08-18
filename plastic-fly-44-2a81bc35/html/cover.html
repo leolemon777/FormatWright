@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=1200, initial-scale=1" />
+  <title>Chicago 95 — Cover</title>
+  <link rel="stylesheet" href="../css/system.css" />
+  <style>
+    html, body {
+      width: 1200px;
+      height: 800px;
+      margin: 0;
+      overflow: hidden;
+    }
+    body {
+      background:
+        radial-gradient(ellipse at 30% 20%, #00a4a4 0%, #008080 55%, #006060 100%);
+      position: relative;
+    }
+
+    /* Subtle pixel dither background */
+    body::before {
+      content: "";
+      position: absolute; inset: 0;
+      background-image:
+        radial-gradient(circle, rgba(255,255,255,0.06) 1px, transparent 1px);
+      background-size: 4px 4px;
+      pointer-events: none;
+    }
+
+    .artboard {
+      position: absolute; inset: 0;
+      padding: 36px 48px 24px;
+      display: grid;
+      grid-template-columns: 1.15fr 0.95fr;
+      grid-template-rows: auto auto auto;
+      gap: 18px 32px;
+    }
+
+    /* Top-left badge & system name */
+    .header {
+      grid-column: 1 / 2;
+      grid-row: 1 / 2;
+      display: flex; flex-direction: column; gap: 10px;
+    }
+    .badge {
+      display: inline-flex; align-items: center; gap: 8px;
+      align-self: flex-start;
+      background: var(--c95-silver);
+      box-shadow: var(--c95-bevel-out-thin);
+      padding: 4px 10px;
+      font-family: var(--c95-font-ui);
+      font-size: 12px; font-weight: 700;
+      color: var(--c95-text);
+    }
+    .badge .dot {
+      width: 8px; height: 8px; background: var(--c95-accent-yellow);
+      box-shadow: 0 0 0 1px #000;
+    }
+    .system-name {
+      font-family: var(--c95-font-display);
+      font-size: 132px;
+      line-height: 0.86;
+      color: var(--c95-text-inverse);
+      margin: 0;
+      letter-spacing: 0.01em;
+      text-shadow: 4px 4px 0 #000080, 8px 8px 0 #000;
+      white-space: nowrap;
+    }
+    .system-name .accent {
+      color: var(--c95-accent-yellow);
+      text-shadow: 4px 4px 0 #000080, 8px 8px 0 #000;
+    }
+    .tagline {
+      font-family: var(--c95-font-ui);
+      color: #eaf6f6;
+      font-size: 15px;
+      line-height: 1.4;
+      max-width: 520px;
+      margin: 0;
+      text-shadow: 1px 1px 0 #004444;
+    }
+    .tagline b { color: var(--c95-accent-yellow); font-weight: 700; }
+
+    /* Top-right hero specimen: signature terminal window */
+    .signature {
+      grid-column: 2 / 3;
+      grid-row: 1 / 3;
+      align-self: start;
+      width: 100%;
+      transform: rotate(1.5deg);
+      box-shadow: 10px 10px 0 rgba(0,0,0,0.35);
+    }
+    .signature .c95-terminal__screen {
+      min-height: 300px;
+      font-size: 20px;
+      padding: 14px 16px;
+    }
+
+    /* Floating mini windows for samples */
+    .floats {
+      grid-column: 1 / 2;
+      grid-row: 2 / 3;
+      position: relative;
+      height: 200px;
+    }
+    .floats .float {
+      position: absolute;
+      box-shadow: 6px 6px 0 rgba(0,0,0,0.28);
+    }
+    .float-buttons {
+      top: 0; left: 0;
+      width: 270px;
+      transform: rotate(-1.2deg);
+    }
+    .float-buttons .c95-window__body {
+      gap: 8px; padding: 8px;
+    }
+    .float-buttons .row {
+      display: flex; gap: 6px; align-items: center;
+    }
+    .float-buttons .c95-button { min-width: 56px; height: 24px; font-size: 11px; padding: 0 8px; }
+
+    .float-input {
+      top: 4px; right: 0;
+      width: 290px;
+      transform: rotate(0.7deg);
+    }
+    .float-input .c95-window__body { padding: 8px; gap: 6px; }
+    .float-input .field-list { display: flex; flex-direction: column; gap: 6px; }
+    .float-input .c95-input, .float-input .c95-select { height: 22px; font-size: 12px; }
+    .float-input .c95-field__label { font-size: 11px; }
+
+    .float-checks {
+      bottom: -10px; left: 140px;
+      width: 270px;
+      transform: rotate(-0.6deg);
+      z-index: 2;
+    }
+    .float-checks .c95-window__body { gap: 4px; padding: 8px; }
+    .float-checks .c95-check { font-size: 12px; }
+
+    /* Palette + token tray (bottom row) */
+    .specimen-tray {
+      grid-column: 1 / 3;
+      grid-row: 3 / 4;
+      display: grid;
+      grid-template-columns: 1.35fr 1fr 0.9fr;
+      gap: 14px;
+      padding-bottom: 16px;
+    }
+    .tray-card {
+      box-shadow: 6px 6px 0 rgba(0,0,0,0.28);
+    }
+    .tray-card .c95-window__body { padding: 10px; gap: 8px; }
+    .tray-title {
+      font-family: var(--c95-font-ui);
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--c95-text-muted);
+    }
+
+    .palette-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 6px;
+    }
+    .palette-grid .sw {
+      display: flex; flex-direction: column;
+      box-shadow: var(--c95-bevel-out-thin);
+      background: var(--c95-silver);
+      font-size: 10px;
+      overflow: hidden;
+    }
+    .palette-grid .sw .chip {
+      height: 22px;
+    }
+    .palette-grid .sw .meta {
+      padding: 2px 6px;
+      font-family: var(--c95-font-mono);
+      color: var(--c95-text);
+      display: flex; justify-content: space-between;
+      gap: 4px;
+    }
+    .palette-grid .sw .meta b { font-weight: 700; }
+
+    .type-stack {
+      display: flex; flex-direction: column; gap: 4px;
+    }
+    .type-stack .type-row {
+      display: flex; align-items: baseline; gap: 8px;
+      padding: 2px 0;
+      border-bottom: 1px dotted var(--c95-shadow);
+    }
+    .type-stack .type-row:last-child { border-bottom: 0; }
+    .type-stack .type-row .sample {
+      flex: 1;
+      color: var(--c95-text);
+    }
+    .type-stack .type-row .lbl {
+      font-family: var(--c95-font-mono);
+      font-size: 10px;
+      color: var(--c95-text-muted);
+      letter-spacing: 0;
+    }
+    .ts-display { font-family: var(--c95-font-display); font-size: 22px; line-height: 1; }
+    .ts-headline { font-family: var(--c95-font-ui); font-size: 14px; font-weight: 700; }
+    .ts-body { font-family: var(--c95-font-ui); font-size: 12px; }
+    .ts-mono { font-family: var(--c95-font-mono); font-size: 11px; }
+
+    .meta-list {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 4px 12px;
+      font-size: 12px;
+      font-family: var(--c95-font-ui);
+    }
+    .meta-list dt {
+      color: var(--c95-text-muted);
+      font-weight: 700;
+    }
+    .meta-list dd { margin: 0; }
+    .meta-list dd code {
+      font-family: var(--c95-font-mono); font-size: 11px;
+      background: var(--c95-paper);
+      box-shadow: var(--c95-bevel-in-thin);
+      padding: 0 4px;
+    }
+
+    /* Decorative pixel rule */
+    .pixel-rule {
+      display: flex; gap: 3px;
+      margin-top: 4px;
+    }
+    .pixel-rule i {
+      flex: 1;
+      height: 4px;
+      background: var(--c95-navy);
+    }
+    .pixel-rule i:nth-child(4n) { background: var(--c95-accent-yellow); }
+    .pixel-rule i:nth-child(7n) { background: var(--c95-text-inverse); }
+
+    /* Bottom-right corner mark */
+    .corner-mark {
+      position: absolute;
+      right: 56px; bottom: 4px;
+      display: flex; align-items: center; gap: 8px;
+      font-family: var(--c95-font-mono);
+      font-size: 10px;
+      color: var(--c95-text-inverse);
+      text-shadow: 1px 1px 0 #003a3a;
+    }
+    .corner-mark .led {
+      width: 8px; height: 8px; background: var(--c95-accent-yellow);
+      box-shadow: 0 0 0 1px #000;
+    }
+  </style>
+</head>
+<body>
+  <div class="artboard">
+
+    <!-- HEADER: badge + system name -->
+    <header class="header">
+      <span class="badge">
+        <span class="dot" aria-hidden="true"></span>
+        DESIGN SYSTEM · LIGHT
+      </span>
+      <h1 class="system-name">Chicago<span class="accent">.95</span></h1>
+      <p class="tagline">
+        A retro workstation-OS design system. Beveled silver chrome, navy title bars, and
+        <b>pixel-tight typography</b> rebuilt as a portable CSS kit.
+      </p>
+      <div class="pixel-rule" aria-hidden="true">
+        <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+        <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+        <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+      </div>
+    </header>
+
+    <!-- SIGNATURE: CRT terminal window -->
+    <article class="signature c95-terminal" aria-hidden="true">
+      <header class="c95-terminal__titlebar">
+        <span class="c95-window__title">
+          <svg class="c95-window__title-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M5 7l5 5l-5 5"/><path d="M12 19l7 0"/>
+          </svg>
+          C:\&gt; CHICAGO95.EXE
+        </span>
+        <span class="c95-window__controls">
+          <button type="button" class="c95-window__ctrl">_</button>
+          <button type="button" class="c95-window__ctrl">□</button>
+          <button type="button" class="c95-window__ctrl">×</button>
+        </span>
+      </header>
+      <div class="c95-terminal__screen">
+        <span class="c95-terminal__line"><span class="c95-terminal__comment">Microsoft(R) Windows 95</span></span>
+        <span class="c95-terminal__line"><span class="c95-terminal__comment">(C) Copyright 1981-1995.</span></span>
+        <span class="c95-terminal__line">&nbsp;</span>
+        <span class="c95-terminal__line"><span class="c95-terminal__prompt">C:\&gt;</span> ds <span class="c95-terminal__keyword">install</span> chicago95</span>
+        <span class="c95-terminal__line">  <span class="c95-terminal__keyword">FETCH</span> tokens.css <span class="c95-terminal__string">"v2.1"</span> .. OK</span>
+        <span class="c95-terminal__line">  <span class="c95-terminal__keyword">BUILD</span> bevel-out ........ OK</span>
+        <span class="c95-terminal__line">  <span class="c95-terminal__keyword">BUILD</span> bevel-in ......... OK</span>
+        <span class="c95-terminal__line">  <span class="c95-terminal__keyword">LOAD</span> &nbsp;VT323 + Pixelify .. OK</span>
+        <span class="c95-terminal__line"><span class="c95-terminal__comment">; 42 tokens, 18 components</span></span>
+        <span class="c95-terminal__line"><span class="c95-terminal__prompt">C:\&gt;</span> run hello.exe<span class="c95-terminal__caret" aria-hidden="true"></span></span>
+      </div>
+    </article>
+
+    <!-- FLOATS: small windows -->
+    <div class="floats" aria-hidden="true">
+
+      <article class="float float-buttons c95-window">
+        <header class="c95-window__titlebar">
+          <span class="c95-window__title">
+            <svg class="c95-window__title-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 5a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v14a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2z"/>
+              <path d="M9 9h6v6h-6z"/>
+            </svg>
+            Buttons.btn
+          </span>
+          <span class="c95-window__controls"><button type="button" class="c95-window__ctrl">×</button></span>
+        </header>
+        <div class="c95-window__body">
+          <div class="row">
+            <button type="button" class="c95-button c95-button--primary">OK</button>
+            <button type="button" class="c95-button">Cancel</button>
+            <button type="button" class="c95-button" disabled>Off</button>
+          </div>
+          <div class="row">
+            <button type="button" class="c95-button" aria-pressed="true">Pressed</button>
+            <button type="button" class="c95-button c95-button--icon" aria-label="Save">
+              <svg class="c95-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M6 4h10l4 4v10a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2"/>
+                <path d="M6 4v4h8v-4"/>
+                <path d="M6 18v-5h12v5"/>
+              </svg>
+            </button>
+            <span class="c95-tag c95-tag--alert">!</span>
+          </div>
+        </div>
+      </article>
+
+      <article class="float float-input c95-window">
+        <header class="c95-window__titlebar">
+          <span class="c95-window__title">
+            <svg class="c95-window__title-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 7a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v10a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2z"/>
+              <path d="M7 12h10"/>
+            </svg>
+            Login.dlg
+          </span>
+          <span class="c95-window__controls"><button type="button" class="c95-window__ctrl">×</button></span>
+        </header>
+        <div class="c95-window__body">
+          <div class="field-list">
+            <div class="c95-field">
+              <label class="c95-field__label" for="cv-u">User name</label>
+              <input id="cv-u" class="c95-input" type="text" value="OPERATOR" />
+            </div>
+            <div class="c95-field">
+              <label class="c95-field__label" for="cv-p">Password</label>
+              <input id="cv-p" class="c95-input" type="password" value="••••••" />
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <article class="float float-checks c95-window">
+        <header class="c95-window__titlebar">
+          <span class="c95-window__title">
+            <svg class="c95-window__title-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M5 12l5 5l10 -10"/>
+            </svg>
+            Options.opt
+          </span>
+          <span class="c95-window__controls"><button type="button" class="c95-window__ctrl">×</button></span>
+        </header>
+        <div class="c95-window__body">
+          <label class="c95-check">
+            <input class="c95-check__input" type="checkbox" checked>
+            <span class="c95-check__box" aria-hidden="true"></span>
+            <span class="c95-check__label">Show hidden files</span>
+          </label>
+          <label class="c95-check">
+            <input class="c95-check__input" type="checkbox" checked>
+            <span class="c95-check__box" aria-hidden="true"></span>
+            <span class="c95-check__label">Beveled scrollbars</span>
+          </label>
+          <label class="c95-check c95-radio">
+            <input class="c95-check__input" type="radio" name="cv-mode" checked>
+            <span class="c95-check__box" aria-hidden="true"></span>
+            <span class="c95-check__label">Light theme</span>
+          </label>
+        </div>
+      </article>
+    </div>
+
+    <!-- BOTTOM SPECIMEN TRAY -->
+    <div class="specimen-tray">
+
+      <article class="c95-window tray-card">
+        <header class="c95-window__titlebar">
+          <span class="c95-window__title">
+            <svg class="c95-window__title-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 21a9 9 0 1 1 0 -18a9 8 0 0 1 9 8a4.5 4 0 0 1 -4.5 4h-2.5a2 2 0 0 0 -1 3.75a1.3 1.3 0 0 1 -1 2.25"/>
+              <path d="M7.5 10.5m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0"/>
+              <path d="M12 7.5m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0"/>
+              <path d="M16.5 10.5m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0"/>
+            </svg>
+            Palette
+          </span>
+          <span class="c95-window__controls"><button type="button" class="c95-window__ctrl">×</button></span>
+        </header>
+        <div class="c95-window__body">
+          <span class="tray-title">8 colors · 16-color VGA</span>
+          <div class="palette-grid">
+            <div class="sw"><span class="chip" style="background:#008080"></span><span class="meta"><b>Teal</b><span>080</span></span></div>
+            <div class="sw"><span class="chip" style="background:#c0c0c0"></span><span class="meta"><b>Silver</b><span>C0C</span></span></div>
+            <div class="sw"><span class="chip" style="background:#000080"></span><span class="meta"><b>Navy</b><span>008</span></span></div>
+            <div class="sw"><span class="chip" style="background:#1084d0"></span><span class="meta"><b>Sky</b><span>108</span></span></div>
+            <div class="sw"><span class="chip" style="background:#ffffff;box-shadow:inset 0 0 0 1px #808080"></span><span class="meta"><b>Paper</b><span>FFF</span></span></div>
+            <div class="sw"><span class="chip" style="background:#808080"></span><span class="meta"><b>Shadow</b><span>808</span></span></div>
+            <div class="sw"><span class="chip" style="background:#000000"></span><span class="meta"><b>Deep</b><span>000</span></span></div>
+            <div class="sw"><span class="chip" style="background:#ffff00"></span><span class="meta"><b>Alert</b><span>FF0</span></span></div>
+          </div>
+        </div>
+      </article>
+
+      <article class="c95-window tray-card">
+        <header class="c95-window__titlebar">
+          <span class="c95-window__title">
+            <svg class="c95-window__title-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 20l3 0"/><path d="M14 20l7 0"/>
+              <path d="M6.9 15l6.9 0"/><path d="M10.2 6.3l5.8 13.7"/>
+              <path d="M5 20l6 -16l2 0l7 16"/>
+            </svg>
+            Type
+          </span>
+          <span class="c95-window__controls"><button type="button" class="c95-window__ctrl">×</button></span>
+        </header>
+        <div class="c95-window__body">
+          <span class="tray-title">3 faces · pixel-true</span>
+          <div class="type-stack">
+            <div class="type-row">
+              <span class="sample ts-display">Aa 95</span>
+              <span class="lbl">VT323 / 28</span>
+            </div>
+            <div class="type-row">
+              <span class="sample ts-headline">Headline</span>
+              <span class="lbl">Pixelify / 16</span>
+            </div>
+            <div class="type-row">
+              <span class="sample ts-body">Operator console body copy.</span>
+              <span class="lbl">Pixelify / 13</span>
+            </div>
+            <div class="type-row">
+              <span class="sample ts-mono">int main(void){}</span>
+              <span class="lbl">JetBrains / 12</span>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <article class="c95-window tray-card">
+        <header class="c95-window__titlebar">
+          <span class="c95-window__title">
+            <svg class="c95-window__title-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 4l16 0l0 16l-16 0z"/>
+              <path d="M4 12l16 0"/><path d="M12 4l0 16"/>
+            </svg>
+            Tokens
+          </span>
+          <span class="c95-window__controls"><button type="button" class="c95-window__ctrl">×</button></span>
+        </header>
+        <div class="c95-window__body">
+          <span class="tray-title">Bevel grammar</span>
+          <dl class="meta-list">
+            <dt>Radius</dt><dd><code>0</code> across system</dd>
+            <dt>Bevel</dt><dd><code>--c95-bevel-out</code></dd>
+            <dt>Inset</dt><dd><code>--c95-bevel-in</code></dd>
+            <dt>Field</dt><dd><code>--c95-bevel-field</code></dd>
+            <dt>Focus</dt><dd>1px dotted marquee</dd>
+            <dt>Icons</dt><dd>Tabler · outline</dd>
+          </dl>
+        </div>
+      </article>
+    </div>
+
+    <span class="corner-mark">
+      <span class="led" aria-hidden="true"></span>
+      v2.1 · LIGHT · 1200×800
+    </span>
+  </div>
+</body>
+</html>

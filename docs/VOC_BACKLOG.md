@@ -1,13 +1,15 @@
 # FormatWright 开发顺序清单（VOC）
 
 - 状态：负责人排期表，按「大家想要什么」排序
-- 更新：2026-08-17
+- 更新：2026-08-18
 - 产品范围：`SPEC_PLAN.md`（不拼格式数量）
 - 本增量完整规格：[`docs/specs/WINDOWS_DAILY_USE_SPEC_PLAN.md`](specs/WINDOWS_DAILY_USE_SPEC_PLAN.md)
 - 发布门禁：`docs/MASTER_EXECUTION_PLAN.md`
 - 已拍板：拖放简单 + 右键一键转都做；右键 Convert to X = 批准；Open-in 只打开
 
 规则：一次只做一个可验收项。做完再勾选。发布阻断未关闭前，不开始 API / MCP / 新格式大类。
+
+实站注记（[howtoconvert.co](https://howtoconvert.co/)，2026-08-18）：第 1 波手感（打开输出位置、空状态能转什么、多文件拖放）被该产品验证，不是新需求。空状态卡必须是 PDF 转图 / JSON↔YAML / 视频转 MP4，禁止抄其首页 HEIC/Word 英雄句。右键、Win11 顶层菜单仍对标 FileConverter。
 
 ---
 
@@ -29,7 +31,7 @@
 | # | 项 | 验收 | 依赖 |
 |---|---|---|---|
 | 0.1 | 提交本轮未入库改动（认证贯通、负向矩阵、转换页简化、shell-convert） | 工作树干净，一条或少数 Conventional Commit | 无 |
-| 0.2 | 用标准配置打一份带新右键的 NSIS（无 DevTools） | 安装后 PDF 右键有 Convert to PNG；卸载清键 | 0.1 |
+| 0.2 | 用标准配置打一份带新右键的 NSIS（无 DevTools）；测试合同拆 Open-in=0 Job / Convert=1 Job | 安装后 PDF 右键有 Convert to PNG；卸载清 2+17 键 | 0.1 |
 
 ---
 
@@ -99,7 +101,11 @@ VOC 里 FileConverter 被骂最多的是「菜单没了」，不是格式少。
 - API / MCP / Docker 自托管
 - 电子书、CAD、字幕、压缩包大类
 - macOS Finder / Linux 文件管理器（Windows 菜单不稳之前不做）
-- 用格式数量对标 HowToConvert
+- 用格式数量对标 HowToConvert（含宣传 5,438 这类组合数）
+- 浏览器 WASM 演示
+- 裁剪 / trim / 栅格矢量化成真 SVG
+- 把 PDF 压缩、邮件（EML/MSG）当独立产品面
+- 引导用户安装系统 PATH 上的 FFmpeg/LibreOffice（与 Release 不扫 PATH 冲突）
 
 ---
 

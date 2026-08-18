@@ -56,13 +56,13 @@ FormatWright 是一个开源、本地优先的通用文件转换平台。它不�
 
 ## 1. 研究结论与市场证据
 
-本节汇总截至 2026-08-10 已完成的产品、论坛、市场、竞品和开源项目研究。星标和价格是研究快照，会随时间变化。
+本节汇总截至 2026-08-10 已完成的产品、论坛、市场、竞品和开源项目研究。星标和价格是研究快照，会随时间变化。HowToConvert 一行与 §1.3 价格句于 2026-08-18 按 [howtoconvert.co](https://howtoconvert.co/) 实站复核。
 
 ### 1.1 竞品格局
 
 | 产品 | 当前优势 | 已发现的结构性缺口 | 对 FormatWright 的启示 |
 |---|---|---|---|
-| HowToConvert | 本地处理、浏览器演示、桌面端、约 5,438 条转换路由、一次性约 29 美元 | 闭源；核心是多个现成引擎的产品化封装；缺少开放 API、可审计插件体系和深入质量报告 | 不能只拼格式数量；必须在可靠性、解释性和自动化上明显领先 |
+| HowToConvert | 首页即 WASM 试用（文件不离开浏览器）再 upsell 桌面；拖放三步（选文件 → 选扩展名 → Convert）；宣称 5,438 条路由；一次性 29 美元 / 5 台设备；Win/Mac/Linux；批量、裁剪、trim、PDF 压缩、矢量化 SVG、EML/MSG、EPUB、RAW/PSD；首页宣传 HEIC→JPG、MP4→MP3、Word→PDF | 闭源；桌面是 shell 调用户自装 FFmpeg/ImageMagick/LibreOffice/Pandoc 等，安装检查偏糙；无 Explorer 右键；无 Plan / ValidationReport / 崩溃可恢复队列；路由数是引擎组合而非认证工作流；定价卡仍标 Beta | 不能只拼格式数量或抄其 HEIC/Word 英雄句；手感对齐拖放简化与「打开输出位置」；Starter 精确路径、Release 不扫 PATH 对准其引擎安装摩擦 |
 | VERT | AGPL；浏览器 WASM；约 250+ 格式；约 15.3k GitHub Stars | 大视频可能依赖自托管 daemon；曾出现约 800MB 视频转换后下载失败 | 浏览器适合轻任务，超大文件应优先由本地原生执行 |
 | ConvertX | AGPL；Docker 自托管；约 1,000+ 格式；约 18.4k Stars | 大文件上传可能进入内存并崩溃；官方 API 需求被关闭为不计划实现 | 流式文件路径和正式 API 是明确差异点 |
 | FileConverter | Windows Explorer 右键菜单体验成熟；约 14.9k Stars | Windows 为主；Windows 11 新右键菜单集成受限；预设导入导出仍有需求 | 系统集成很有价值，但需要跨平台且配置可迁移 |
@@ -117,7 +117,7 @@ FormatWright 是一个开源、本地优先的通用文件转换平台。它不�
 - CloudConvert 免费额度约为每日 10 credits，并通过付费 credits 与企业能力变现。
 - Convertio 免费层约 100MB、每日 10 次，订阅价格约 11.99 至 44.99 美元/月，API 页面宣称累计处理数亿文件。
 - FreeConvert 订阅约 12.99 至 29.99 美元/月，最大文件约 1.5GB 至 5GB。
-- HowToConvert 采用约 29 美元一次性购买，说明“隐私 + 本地 + 简单”具有付费意愿。
+- HowToConvert 仍为约 29 美元一次买断、最多 5 台设备、终身更新；定价卡 2026-08-18 仍标 Beta，定价页宣称约 2,427 名离线用户。说明“隐私 + 本地 + 简单”具有付费意愿。桌面引擎需用户另行安装，不是开箱自带。
 - 云服务的限制集中在文件大小、每日次数、隐私与订阅；开源本地产品可绕开这些结构性限制。
 - [FBI 2025 年在线文件转换器诈骗警告](https://www.fbi.gov/contact-us/field-offices/denver/news/fbi-denver-warns-of-online-file-converter-scam)强化了“本地、可审计、可信分发”的价值。
 
@@ -127,6 +127,7 @@ FormatWright 是一个开源、本地优先的通用文件转换平台。它不�
 - [Convertio Pricing](https://convertio.co/pricing/)
 - [Convertio Free Tier](https://support.convertio.co/hc/en-us/articles/360004386774-Free-tier-limit-for-file-conversions)
 - [FreeConvert Pricing](https://www.freeconvert.com/pricing)
+- [HowToConvert Pricing](https://howtoconvert.co/pricing)
 
 ### 1.4 最终机会判断
 
@@ -679,6 +680,8 @@ FormatWright/
 4. **确认**：展示转换计划、损失、预计空间和警告。
 5. **执行**：显示队列、逐项进度、速度、剩余时间和控制按钮。
 6. **验证**：完成后展示 Pass、Warning 或 Fail，并可打开报告和输出目录。
+
+Explorer **Convert to X** is the documented Plan-first exception that matches CLI `convert`: the Core still builds, hashes, and validates a Plan, but the named verb is the approval. **Open in FormatWright** stays the GUI review path. See [`docs/specs/WINDOWS_DAILY_USE_SPEC_PLAN.md`](docs/specs/WINDOWS_DAILY_USE_SPEC_PLAN.md) KD-2.
 
 ### 7.2 普通模式
 

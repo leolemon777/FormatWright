@@ -1,0 +1,120 @@
+{
+  "name": "Chicago 95",
+  "description": "A retro desktop OS design system rebuilt for the modern web. Beveled silver chrome, navy title bars, and pixel-tight typography evoke the chunky charm of mid-90s computing.",
+  "theme": "light",
+  "concept": "Chicago 95 reinterprets the classic operating-system look as a reusable component language. Every surface is a window: 2-pixel outset bevels carve light and shadow into silver panels, navy headers anchor each frame, and the iconic teal desktop ties the screen together. Type stays small, monospace where it matters, and icons stay crisp and outlined so the whole system feels like a workstation booting up.",
+  "palette": [
+    {
+      "name": "Desktop Teal",
+      "value": "#008080",
+      "role": "Primary page background and desktop surface"
+    },
+    {
+      "name": "Window Silver",
+      "value": "#c0c0c0",
+      "role": "Chrome, panels, button faces, and tab strips"
+    },
+    {
+      "name": "Title Navy",
+      "value": "#000080",
+      "role": "Active window title bars and primary accent"
+    },
+    {
+      "name": "Bevel Highlight",
+      "value": "#ffffff",
+      "role": "Top and left bevel highlights on raised surfaces"
+    },
+    {
+      "name": "Bevel Shadow",
+      "value": "#808080",
+      "role": "Bottom and right bevel shadows and dividers"
+    },
+    {
+      "name": "Deep Shadow",
+      "value": "#000000",
+      "role": "Outer frame edge, text, and inset shadows"
+    },
+    {
+      "name": "Workspace Paper",
+      "value": "#ffffff",
+      "role": "Document, code, and input field surfaces"
+    },
+    {
+      "name": "Alert Yellow",
+      "value": "#ffff00",
+      "role": "Warning highlights and signature focus accents"
+    }
+  ],
+  "fonts": [
+    {
+      "name": "VT323",
+      "provider": "Google Fonts",
+      "usage": "Display headings and the signature pixel terminal element",
+      "cssImport": "https://fonts.googleapis.com/css2?family=VT323&display=swap"
+    },
+    {
+      "name": "Pixelify Sans",
+      "provider": "Google Fonts",
+      "usage": "UI labels, buttons, tabs, and body text in window chrome",
+      "cssImport": "https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400;500;600;700&display=swap"
+    },
+    {
+      "name": "JetBrains Mono",
+      "provider": "Google Fonts",
+      "usage": "Code blocks, line numbers, and monospace data fields",
+      "cssImport": "https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&display=swap"
+    }
+  ],
+  "iconPack": {
+    "name": "Tabler Icons",
+    "url": "https://tabler.io/icons",
+    "license": "MIT",
+    "usage": "Outline icons sit inside beveled chrome buttons, title-bar controls, tab strips, and toolbar groups to mimic dense OS-style toolbars.",
+    "examples": [
+      {
+        "name": "Search",
+        "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" class=\"icon icon-tabler icons-tabler-outline icon-tabler-search\" > <path stroke=\"none\" d=\"M0 0h24v24H0z\" fill=\"none\" /> <path d=\"M3 10a7 7 0 1 0 14 0a7 7 0 1 0 -14 0\" /> <path d=\"M21 21l-6 -6\" /> </svg>"
+      },
+      {
+        "name": "Sun",
+        "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" class=\"icon icon-tabler icons-tabler-outline icon-tabler-sun\" > <path stroke=\"none\" d=\"M0 0h24v24H0z\" fill=\"none\" /> <path d=\"M8 12a4 4 0 1 0 8 0a4 4 0 1 0 -8 0\" /> <path d=\"M3 12h1m8 -9v1m8 8h1m-9 8v1m-6.4 -15.4l.7 .7m12.1 -.7l-.7 .7m0 11.4l.7 .7m-12.1 -.7l-.7 .7\" /> </svg>"
+      },
+      {
+        "name": "Moon",
+        "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" class=\"icon icon-tabler icons-tabler-outline icon-tabler-moon\" > <path stroke=\"none\" d=\"M0 0h24v24H0z\" fill=\"none\" /> <path d=\"M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454l0 .008\" /> </svg>"
+      },
+      {
+        "name": "Layers Intersect",
+        "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" class=\"icon icon-tabler icons-tabler-outline icon-tabler-layers-intersect\" > <path stroke=\"none\" d=\"M0 0h24v24H0z\" fill=\"none\" /> <path d=\"M8 6a2 2 0 0 1 2 -2h8a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h-8a2 2 0 0 1 -2 -2l0 -8\" /> <path d=\"M4 10a2 2 0 0 1 2 -2h8a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h-8a2 2 0 0 1 -2 -2l0 -8\" /> </svg>"
+      },
+      {
+        "name": "Bolt",
+        "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" class=\"icon icon-tabler icons-tabler-outline icon-tabler-bolt\" > <path stroke=\"none\" d=\"M0 0h24v24H0z\" fill=\"none\" /> <path d=\"M13 3l0 7l6 0l-8 11l0 -7l-6 0l8 -11\" /> </svg>"
+      },
+      {
+        "name": "Check",
+        "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" class=\"icon icon-tabler icons-tabler-outline icon-tabler-check\" > <path stroke=\"none\" d=\"M0 0h24v24H0z\" fill=\"none\" /> <path d=\"M5 12l5 5l10 -10\" /> </svg>"
+      },
+      {
+        "name": "Bell",
+        "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" class=\"icon icon-tabler icons-tabler-outline icon-tabler-bell\" > <path stroke=\"none\" d=\"M0 0h24v24H0z\" fill=\"none\" /> <path d=\"M10 5a2 2 0 1 1 4 0a7 7 0 0 1 4 6v3a4 4 0 0 0 2 3h-16a4 4 0 0 0 2 -3v-3a7 7 0 0 1 4 -6\" /> <path d=\"M9 17v1a3 3 0 0 0 6 0v-1\" /> </svg>"
+      },
+      {
+        "name": "Settings",
+        "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" class=\"icon icon-tabler icons-tabler-outline icon-tabler-settings\" > <path stroke=\"none\" d=\"M0 0h24v24H0z\" fill=\"none\" /> <path d=\"M10.325 4.317c.426 -1.756 2.924 -1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543 -.94 3.31 .826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756 .426 1.756 2.924 0 3.35a1.724 1.724 0 0 0 -1.066 2.573c.94 1.543 -.826 3.31 -2.37 2.37a1.724 1.724 0 0 0 -2.572 1.065c-.426 1.756 -2.924 1.756 -3.35 0a1.724 1.724 0 0 0 -2.573 -1.066c-1.543 .94 -3.31 -.826 -2.37 -2.37a1.724 1.724 0 0 0 -1.065 -2.572c-1.756 -.426 -1.756 -2.924 0 -3.35a1.724 1.724 0 0 0 1.066 -2.573c-.94 -1.543 .826 -3.31 2.37 -2.37c1 .608 2.296 .07 2.572 -1.065\" /> <path d=\"M9 12a3 3 0 1 0 6 0a3 3 0 0 0 -6 0\" /> </svg>"
+      },
+      {
+        "name": "User",
+        "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" class=\"icon icon-tabler icons-tabler-outline icon-tabler-user\" > <path stroke=\"none\" d=\"M0 0h24v24H0z\" fill=\"none\" /> <path d=\"M8 7a4 4 0 1 0 8 0a4 4 0 0 0 -8 0\" /> <path d=\"M6 21v-2a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v2\" /> </svg>"
+      }
+    ]
+  },
+  "tags": [
+    "Retro",
+    "Windows 95",
+    "Skeuomorphic",
+    "Pixel",
+    "Desktop OS",
+    "Light"
+  ]
+}

@@ -53,7 +53,7 @@
 - [x] 多进程队列所有权：持久批次 round-robin 窗口、`Queued → Inspecting` immediate-transaction 原子认领、`contended` 对账；四个 CLI 进程对 24 项只启动 24 次引擎并生成 24 份输出/报告。
 - [x] 真实强退恢复：在 `Running` 且 partial 已写入时定向终止进程树；recover 精确中断 1 项并清理 1 个 partial，resume 后完成、源 hash 不变、独立 ffprobe 通过。
 - [x] 10,000 mixed release gate：9,600 JSON→YAML + 200 PNG→WebP + 200 MKV→MP4；首窗口 86/85/85，批次首启差 1.791s，P50/P95 137.533/193.880s，49.762 jobs/s，控制面 RSS 70,877,184、WAL 峰值 48,092,792 bytes；20 个合法格式内容变化逐项确认为 `INPUT_CHANGED`，修复后全部完成，10,000 输出/报告、400 独立 probe、0 partial。
-- [x] Windows NSIS 安装钩子注册文件/目录经典 Explorer 菜单，卸载精确删除自有键；显式 `--shell-open` 只接受现存本地盘绝对路径，仅预填转换页。官方单实例插件先于其他插件注册，已打开应用接收新路径并聚焦，不会启动第二套恢复流程。
+- [x] Windows NSIS 安装钩子注册文件/目录经典 Explorer 菜单与 17 个 Convert verb，卸载精确删除生成表自有键；`--shell-open` 只预填转换页，`--shell-convert --to` 视为 CLI 批准。官方单实例插件先于其他插件注册，已打开应用接收新路径并聚焦，不会启动第二套恢复流程。
 - [x] 真实 current-user 安装烟测发现并修复 NSIS `$\"` 字面量引用缺陷；实际 Windows Shell verb 的 Unicode/空格文件冷启动和目录热转发、单 PID、零持久任务、缺失路径拒绝、卸载自有键/安装根清理及无关 sibling 保留全部通过，应用状态逐文件哈希恢复。
 - [x] Desktop 自动可访问性基线：真实 Tauri/WebView2 Accessibility Tree 为 198 节点、0 个无名称可聚焦控件；首 Tab 跳到主内容、导航/模式状态语义、200% 物理等效视口无页面横向溢出、RTL 路径隔离、reduced-motion/高对比/forced-colors、中英文 `lang` 与可访问名称切换全部通过。
 
@@ -229,7 +229,7 @@
 - [x] 启动恢复横幅：展示启动中断恢复数、精确 staging 清理数、各持久状态与可恢复总数；可直接进入按状态/批次筛选的任务页处理。
 - [ ] 密码/秘密专用提示，不写入 Plan、日志、SQLite、历史或报告。
 - [x] 文件夹批次按预计输出、并发 staging 和安全余量做磁盘空间预检与提交前硬阻断；目标根可重新选择。
-- [x] Windows Explorer 经典右键菜单：文件/目录、显式本机绝对路径、单实例转发、窗口聚焦、卸载键清理；真实 current-user 安装、实际 Shell verb 冷/热启动、UIA 路径、单 PID、零自动任务、负路径和精确卸载均通过。
+- [x] Windows Explorer 经典右键菜单：文件/目录 Open-in（0 Job）与 Convert to X（1 Job + Pass + 源 hash）、显式本机绝对路径、单实例转发、窗口聚焦、卸载 2+17 键清理。真实 current-user 安装烟测合同已按此拆分；干净 VM 关闭 R-008/R-009 仍待做。
 - [ ] Windows 11 现代顶层菜单扩展；macOS Finder Quick Action；Linux file-manager action。
 - [ ] 可访问性认证：自动 WebView 树、首 Tab 跳转、200% 物理等效视口、RTL 路径、对比度/forced-colors/reduced-motion 与中英文语义已通过；仍需全工作流键盘人工遍历、Windows Narrator、macOS VoiceOver、Linux Orca、物理 200% 高 DPI 与真实用户验证。
 - [ ] 24 人 Beta 可用性计划；80% 三分钟首次成功、Plan/Warning 理解率和恢复任务目标。

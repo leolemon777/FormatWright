@@ -1,0 +1,31 @@
+{
+  "openIn": [
+    {
+      "classesPath": "*\\shell\\FormatWright",
+      "label": "Open in FormatWright"
+    },
+    {
+      "classesPath": "Directory\\shell\\FormatWright",
+      "label": "Open in FormatWright"
+    }
+  ],
+  "convert": [
+    { "assoc": ".pdf", "verb": "FormatWright.ToPng", "target": "png", "label": "Convert to PNG" },
+    { "assoc": ".pdf", "verb": "FormatWright.ToJpg", "target": "jpg", "label": "Convert to JPG" },
+    { "assoc": ".png", "verb": "FormatWright.ToWebp", "target": "webp", "label": "Convert to WebP" },
+    { "assoc": ".jpg", "verb": "FormatWright.ToWebp", "target": "webp", "label": "Convert to WebP" },
+    { "assoc": ".jpeg", "verb": "FormatWright.ToWebp", "target": "webp", "label": "Convert to WebP" },
+    { "assoc": ".json", "verb": "FormatWright.ToYaml", "target": "yaml", "label": "Convert to YAML" },
+    { "assoc": ".csv", "verb": "FormatWright.ToJson", "target": "json", "label": "Convert to JSON" },
+    { "assoc": ".yaml", "verb": "FormatWright.ToJson", "target": "json", "label": "Convert to JSON" },
+    { "assoc": ".yml", "verb": "FormatWright.ToJson", "target": "json", "label": "Convert to JSON" },
+    { "assoc": ".xml", "verb": "FormatWright.ToJson", "target": "json", "label": "Convert to JSON" },
+    { "assoc": ".mp4", "verb": "FormatWright.ToMp3", "target": "mp3", "label": "Convert to MP3" },
+    { "assoc": ".mkv", "verb": "FormatWright.ToMp4", "target": "mp4", "label": "Convert to MP4" },
+    { "assoc": ".mov", "verb": "FormatWright.ToMp4", "target": "mp4", "label": "Convert to MP4" },
+    { "assoc": ".avi", "verb": "FormatWright.ToMp4", "target": "mp4", "label": "Convert to MP4" },
+    { "assoc": ".webm", "verb": "FormatWright.ToMp4", "target": "mp4", "label": "Convert to MP4" },
+    { "assoc": ".mp3", "verb": "FormatWright.ToWav", "target": "wav", "label": "Convert to WAV" },
+    { "assoc": ".wav", "verb": "FormatWright.ToMp3", "target": "mp3", "label": "Convert to MP3" }
+  ]
+}

@@ -1,0 +1,914 @@
+/* ==========================================================================
+   Chicago 95 — Design System
+   Skeuomorphic desktop-OS vocabulary rebuilt as reusable CSS tokens and
+   components. Square corners, beveled chrome, pixel-tight typography.
+   ========================================================================== */
+
+/* Remote webfonts omitted: Tauri CSP is style-src 'self'. Fallbacks are
+   Tahoma / MS Sans Serif / Courier New, which keep the workstation density
+   offline. */
+
+/* --------------------------------------------------------------------------
+   Tokens
+   -------------------------------------------------------------------------- */
+
+:root {
+  /* Colors — strict Win95 palette */
+  --c95-desktop: #008080;
+  --c95-silver: #c0c0c0;
+  --c95-silver-light: #dfdfdf;
+  --c95-silver-deep: #a8a8a8;
+  --c95-navy: #000080;
+  --c95-navy-soft: #1084d0;
+  --c95-highlight: #ffffff;
+  --c95-shadow: #808080;
+  --c95-shadow-deep: #000000;
+  --c95-paper: #ffffff;
+  --c95-paper-tint: #f0f0f0;
+  --c95-accent-yellow: #ffff00;
+  --c95-text: #000000;
+  --c95-text-inverse: #ffffff;
+  --c95-text-muted: #404040;
+  --c95-text-disabled: #808080;
+
+  /* Syntax (code) colors */
+  --c95-syntax-comment: #008000;
+  --c95-syntax-keyword: #0000ff;
+  --c95-syntax-string: #808080;
+  --c95-syntax-variable: #800080;
+  --c95-syntax-variable-2: #c00000;
+  --c95-syntax-function: #000000;
+  --c95-syntax-number: #000000;
+
+  /* Semantic surfaces */
+  --c95-bg-page: var(--c95-desktop);
+  --c95-bg-chrome: var(--c95-silver);
+  --c95-bg-panel: var(--c95-silver);
+  --c95-bg-field: var(--c95-paper);
+  --c95-bg-titlebar: var(--c95-navy);
+  --c95-bg-titlebar-inactive: var(--c95-shadow);
+
+  /* Typography */
+  --c95-font-display: "VT323", "Courier New", monospace;
+  --c95-font-ui: "Pixelify Sans", "MS Sans Serif", "Tahoma", sans-serif;
+  --c95-font-mono: "JetBrains Mono", "Courier New", monospace;
+
+  --c95-fs-display-xl: 56px;
+  --c95-fs-display-lg: 40px;
+  --c95-fs-display-md: 28px;
+  --c95-fs-headline-lg: 22px;
+  --c95-fs-headline-md: 18px;
+  --c95-fs-headline-sm: 15px;
+  --c95-fs-body-md: 14px;
+  --c95-fs-body-sm: 13px;
+  --c95-fs-label-sm: 12px;
+  --c95-fs-caption: 11px;
+  --c95-fs-mono-md: 13px;
+
+  --c95-lh-tight: 1.15;
+  --c95-lh-snug: 1.3;
+  --c95-lh-body: 1.45;
+
+  --c95-fw-regular: 400;
+  --c95-fw-medium: 500;
+  --c95-fw-bold: 700;
+
+  /* Spacing — pixel-aligned dense scale */
+  --c95-space-2xs: 2px;
+  --c95-space-xs: 4px;
+  --c95-space-sm: 6px;
+  --c95-space-md: 10px;
+  --c95-space-lg: 16px;
+  --c95-space-xl: 24px;
+  --c95-space-2xl: 32px;
+  --c95-space-3xl: 48px;
+
+  /* Radius — zero across the system */
+  --c95-radius-none: 0;
+  --c95-radius-sm: 0;
+  --c95-radius-md: 0;
+  --c95-radius-lg: 0;
+  --c95-radius-full: 0;
+
+  /* Borders */
+  --c95-border-w: 2px;
+  --c95-border-thin: 1px;
+  --c95-divider-color: var(--c95-shadow);
+
+  /* Bevel composites — encode the OS 3D effect as box-shadow stacks */
+  --c95-bevel-out:
+    inset 1px 1px 0 0 var(--c95-highlight),
+    inset -1px -1px 0 0 var(--c95-shadow-deep),
+    inset 2px 2px 0 0 var(--c95-silver-light),
+    inset -2px -2px 0 0 var(--c95-shadow);
+
+  --c95-bevel-in:
+    inset 1px 1px 0 0 var(--c95-shadow-deep),
+    inset -1px -1px 0 0 var(--c95-highlight),
+    inset 2px 2px 0 0 var(--c95-shadow),
+    inset -2px -2px 0 0 var(--c95-silver-light);
+
+  --c95-bevel-out-thin:
+    inset 1px 1px 0 0 var(--c95-highlight),
+    inset -1px -1px 0 0 var(--c95-shadow);
+
+  --c95-bevel-in-thin:
+    inset 1px 1px 0 0 var(--c95-shadow),
+    inset -1px -1px 0 0 var(--c95-highlight);
+
+  --c95-bevel-field:
+    inset 1px 1px 0 0 var(--c95-shadow),
+    inset -1px -1px 0 0 var(--c95-highlight),
+    inset 2px 2px 0 0 var(--c95-shadow-deep),
+    inset -2px -2px 0 0 var(--c95-silver-light);
+
+  /* Focus marquee — dotted 1px black ring drawn inside element */
+  --c95-focus-marquee: 1px dotted var(--c95-shadow-deep);
+
+  /* State tokens */
+  --c95-state-hover-tint: rgba(0, 0, 0, 0);  /* hover stays flat */
+  --c95-state-disabled-opacity: 0.6;
+
+  /* Sizing */
+  --c95-control-height-sm: 20px;
+  --c95-control-height-md: 24px;
+  --c95-control-height-lg: 28px;
+  --c95-titlebar-height: 22px;
+}
+
+/* --------------------------------------------------------------------------
+   Base / reset
+   -------------------------------------------------------------------------- */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  font-size: var(--c95-fs-body-md);
+  text-rendering: geometricPrecision;
+  -webkit-font-smoothing: none;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  background: var(--c95-bg-page);
+  color: var(--c95-text);
+  font-family: var(--c95-font-ui);
+  font-size: var(--c95-fs-body-md);
+  line-height: var(--c95-lh-snug);
+}
+
+::selection {
+  background: var(--c95-navy);
+  color: var(--c95-text-inverse);
+}
+
+/* --------------------------------------------------------------------------
+   Typography utilities
+   -------------------------------------------------------------------------- */
+
+.c95-display {
+  font-family: var(--c95-font-display);
+  font-size: var(--c95-fs-display-xl);
+  line-height: var(--c95-lh-tight);
+  letter-spacing: 0.02em;
+  color: var(--c95-text);
+  margin: 0;
+}
+
+.c95-display--md {
+  font-size: var(--c95-fs-display-md);
+}
+
+.c95-headline-lg {
+  font-family: var(--c95-font-ui);
+  font-size: var(--c95-fs-headline-lg);
+  font-weight: var(--c95-fw-bold);
+  line-height: var(--c95-lh-tight);
+  margin: 0;
+}
+
+.c95-headline-md {
+  font-family: var(--c95-font-ui);
+  font-size: var(--c95-fs-headline-md);
+  font-weight: var(--c95-fw-bold);
+  line-height: var(--c95-lh-snug);
+  margin: 0;
+}
+
+.c95-headline-sm {
+  font-family: var(--c95-font-ui);
+  font-size: var(--c95-fs-headline-sm);
+  font-weight: var(--c95-fw-bold);
+  line-height: var(--c95-lh-snug);
+  margin: 0;
+}
+
+.c95-body-md {
+  font-family: var(--c95-font-ui);
+  font-size: var(--c95-fs-body-md);
+  line-height: var(--c95-lh-body);
+  margin: 0;
+}
+
+.c95-body-sm {
+  font-family: var(--c95-font-ui);
+  font-size: var(--c95-fs-body-sm);
+  line-height: var(--c95-lh-body);
+  margin: 0;
+}
+
+.c95-label-sm {
+  font-family: var(--c95-font-ui);
+  font-size: var(--c95-fs-label-sm);
+  font-weight: var(--c95-fw-medium);
+  line-height: var(--c95-lh-tight);
+  margin: 0;
+}
+
+.c95-caption {
+  font-family: var(--c95-font-ui);
+  font-size: var(--c95-fs-caption);
+  color: var(--c95-text-muted);
+  line-height: var(--c95-lh-tight);
+  margin: 0;
+}
+
+.c95-mono {
+  font-family: var(--c95-font-mono);
+  font-size: var(--c95-fs-mono-md);
+  line-height: var(--c95-lh-snug);
+}
+
+/* --------------------------------------------------------------------------
+   Layout primitives
+   -------------------------------------------------------------------------- */
+
+.c95-desktop {
+  min-height: 100vh;
+  background: var(--c95-desktop);
+  padding: var(--c95-space-xl);
+  font-family: var(--c95-font-ui);
+}
+
+.c95-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--c95-space-lg);
+}
+
+.c95-row {
+  display: flex;
+  gap: var(--c95-space-md);
+  align-items: center;
+}
+
+.c95-grid {
+  display: grid;
+  gap: var(--c95-space-lg);
+}
+
+.c95-panel {
+  background: var(--c95-bg-panel);
+  color: var(--c95-text);
+  padding: var(--c95-space-md);
+  box-shadow: var(--c95-bevel-out);
+}
+
+.c95-panel--inset {
+  box-shadow: var(--c95-bevel-in);
+  background: var(--c95-paper);
+}
+
+.c95-divider {
+  border: 0;
+  border-top: 1px solid var(--c95-shadow);
+  border-bottom: 1px solid var(--c95-highlight);
+  margin: var(--c95-space-md) 0;
+}
+
+/* --------------------------------------------------------------------------
+   Button
+   -------------------------------------------------------------------------- */
+
+.c95-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--c95-space-xs);
+  min-width: 75px;
+  height: var(--c95-control-height-lg);
+  padding: 0 var(--c95-space-md);
+  font-family: var(--c95-font-ui);
+  font-size: var(--c95-fs-body-sm);
+  font-weight: var(--c95-fw-medium);
+  color: var(--c95-text);
+  background: var(--c95-silver);
+  border: 0;
+  border-radius: 0;
+  cursor: pointer;
+  box-shadow: var(--c95-bevel-out);
+  user-select: none;
+  white-space: nowrap;
+  position: relative;
+}
+
+.c95-button:hover {
+  background: var(--c95-silver);
+}
+
+.c95-button:focus-visible {
+  outline: none;
+}
+
+.c95-button:focus-visible::after {
+  content: "";
+  position: absolute;
+  inset: 3px;
+  border: var(--c95-focus-marquee);
+  pointer-events: none;
+}
+
+.c95-button:active,
+.c95-button[aria-pressed="true"] {
+  box-shadow: var(--c95-bevel-in);
+  padding: 0 calc(var(--c95-space-md) - 1px) 0 calc(var(--c95-space-md) + 1px);
+}
+
+.c95-button[disabled],
+.c95-button[aria-disabled="true"] {
+  color: var(--c95-text-disabled);
+  text-shadow: 1px 1px 0 var(--c95-highlight);
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.c95-button--primary {
+  outline: 1px solid var(--c95-shadow-deep);
+  outline-offset: 0;
+  font-weight: var(--c95-fw-bold);
+}
+
+.c95-button--icon {
+  min-width: 0;
+  width: var(--c95-control-height-lg);
+  padding: 0;
+}
+
+.c95-button--sm {
+  height: var(--c95-control-height-md);
+  font-size: var(--c95-fs-label-sm);
+  min-width: 60px;
+  padding: 0 var(--c95-space-sm);
+}
+
+.c95-button--ghost {
+  background: transparent;
+  box-shadow: none;
+  min-width: 0;
+  height: auto;
+  padding: var(--c95-space-2xs) var(--c95-space-xs);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  color: var(--c95-navy);
+}
+
+.c95-button--ghost:active {
+  box-shadow: none;
+  padding: var(--c95-space-2xs) var(--c95-space-xs);
+}
+
+/* --------------------------------------------------------------------------
+   Input fields
+   -------------------------------------------------------------------------- */
+
+.c95-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--c95-space-xs);
+}
+
+.c95-field__label {
+  font-family: var(--c95-font-ui);
+  font-size: var(--c95-fs-label-sm);
+  font-weight: var(--c95-fw-medium);
+  color: var(--c95-text);
+}
+
+.c95-input,
+.c95-textarea,
+.c95-select {
+  font-family: var(--c95-font-ui);
+  font-size: var(--c95-fs-body-sm);
+  color: var(--c95-text);
+  background: var(--c95-paper);
+  border: 0;
+  border-radius: 0;
+  padding: var(--c95-space-xs) var(--c95-space-sm);
+  height: var(--c95-control-height-lg);
+  box-shadow: var(--c95-bevel-field);
+  caret-color: var(--c95-text);
+  outline: none;
+  width: 100%;
+}
+
+.c95-input::placeholder,
+.c95-textarea::placeholder {
+  color: var(--c95-text-disabled);
+}
+
+.c95-input:focus,
+.c95-textarea:focus,
+.c95-select:focus {
+  outline: none;
+}
+
+.c95-input:focus-visible,
+.c95-textarea:focus-visible,
+.c95-select:focus-visible {
+  box-shadow:
+    var(--c95-bevel-field),
+    inset 0 0 0 1px var(--c95-navy);
+}
+
+.c95-textarea {
+  height: auto;
+  min-height: 96px;
+  resize: vertical;
+  font-family: var(--c95-font-mono);
+  line-height: var(--c95-lh-body);
+}
+
+.c95-input--mono {
+  font-family: var(--c95-font-mono);
+}
+
+.c95-input-group {
+  display: flex;
+  align-items: stretch;
+  background: var(--c95-paper);
+  box-shadow: var(--c95-bevel-field);
+}
+
+.c95-input-group .c95-input {
+  box-shadow: none;
+  height: calc(var(--c95-control-height-lg) - 4px);
+}
+
+.c95-input-group__addon {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 var(--c95-space-sm);
+  background: var(--c95-silver);
+  box-shadow: var(--c95-bevel-out-thin);
+  margin: 2px;
+  font-size: var(--c95-fs-label-sm);
+}
+
+/* --------------------------------------------------------------------------
+   Card / Window
+   -------------------------------------------------------------------------- */
+
+.c95-window {
+  background: var(--c95-silver);
+  color: var(--c95-text);
+  padding: var(--c95-space-2xs);
+  box-shadow: var(--c95-bevel-out);
+  font-family: var(--c95-font-ui);
+  display: flex;
+  flex-direction: column;
+  min-width: 240px;
+}
+
+.c95-window__titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--c95-space-sm);
+  height: var(--c95-titlebar-height);
+  padding: 0 var(--c95-space-2xs) 0 var(--c95-space-sm);
+  background: linear-gradient(
+    90deg,
+    var(--c95-navy) 0%,
+    var(--c95-navy) 60%,
+    var(--c95-navy-soft) 100%
+  );
+  color: var(--c95-text-inverse);
+}
+
+.c95-window__title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--c95-space-xs);
+  font-family: var(--c95-font-ui);
+  font-size: var(--c95-fs-label-sm);
+  font-weight: var(--c95-fw-bold);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.c95-window__title-icon {
+  width: 14px;
+  height: 14px;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.c95-window__controls {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.c95-window__ctrl {
+  width: 16px;
+  height: 14px;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--c95-silver);
+  color: var(--c95-text);
+  box-shadow: var(--c95-bevel-out-thin);
+  border: 0;
+  font-family: var(--c95-font-ui);
+  font-size: 10px;
+  font-weight: var(--c95-fw-bold);
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+
+.c95-window__ctrl:active {
+  box-shadow: var(--c95-bevel-in-thin);
+}
+
+.c95-window__menu {
+  display: flex;
+  gap: var(--c95-space-md);
+  padding: 2px var(--c95-space-sm);
+  background: var(--c95-silver);
+  border-bottom: 1px solid var(--c95-shadow);
+  font-size: var(--c95-fs-label-sm);
+}
+
+.c95-window__menu-item {
+  cursor: pointer;
+}
+
+.c95-window__menu-item u {
+  text-decoration: underline;
+}
+
+.c95-window__body {
+  background: var(--c95-silver);
+  padding: var(--c95-space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--c95-space-md);
+}
+
+.c95-window__body--inset {
+  background: var(--c95-paper);
+  box-shadow: var(--c95-bevel-in-thin);
+  margin: var(--c95-space-2xs);
+}
+
+.c95-window__statusbar {
+  display: flex;
+  align-items: center;
+  gap: var(--c95-space-sm);
+  padding: var(--c95-space-xs) var(--c95-space-sm);
+  background: var(--c95-silver);
+  border-top: 1px solid var(--c95-highlight);
+  font-size: var(--c95-fs-caption);
+  color: var(--c95-text-muted);
+}
+
+.c95-window__statusbar-cell {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px var(--c95-space-sm);
+  min-width: 80px;
+  box-shadow: var(--c95-bevel-in-thin);
+  background: var(--c95-silver);
+}
+
+/* --------------------------------------------------------------------------
+   Checkbox & radio
+   -------------------------------------------------------------------------- */
+
+.c95-check {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--c95-space-sm);
+  font-family: var(--c95-font-ui);
+  font-size: var(--c95-fs-body-sm);
+  color: var(--c95-text);
+  cursor: pointer;
+  user-select: none;
+}
+
+.c95-check__input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+.c95-check__box {
+  width: 14px;
+  height: 14px;
+  background: var(--c95-paper);
+  box-shadow: var(--c95-bevel-field);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  position: relative;
+}
+
+.c95-check__input:checked + .c95-check__box::after {
+  content: "";
+  width: 8px;
+  height: 8px;
+  background:
+    linear-gradient(45deg, transparent 45%, var(--c95-text) 45% 55%, transparent 55%),
+    linear-gradient(-45deg, transparent 45%, var(--c95-text) 45% 55%, transparent 55%);
+}
+
+.c95-check__input:focus-visible + .c95-check__box {
+  outline: var(--c95-focus-marquee);
+  outline-offset: 2px;
+}
+
+.c95-check__input:disabled ~ .c95-check__label {
+  color: var(--c95-text-disabled);
+}
+
+.c95-radio .c95-check__box {
+  /* same square treatment — no rounded radios */
+}
+
+.c95-radio .c95-check__input:checked + .c95-check__box::after {
+  content: "";
+  width: 6px;
+  height: 6px;
+  background: var(--c95-text);
+}
+
+/* --------------------------------------------------------------------------
+   Tabs (folder-tab metaphor)
+   -------------------------------------------------------------------------- */
+
+.c95-tabs {
+  display: flex;
+  flex-direction: column;
+}
+
+.c95-tabs__strip {
+  display: flex;
+  gap: 2px;
+  padding: 0 var(--c95-space-xs);
+  position: relative;
+  z-index: 2;
+}
+
+.c95-tabs__tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--c95-space-xs);
+  padding: var(--c95-space-xs) var(--c95-space-md);
+  font-family: var(--c95-font-ui);
+  font-size: var(--c95-fs-label-sm);
+  font-weight: var(--c95-fw-medium);
+  color: var(--c95-text);
+  background: var(--c95-silver);
+  border: 0;
+  cursor: pointer;
+  box-shadow:
+    inset 1px 1px 0 0 var(--c95-highlight),
+    inset -1px 0 0 0 var(--c95-shadow-deep),
+    inset -2px 0 0 0 var(--c95-shadow);
+  margin-bottom: -1px;
+  position: relative;
+  top: 2px;
+}
+
+.c95-tabs__tab[aria-selected="true"],
+.c95-tabs__tab.is-active {
+  top: 0;
+  padding-top: calc(var(--c95-space-xs) + 2px);
+  padding-bottom: calc(var(--c95-space-xs) + 1px);
+  background: var(--c95-silver);
+  z-index: 3;
+}
+
+.c95-tabs__tab[aria-selected="true"]::before,
+.c95-tabs__tab.is-active::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 4px;
+  right: 4px;
+  height: 1px;
+  background: var(--c95-navy);
+}
+
+.c95-tabs__panel {
+  background: var(--c95-silver);
+  padding: var(--c95-space-md);
+  box-shadow: var(--c95-bevel-out);
+  position: relative;
+  z-index: 1;
+}
+
+/* --------------------------------------------------------------------------
+   Signature element — CRT Terminal Window
+   -------------------------------------------------------------------------- */
+
+.c95-terminal {
+  background: var(--c95-silver);
+  padding: var(--c95-space-2xs);
+  box-shadow: var(--c95-bevel-out);
+  display: flex;
+  flex-direction: column;
+  font-family: var(--c95-font-display);
+}
+
+.c95-terminal__titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: var(--c95-titlebar-height);
+  padding: 0 var(--c95-space-2xs) 0 var(--c95-space-sm);
+  background: linear-gradient(
+    90deg,
+    var(--c95-navy) 0%,
+    var(--c95-navy) 65%,
+    var(--c95-navy-soft) 100%
+  );
+  color: var(--c95-text-inverse);
+  font-family: var(--c95-font-ui);
+  font-size: var(--c95-fs-label-sm);
+  font-weight: var(--c95-fw-bold);
+}
+
+.c95-terminal__screen {
+  background: #000000;
+  color: #33ff66;
+  padding: var(--c95-space-md);
+  font-family: var(--c95-font-display);
+  font-size: 22px;
+  line-height: 1.2;
+  letter-spacing: 0.02em;
+  min-height: 180px;
+  box-shadow: var(--c95-bevel-in-thin);
+  margin: var(--c95-space-2xs);
+  position: relative;
+  overflow: hidden;
+}
+
+.c95-terminal__screen::after {
+  /* faint scanline overlay */
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0) 0,
+    rgba(0, 0, 0, 0) 2px,
+    rgba(0, 0, 0, 0.18) 2px,
+    rgba(0, 0, 0, 0.18) 3px
+  );
+  pointer-events: none;
+}
+
+.c95-terminal__line {
+  display: block;
+  white-space: pre-wrap;
+}
+
+.c95-terminal__prompt {
+  color: #ffff66;
+}
+
+.c95-terminal__keyword {
+  color: #66ccff;
+  font-weight: var(--c95-fw-bold);
+}
+
+.c95-terminal__comment {
+  color: #66ff99;
+  opacity: 0.7;
+}
+
+.c95-terminal__string {
+  color: #ff99cc;
+}
+
+.c95-terminal__caret {
+  display: inline-block;
+  width: 0.6em;
+  height: 1em;
+  background: #33ff66;
+  vertical-align: text-bottom;
+  animation: c95-blink 1s steps(1) infinite;
+}
+
+@keyframes c95-blink {
+  0%, 50% { opacity: 1; }
+  50.01%, 100% { opacity: 0; }
+}
+
+/* --------------------------------------------------------------------------
+   Code block (legacy of the source DNA, now a system primitive)
+   -------------------------------------------------------------------------- */
+
+.c95-code {
+  font-family: var(--c95-font-mono);
+  font-size: var(--c95-fs-mono-md);
+  background: var(--c95-paper);
+  color: var(--c95-text);
+  box-shadow: var(--c95-bevel-in-thin);
+  padding: var(--c95-space-sm) var(--c95-space-md);
+  margin: 0;
+  white-space: pre;
+  overflow: auto;
+}
+
+.c95-code .tok-comment { color: var(--c95-syntax-comment); }
+.c95-code .tok-keyword { color: var(--c95-syntax-keyword); font-weight: var(--c95-fw-bold); }
+.c95-code .tok-string  { color: var(--c95-syntax-string); }
+.c95-code .tok-var     { color: var(--c95-syntax-variable); }
+.c95-code .tok-var2    { color: var(--c95-syntax-variable-2); }
+.c95-code .tok-fn      { color: var(--c95-syntax-function); font-weight: var(--c95-fw-bold); }
+.c95-code .tok-num     { color: var(--c95-syntax-number); }
+
+/* --------------------------------------------------------------------------
+   Tag / pill (signature accent uses Alert Yellow sparingly)
+   -------------------------------------------------------------------------- */
+
+.c95-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--c95-space-xs);
+  padding: 2px var(--c95-space-sm);
+  background: var(--c95-silver);
+  color: var(--c95-text);
+  font-family: var(--c95-font-ui);
+  font-size: var(--c95-fs-caption);
+  box-shadow: var(--c95-bevel-out-thin);
+}
+
+.c95-tag--alert {
+  background: var(--c95-accent-yellow);
+  color: var(--c95-shadow-deep);
+}
+
+/* --------------------------------------------------------------------------
+   Icon sizing
+   -------------------------------------------------------------------------- */
+
+.c95-icon {
+  width: 14px;
+  height: 14px;
+  display: inline-block;
+  vertical-align: middle;
+  color: currentColor;
+  flex-shrink: 0;
+}
+
+.c95-icon--md { width: 18px; height: 18px; }
+.c95-icon--lg { width: 24px; height: 24px; }
+
+/* --------------------------------------------------------------------------
+   Scrollbar styling — chunky beveled track
+   -------------------------------------------------------------------------- */
+
+.c95-scroll::-webkit-scrollbar {
+  width: 16px;
+  height: 16px;
+}
+.c95-scroll::-webkit-scrollbar-track {
+  background:
+    repeating-conic-gradient(var(--c95-silver-light) 0 25%, var(--c95-silver-deep) 0 50%)
+    0 0 / 4px 4px;
+}
+.c95-scroll::-webkit-scrollbar-thumb {
+  background: var(--c95-silver);
+  box-shadow: var(--c95-bevel-out-thin);
+}
+.c95-scroll::-webkit-scrollbar-button {
+  background: var(--c95-silver);
+  box-shadow: var(--c95-bevel-out-thin);
+  height: 16px;
+  width: 16px;
+}

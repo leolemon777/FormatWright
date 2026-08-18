@@ -1,0 +1,1243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Chicago 95 — Workstation Design System</title>
+  <link rel="stylesheet" href="../css/system.css" />
+  <style>
+    :root {
+      --page-pad: 28px;
+    }
+
+    body {
+      background:
+        radial-gradient(ellipse at top, #009a9a 0%, #008080 55%, #006a6a 100%);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    .page {
+      max-width: 1240px;
+      margin: 0 auto;
+      padding: var(--page-pad) var(--page-pad) 0;
+    }
+
+    /* Top OS-style menu bar */
+    .menubar {
+      background: var(--c95-silver);
+      box-shadow: var(--c95-bevel-out);
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 4px 8px;
+      font-size: 13px;
+      margin-bottom: 28px;
+    }
+    .menubar .start {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 2px 10px 2px 6px;
+      background: var(--c95-silver);
+      box-shadow: var(--c95-bevel-out-thin);
+      font-weight: 700;
+    }
+    .menubar .start .flag {
+      width: 16px; height: 16px;
+      display: inline-grid;
+      grid-template-columns: 1fr 1fr;
+      grid-template-rows: 1fr 1fr;
+      gap: 1px;
+    }
+    .menubar .start .flag span {
+      display: block;
+    }
+    .menubar .start .flag span:nth-child(1) { background: #ff3b3b; }
+    .menubar .start .flag span:nth-child(2) { background: #2ecc40; }
+    .menubar .start .flag span:nth-child(3) { background: #1c8fff; }
+    .menubar .start .flag span:nth-child(4) { background: #ffdc00; }
+    .menubar .links {
+      display: flex; gap: 16px;
+    }
+    .menubar .links span u { text-decoration: underline; }
+    .menubar .clock {
+      margin-left: auto;
+      padding: 2px 10px;
+      box-shadow: var(--c95-bevel-in-thin);
+      background: var(--c95-silver);
+      font-family: var(--c95-font-mono);
+      font-size: 12px;
+      display: inline-flex; gap: 8px; align-items: center;
+    }
+    .menubar .clock .dot {
+      width: 8px; height: 8px; background: #2ecc40; box-shadow: inset 1px 1px 0 0 #aaffaa;
+    }
+
+    /* HERO */
+    .hero {
+      display: grid;
+      grid-template-columns: 1.05fr 1fr;
+      gap: 28px;
+      align-items: stretch;
+    }
+
+    .hero-copy {
+      display: flex; flex-direction: column; justify-content: center;
+      gap: 18px;
+      padding: 6px 4px;
+    }
+    .hero-eyebrow {
+      display: inline-flex; align-items: center; gap: 8px;
+      font-family: var(--c95-font-ui);
+      color: var(--c95-text-inverse);
+      font-size: 12px; font-weight: 700; letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .hero-eyebrow .pulse {
+      width: 8px; height: 8px; background: var(--c95-accent-yellow);
+      box-shadow: 0 0 0 1px #000;
+    }
+    .hero-title {
+      font-family: var(--c95-font-display);
+      font-size: clamp(56px, 8vw, 108px);
+      line-height: 0.9;
+      color: var(--c95-text-inverse);
+      margin: 0;
+      letter-spacing: 0.01em;
+      text-shadow: 3px 3px 0 #000080, 6px 6px 0 #000;
+    }
+    .hero-title .pixel-cursor {
+      display: inline-block; width: 0.45em; height: 0.85em;
+      background: var(--c95-accent-yellow);
+      vertical-align: -2px;
+      box-shadow: 0 0 0 2px #000;
+      animation: c95-blink 1.05s steps(1) infinite;
+      margin-left: 6px;
+    }
+    .hero-sub {
+      font-family: var(--c95-font-ui);
+      font-size: 15px; line-height: 1.55;
+      color: #e8f4f4;
+      max-width: 480px;
+      text-shadow: 1px 1px 0 #004444;
+    }
+    .hero-cta {
+      display: flex; gap: 10px; flex-wrap: wrap;
+      margin-top: 4px;
+    }
+    .hero-stats {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      margin-top: 14px;
+    }
+    .hero-stat {
+      background: var(--c95-silver);
+      box-shadow: var(--c95-bevel-out);
+      padding: 10px 12px;
+      display: flex; flex-direction: column; gap: 4px;
+    }
+    .hero-stat b {
+      font-family: var(--c95-font-display);
+      font-size: 30px; line-height: 1; color: var(--c95-navy);
+    }
+    .hero-stat span {
+      font-size: 11px; color: var(--c95-text-muted);
+      text-transform: uppercase; letter-spacing: 0.06em;
+    }
+
+    /* Hero specimen window stack */
+    .hero-stack {
+      position: relative;
+      min-height: 460px;
+    }
+    .hero-stack .win {
+      position: absolute;
+    }
+    .hero-stack .win-back {
+      top: 10px; left: 0;
+      width: 420px;
+      transform: rotate(-1.5deg);
+      opacity: 0.94;
+    }
+    .hero-stack .win-front {
+      top: 78px; left: 92px;
+      width: 460px;
+      z-index: 2;
+    }
+    .hero-stack .win-mini {
+      bottom: 0; left: 18px;
+      width: 360px;
+      z-index: 3;
+    }
+
+    .palette-strip {
+      display: grid;
+      grid-template-columns: repeat(8, 1fr);
+      gap: 4px;
+      margin-top: 12px;
+    }
+    .palette-strip .sw {
+      height: 30px;
+      box-shadow: var(--c95-bevel-out-thin);
+      position: relative;
+    }
+    .palette-strip .sw::after {
+      content: attr(data-c);
+      position: absolute; bottom: -16px; left: 0;
+      font-family: var(--c95-font-mono);
+      font-size: 9px; color: #001a1a;
+      letter-spacing: 0;
+    }
+
+    /* SECTION: Workstation panel */
+    .section {
+      margin-top: 64px;
+    }
+    .section-head {
+      display: flex; align-items: flex-end; justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 18px;
+      color: var(--c95-text-inverse);
+    }
+    .section-head h2 {
+      font-family: var(--c95-font-display);
+      font-size: 44px; line-height: 1; margin: 0;
+      text-shadow: 2px 2px 0 #000;
+    }
+    .section-head p {
+      max-width: 380px; margin: 0;
+      font-size: 13px; line-height: 1.5;
+      text-shadow: 1px 1px 0 #004444;
+    }
+
+    .workstation {
+      display: grid;
+      grid-template-columns: 1.15fr 1fr;
+      gap: 22px;
+    }
+
+    .ws-window .toolbar {
+      display: flex; gap: 4px; align-items: center;
+      padding: 4px;
+      background: var(--c95-silver);
+      border-bottom: 1px solid var(--c95-shadow);
+    }
+    .ws-window .toolbar .tool-sep {
+      width: 0;
+      height: 22px;
+      border-left: 1px solid var(--c95-shadow);
+      border-right: 1px solid var(--c95-highlight);
+      margin: 0 4px;
+    }
+    .ws-window .toolbar .c95-button--icon {
+      width: 26px; height: 24px; min-width: 0;
+    }
+    .ws-window .toolbar .addr {
+      flex: 1;
+      display: flex; align-items: center; gap: 6px;
+      background: var(--c95-paper);
+      box-shadow: var(--c95-bevel-field);
+      padding: 0 6px;
+      height: 22px;
+      font-family: var(--c95-font-mono);
+      font-size: 12px;
+    }
+    .ws-window .toolbar .addr .caret {
+      display: inline-block;
+      width: 6px; height: 12px; background: var(--c95-text);
+      animation: c95-blink 1s steps(1) infinite;
+    }
+    .ws-window .ws-body {
+      padding: 14px;
+      display: grid;
+      grid-template-columns: 150px 1fr;
+      gap: 14px;
+    }
+    .ws-tree {
+      background: var(--c95-paper);
+      box-shadow: var(--c95-bevel-in-thin);
+      padding: 8px;
+      font-family: var(--c95-font-ui);
+      font-size: 12px;
+    }
+    .ws-tree .tree-item {
+      display: flex; align-items: center; gap: 6px;
+      padding: 2px 4px;
+      cursor: pointer;
+    }
+    .ws-tree .tree-item .indent { display: inline-block; width: 10px; }
+    .ws-tree .tree-item.is-selected {
+      background: var(--c95-navy); color: var(--c95-text-inverse);
+    }
+    .ws-tree .tree-item.is-selected .c95-icon { color: var(--c95-text-inverse); }
+    .ws-tree .tree-section {
+      font-weight: 700;
+      margin-top: 6px;
+      padding: 2px 4px;
+    }
+
+    .ws-content {
+      display: flex; flex-direction: column; gap: 12px;
+    }
+    .ws-form-row {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+    }
+    .ws-form-row.single { grid-template-columns: 1fr; }
+
+    .ws-check-list {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px;
+      padding: 10px;
+      background: var(--c95-silver);
+      box-shadow: var(--c95-bevel-out-thin);
+    }
+    .ws-check-list legend {
+      padding: 0 6px;
+      font-size: 12px; font-weight: 700;
+    }
+    .ws-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px; }
+
+    /* Right column: signature terminal + control panel */
+    .right-col {
+      display: flex; flex-direction: column; gap: 22px;
+    }
+
+    .term .c95-terminal__screen {
+      min-height: 260px;
+      font-size: 20px;
+    }
+
+    .ctrl-panel .c95-window__body {
+      padding: 12px;
+      display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+    }
+    .ctrl-tile {
+      background: var(--c95-silver);
+      box-shadow: var(--c95-bevel-out);
+      padding: 12px 10px;
+      display: flex; flex-direction: column; align-items: center;
+      gap: 6px; cursor: pointer;
+      font-size: 11px; text-align: center;
+    }
+    .ctrl-tile .glyph {
+      width: 32px; height: 32px;
+      display: inline-flex; align-items: center; justify-content: center;
+      box-shadow: var(--c95-bevel-in-thin);
+      background: var(--c95-paper);
+    }
+    .ctrl-tile .glyph .c95-icon { width: 22px; height: 22px; color: var(--c95-navy); }
+    .ctrl-tile.alert .glyph { background: var(--c95-accent-yellow); }
+    .ctrl-tile.alert .glyph .c95-icon { color: #000; }
+
+    /* SECTION: Tabs / properties */
+    .props-window .c95-window__body { padding: 14px; }
+    .props-row {
+      display: grid; grid-template-columns: 1fr 1.4fr; gap: 18px;
+    }
+    .props-left { display: flex; flex-direction: column; gap: 10px; }
+    .props-figure {
+      background: var(--c95-paper);
+      box-shadow: var(--c95-bevel-in-thin);
+      padding: 16px;
+      display: flex; flex-direction: column; align-items: center; gap: 12px;
+      min-height: 220px;
+      justify-content: center;
+    }
+    .props-figure .device {
+      width: 110px; height: 80px;
+      background: var(--c95-silver);
+      box-shadow: var(--c95-bevel-out);
+      display: flex; align-items: center; justify-content: center;
+      padding: 8px;
+      position: relative;
+    }
+    .props-figure .device .screen {
+      width: 100%; height: 100%;
+      background: #000080;
+      box-shadow: var(--c95-bevel-in-thin);
+      display: flex; flex-direction: column;
+      padding: 4px;
+      gap: 3px;
+    }
+    .props-figure .device .screen .bar {
+      height: 4px; background: rgba(255,255,255,0.6);
+    }
+    .props-figure .device .screen .bar:nth-child(1) { width: 70%; }
+    .props-figure .device .screen .bar:nth-child(2) { width: 90%; background: var(--c95-accent-yellow); }
+    .props-figure .device .screen .bar:nth-child(3) { width: 50%; }
+    .props-figure .device::after {
+      content: ""; position: absolute; bottom: -10px; left: 50%;
+      width: 30px; height: 8px; background: var(--c95-silver);
+      transform: translateX(-50%);
+      box-shadow: var(--c95-bevel-out-thin);
+    }
+    .props-figure h3 {
+      margin: 0; font-family: var(--c95-font-ui); font-size: 15px; font-weight: 700;
+    }
+    .props-figure .pp-meta { font-size: 11px; color: var(--c95-text-muted); }
+
+    .props-right .tabs-mock { margin-top: 4px; }
+    .props-list {
+      display: grid; grid-template-columns: 110px 1fr;
+      row-gap: 8px; column-gap: 14px;
+      font-size: 13px;
+      align-items: center;
+    }
+    .props-list dt { font-weight: 700; color: var(--c95-text-muted); font-size: 12px; }
+    .props-list dd { margin: 0; }
+    .props-list dd code {
+      font-family: var(--c95-font-mono); font-size: 12px;
+      background: var(--c95-paper); box-shadow: var(--c95-bevel-in-thin);
+      padding: 1px 6px;
+    }
+
+    .progress {
+      display: flex; align-items: center; gap: 8px;
+      font-family: var(--c95-font-mono); font-size: 12px;
+    }
+    .progress .track {
+      flex: 1; height: 14px;
+      background: var(--c95-paper);
+      box-shadow: var(--c95-bevel-in-thin);
+      padding: 1px;
+      display: flex; gap: 1px;
+    }
+    .progress .track i {
+      flex: 1;
+      background: var(--c95-navy);
+    }
+    .progress .track i.empty { background: transparent; }
+
+    /* Component gallery */
+    .gallery {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 22px;
+    }
+    .gallery-card { padding: 0; }
+    .gallery-card .c95-window__body { gap: 12px; padding: 14px; }
+    .gallery-card h3 {
+      margin: 0;
+      font-family: var(--c95-font-ui);
+      font-size: 14px; font-weight: 700;
+    }
+    .gallery-card .swatch-row {
+      display: flex; flex-wrap: wrap; gap: 8px;
+    }
+    .gallery-card .button-row {
+      display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+    }
+    .gallery-card .field-row { display: flex; flex-direction: column; gap: 8px; }
+    .gallery-card .checks { display: flex; flex-direction: column; gap: 6px; }
+
+    /* FAQ / Footer slab */
+    .action {
+      margin-top: 60px;
+      padding-bottom: 56px;
+    }
+    .action .c95-window__body {
+      display: grid;
+      grid-template-columns: 1.2fr 1fr;
+      gap: 24px;
+      padding: 22px;
+    }
+    .action h2 {
+      font-family: var(--c95-font-display);
+      font-size: 40px; line-height: 1; margin: 0 0 8px;
+    }
+    .action p {
+      margin: 0 0 14px; font-size: 14px; line-height: 1.55;
+    }
+    .action .cta-row { display: flex; gap: 10px; flex-wrap: wrap; }
+    .action .install {
+      background: #000; color: #33ff66;
+      font-family: var(--c95-font-mono); font-size: 13px;
+      padding: 10px 12px;
+      box-shadow: var(--c95-bevel-in-thin);
+      display: flex; flex-direction: column; gap: 4px;
+      min-height: 100%;
+    }
+    .action .install .lbl { color: #ffff66; }
+    .action .install .arrow { color: #66ccff; }
+
+    .footstrip {
+      display: flex; align-items: center; gap: 12px;
+      justify-content: space-between;
+      color: var(--c95-text-inverse);
+      font-size: 12px;
+      padding: 14px 4px 32px;
+    }
+    .footstrip span { text-shadow: 1px 1px 0 #003a3a; }
+
+    /* Small chips inside windows */
+    .chip-row { display: flex; flex-wrap: wrap; gap: 6px; }
+
+    /* Selection highlight in code well */
+    .code-well {
+      background: var(--c95-paper);
+      box-shadow: var(--c95-bevel-field);
+      padding: 8px 10px;
+      font-family: var(--c95-font-mono);
+      font-size: 12px;
+      line-height: 1.45;
+      max-height: 160px;
+      overflow: auto;
+      display: flex; gap: 10px;
+    }
+    .code-well .gutter {
+      color: #808080;
+      text-align: right;
+      border-right: 1px solid #c0c0c0;
+      padding-right: 8px;
+      user-select: none;
+      display: flex; flex-direction: column;
+    }
+    .code-well pre {
+      margin: 0; white-space: pre;
+    }
+
+    @media (max-width: 1080px) {
+      .hero { grid-template-columns: 1fr; }
+      .hero-stack { min-height: 540px; }
+      .workstation { grid-template-columns: 1fr; }
+      .props-row { grid-template-columns: 1fr; }
+      .gallery { grid-template-columns: 1fr 1fr; }
+      .action .c95-window__body { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 720px) {
+      .gallery { grid-template-columns: 1fr; }
+      .hero-stack .win-back, .hero-stack .win-front, .hero-stack .win-mini {
+        position: relative; top: 0; left: 0;
+        transform: none; width: 100%; margin-bottom: 14px;
+      }
+      .hero-stack { min-height: 0; }
+      .ws-body { grid-template-columns: 1fr !important; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+
+    <!-- Faux desktop menu bar -->
+    <nav class="menubar" aria-label="Workstation menu">
+      <div class="start" aria-hidden="true">
+        <span class="flag"><span></span><span></span><span></span><span></span></span>
+        Start
+      </div>
+      <div class="links">
+        <span><u>F</u>ile</span>
+        <span><u>E</u>dit</span>
+        <span><u>V</u>iew</span>
+        <span><u>I</u>nsert</span>
+        <span><u>H</u>elp</span>
+      </div>
+      <div class="clock" aria-label="Status">
+        <span class="dot" aria-hidden="true"></span>
+        <span>SYS OK</span>
+        <span>·</span>
+        <span>11:42 AM</span>
+      </div>
+    </nav>
+
+    <!-- HERO -->
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="hero-copy">
+        <div class="hero-eyebrow">
+          <span class="pulse" aria-hidden="true"></span>
+          Build · Ship · Bevel · Repeat
+        </div>
+        <h1 id="hero-title" class="hero-title">
+          Chicago<br/>95.<span class="pixel-cursor" aria-hidden="true"></span>
+        </h1>
+        <p class="hero-sub">
+          A workstation-flavored UI kit. Beveled silver chrome, navy title bars,
+          and pixel-tight typography rebuilt as a portable, framework-agnostic
+          CSS system for dense, opinionated product surfaces.
+        </p>
+        <div class="hero-cta">
+          <button type="button" class="c95-button c95-button--primary">
+            <svg class="c95-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M6 4h10l4 4v10a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2"/>
+              <path d="M6 4v4h8v-4"/>
+              <path d="M6 18v-5h12v5"/>
+            </svg>
+            Install kit
+          </button>
+          <button type="button" class="c95-button">
+            <svg class="c95-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M14 3v4a1 1 0 0 0 1 1h4"/>
+              <path d="M17 21h-10a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v11a2 2 0 0 1 -2 2z"/>
+            </svg>
+            Read the docs
+          </button>
+          <button type="button" class="c95-button" disabled>
+            <svg class="c95-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M3 12a9 9 0 1 0 18 0a9 9 0 0 0 -18 0"/>
+              <path d="M12 7v5l3 3"/>
+            </svg>
+            v2.1 — coming Friday
+          </button>
+        </div>
+
+        <dl class="hero-stats" aria-label="System at a glance">
+          <div class="hero-stat"><b>42</b><span>Tokens</span></div>
+          <div class="hero-stat"><b>18</b><span>Components</span></div>
+          <div class="hero-stat"><b>0px</b><span>Border radius</span></div>
+        </dl>
+
+        <div class="palette-strip" aria-label="System palette">
+          <div class="sw" style="background:#008080" data-c="teal"></div>
+          <div class="sw" style="background:#c0c0c0" data-c="silver"></div>
+          <div class="sw" style="background:#000080" data-c="navy"></div>
+          <div class="sw" style="background:#ffffff" data-c="paper"></div>
+          <div class="sw" style="background:#808080" data-c="shadow"></div>
+          <div class="sw" style="background:#000000" data-c="deep"></div>
+          <div class="sw" style="background:#ffff00" data-c="alert"></div>
+          <div class="sw" style="background:#1084d0" data-c="navy-lt"></div>
+        </div>
+      </div>
+
+      <div class="hero-stack" aria-hidden="true">
+        <!-- Back window: code window -->
+        <article class="win win-back c95-window">
+          <header class="c95-window__titlebar">
+            <span class="c95-window__title">
+              <svg class="c95-window__title-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M3 4a1 1 0 0 0 -1 1v14a1 1 0 0 0 1 1h18a1 1 0 0 0 1 -1v-14a1 1 0 0 0 -1 -1z"/>
+                <path d="M8 10l3 2l-3 2"/>
+                <path d="M13 14l3 0"/>
+              </svg>
+              server.mjs — Notepad
+            </span>
+            <span class="c95-window__controls">
+              <button type="button" class="c95-window__ctrl" aria-label="Minimize">_</button>
+              <button type="button" class="c95-window__ctrl" aria-label="Maximize">□</button>
+              <button type="button" class="c95-window__ctrl" aria-label="Close">×</button>
+            </span>
+          </header>
+          <div class="c95-window__menu">
+            <span class="c95-window__menu-item"><u>F</u>ile</span>
+            <span class="c95-window__menu-item"><u>E</u>dit</span>
+            <span class="c95-window__menu-item"><u>S</u>earch</span>
+            <span class="c95-window__menu-item"><u>H</u>elp</span>
+          </div>
+          <div class="c95-window__body">
+            <div class="code-well c95-scroll">
+              <div class="gutter">
+                <span>1</span><span>2</span><span>3</span><span>4</span>
+                <span>5</span><span>6</span><span>7</span><span>8</span>
+              </div>
+<pre><code><span class="tok-comment">// server.mjs</span>
+<span class="tok-keyword">import</span> { <span class="tok-var">createServer</span> } <span class="tok-keyword">from</span> <span class="tok-string">'node:http'</span>;
+
+<span class="tok-keyword">const</span> <span class="tok-var2">server</span> = <span class="tok-fn">createServer</span>((req, res) =&gt; {
+  res.<span class="tok-fn">writeHead</span>(<span class="tok-num">200</span>, { <span class="tok-string">'Content-Type'</span>: <span class="tok-string">'text/plain'</span> });
+  res.<span class="tok-fn">end</span>(<span class="tok-string">'Hello World!'</span>);
+});
+<span class="tok-var2">server</span>.<span class="tok-fn">listen</span>(<span class="tok-num">3000</span>);
+</code></pre>
+            </div>
+          </div>
+          <div class="c95-window__statusbar">
+            <span class="c95-window__statusbar-cell">Ln 1, Col 1</span>
+            <span class="c95-window__statusbar-cell">UTF-8</span>
+            <span class="c95-window__statusbar-cell" style="margin-left:auto">JavaScript</span>
+          </div>
+        </article>
+
+        <!-- Front window: terminal/cmd -->
+        <article class="win win-front c95-terminal">
+          <header class="c95-terminal__titlebar">
+            <span class="c95-window__title">
+              <svg class="c95-window__title-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M5 7l5 5l-5 5"/>
+                <path d="M12 19l7 0"/>
+              </svg>
+              C:\\&gt; CHICAGO95.EXE
+            </span>
+            <span class="c95-window__controls">
+              <button type="button" class="c95-window__ctrl" aria-label="Minimize">_</button>
+              <button type="button" class="c95-window__ctrl" aria-label="Maximize">□</button>
+              <button type="button" class="c95-window__ctrl" aria-label="Close">×</button>
+            </span>
+          </header>
+          <div class="c95-terminal__screen">
+            <span class="c95-terminal__line"><span class="c95-terminal__prompt">C:\\&gt;</span> design-system <span class="c95-terminal__keyword">install</span> chicago95</span>
+            <span class="c95-terminal__line"><span class="c95-terminal__comment">; reading manifest...</span></span>
+            <span class="c95-terminal__line">  <span class="c95-terminal__keyword">FETCH</span> tokens.css <span class="c95-terminal__string">"v2.1.0"</span> .... OK</span>
+            <span class="c95-terminal__line">  <span class="c95-terminal__keyword">BUILD</span> bevel-out .... OK</span>
+            <span class="c95-terminal__line">  <span class="c95-terminal__keyword">BUILD</span> bevel-in  .... OK</span>
+            <span class="c95-terminal__line"><span class="c95-terminal__comment">; 42 tokens, 18 components</span></span>
+            <span class="c95-terminal__line"><span class="c95-terminal__prompt">C:\\&gt;</span> run hello.exe<span class="c95-terminal__caret" aria-hidden="true"></span></span>
+          </div>
+        </article>
+
+        <!-- Mini window: a dialog -->
+        <article class="win win-mini c95-window" style="z-index:4">
+          <header class="c95-window__titlebar">
+            <span class="c95-window__title">
+              <svg class="c95-window__title-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 9v2m0 4v.01"/>
+                <path d="M5 19h14a2 2 0 0 0 1.84 -2.75l-7.1 -12.25a2 2 0 0 0 -3.5 0l-7.1 12.25a2 2 0 0 0 1.75 2.75"/>
+              </svg>
+              Confirm Action
+            </span>
+            <span class="c95-window__controls">
+              <button type="button" class="c95-window__ctrl" aria-label="Close">×</button>
+            </span>
+          </header>
+          <div class="c95-window__body" style="flex-direction:row;align-items:center;gap:14px">
+            <div style="width:42px;height:42px;background:var(--c95-accent-yellow);box-shadow:var(--c95-bevel-out-thin);display:inline-flex;align-items:center;justify-content:center;font-family:var(--c95-font-display);font-size:30px;color:#000">!</div>
+            <div style="flex:1;font-size:13px;line-height:1.45">
+              Ship the new build to <b>production-1</b>?<br/>
+              <span style="color:var(--c95-text-muted);font-size:12px">This action cannot be undone.</span>
+            </div>
+          </div>
+          <div class="c95-window__body" style="padding-top:0;justify-content:flex-end;flex-direction:row">
+            <button type="button" class="c95-button c95-button--primary">OK</button>
+            <button type="button" class="c95-button">Cancel</button>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <!-- SECTION: Workstation panel demo -->
+    <section class="section" aria-labelledby="ws-head">
+      <header class="section-head">
+        <h2 id="ws-head">Operator's workstation.</h2>
+        <p>Real product surfaces: file browsers, control panels, and the signature CRT terminal — all wired from the same beveled component language.</p>
+      </header>
+
+      <div class="workstation">
+        <article class="c95-window ws-window">
+          <header class="c95-window__titlebar">
+            <span class="c95-window__title">
+              <svg class="c95-window__title-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M5 4h4l3 3h7a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-11a2 2 0 0 1 2 -2"/>
+              </svg>
+              Project Explorer — Chicago95
+            </span>
+            <span class="c95-window__controls">
+              <button type="button" class="c95-window__ctrl" aria-label="Minimize">_</button>
+              <button type="button" class="c95-window__ctrl" aria-label="Maximize">□</button>
+              <button type="button" class="c95-window__ctrl" aria-label="Close">×</button>
+            </span>
+          </header>
+          <div class="c95-window__menu">
+            <span class="c95-window__menu-item"><u>F</u>ile</span>
+            <span class="c95-window__menu-item"><u>E</u>dit</span>
+            <span class="c95-window__menu-item"><u>V</u>iew</span>
+            <span class="c95-window__menu-item"><u>T</u>ools</span>
+            <span class="c95-window__menu-item"><u>H</u>elp</span>
+          </div>
+          <div class="toolbar">
+            <button type="button" class="c95-button c95-button--icon" aria-label="Back">
+              <svg class="c95-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6l6 6"/></svg>
+            </button>
+            <button type="button" class="c95-button c95-button--icon" aria-label="Forward">
+              <svg class="c95-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6l-6 6"/></svg>
+            </button>
+            <span class="tool-sep" aria-hidden="true"></span>
+            <button type="button" class="c95-button c95-button--icon" aria-label="Search">
+              <svg class="c95-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M21 21l-6 -6"/>
+                <path d="M10 17a7 7 0 1 1 0 -14a7 7 0 0 1 0 14z"/>
+              </svg>
+            </button>
+            <button type="button" class="c95-button c95-button--icon" aria-label="Save">
+              <svg class="c95-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M6 4h10l4 4v10a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2"/>
+                <path d="M6 4v4h8v-4"/>
+                <path d="M6 18v-5h12v5"/>
+              </svg>
+            </button>
+            <span class="tool-sep" aria-hidden="true"></span>
+            <div class="addr">
+              <svg class="c95-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M5 12l14 0"/><path d="M13 18l6 -6"/><path d="M13 6l6 6"/>
+              </svg>
+              <span>C:\\projects\\chicago95\\src</span>
+              <span class="caret" aria-hidden="true"></span>
+            </div>
+            <button type="button" class="c95-button c95-button--sm">Go</button>
+          </div>
+
+          <div class="ws-body">
+            <aside class="ws-tree" aria-label="Folder tree">
+              <div class="tree-section">Workstation</div>
+              <div class="tree-item">
+                <svg class="c95-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4h4l3 3h7a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-11a2 2 0 0 1 2 -2"/></svg>
+                Documents
+              </div>
+              <div class="tree-item">
+                <span class="indent"></span>
+                <svg class="c95-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4h4l3 3h7a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-11a2 2 0 0 1 2 -2"/></svg>
+                projects
+              </div>
+              <div class="tree-item is-selected">
+                <span class="indent"></span><span class="indent"></span>
+                <svg class="c95-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4h4l3 3h7a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-11a2 2 0 0 1 2 -2"/></svg>
+                chicago95
+              </div>
+              <div class="tree-item">
+                <span class="indent"></span><span class="indent"></span><span class="indent"></span>
+                <svg class="c95-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3v4a1 1 0 0 0 1 1h4"/><path d="M17 21h-10a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v11a2 2 0 0 1 -2 2z"/></svg>
+                system.css
+              </div>
+              <div class="tree-item">
+                <span class="indent"></span><span class="indent"></span><span class="indent"></span>
+                <svg class="c95-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3v4a1 1 0 0 0 1 1h4"/><path d="M17 21h-10a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v11a2 2 0 0 1 -2 2z"/></svg>
+                tokens.json
+              </div>
+              <div class="tree-section">Network</div>
+              <div class="tree-item">
+                <svg class="c95-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 18 0a9 9 0 0 0 -18 0"/><path d="M3.6 9h16.8"/><path d="M3.6 15h16.8"/></svg>
+                Workstation 03
+              </div>
+            </aside>
+
+            <div class="ws-content">
+              <div class="ws-form-row">
+                <div class="c95-field">
+                  <label class="c95-field__label" for="acct-id">Account ID</label>
+                  <input id="acct-id" class="c95-input c95-input--mono" type="text" value="CHI-95-00427" />
+                </div>
+                <div class="c95-field">
+                  <label class="c95-field__label" for="env">Environment</label>
+                  <select id="env" class="c95-select">
+                    <option>Production</option>
+                    <option>Staging</option>
+                    <option>Local</option>
+                  </select>
+                </div>
+              </div>
+              <div class="ws-form-row single">
+                <div class="c95-field">
+                  <label class="c95-field__label" for="srch">Find in project</label>
+                  <div class="c95-input-group">
+                    <input id="srch" class="c95-input" type="search" placeholder="Search files, tokens, components..." />
+                    <span class="c95-input-group__addon">
+                      <svg class="c95-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M21 21l-6 -6"/>
+                        <path d="M10 17a7 7 0 1 1 0 -14a7 7 0 0 1 0 14z"/>
+                      </svg>
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <fieldset class="ws-check-list">
+                <legend>Build options</legend>
+                <label class="c95-check">
+                  <input class="c95-check__input" type="checkbox" checked>
+                  <span class="c95-check__box" aria-hidden="true"></span>
+                  <span class="c95-check__label">Minify tokens</span>
+                </label>
+                <label class="c95-check">
+                  <input class="c95-check__input" type="checkbox" checked>
+                  <span class="c95-check__box" aria-hidden="true"></span>
+                  <span class="c95-check__label">Generate sourcemaps</span>
+                </label>
+                <label class="c95-check">
+                  <input class="c95-check__input" type="checkbox">
+                  <span class="c95-check__box" aria-hidden="true"></span>
+                  <span class="c95-check__label">Strip animations</span>
+                </label>
+                <label class="c95-check">
+                  <input class="c95-check__input" type="checkbox" checked>
+                  <span class="c95-check__box" aria-hidden="true"></span>
+                  <span class="c95-check__label">Ship CRT shader</span>
+                </label>
+                <label class="c95-check c95-radio">
+                  <input class="c95-check__input" type="radio" name="theme" checked>
+                  <span class="c95-check__box" aria-hidden="true"></span>
+                  <span class="c95-check__label">Light (Chicago)</span>
+                </label>
+                <label class="c95-check c95-radio">
+                  <input class="c95-check__input" type="radio" name="theme">
+                  <span class="c95-check__box" aria-hidden="true"></span>
+                  <span class="c95-check__label">Dark (After Dark)</span>
+                </label>
+              </fieldset>
+
+              <div class="progress" aria-label="Build progress">
+                <span>Build:</span>
+                <span class="track">
+                  <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+                  <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+                  <i class="empty"></i><i class="empty"></i><i class="empty"></i><i class="empty"></i>
+                </span>
+                <span>82%</span>
+              </div>
+
+              <div class="ws-actions">
+                <button type="button" class="c95-button">Cancel</button>
+                <button type="button" class="c95-button c95-button--primary">
+                  <svg class="c95-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M5 12l5 5l10 -10"/>
+                  </svg>
+                  Apply changes
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="c95-window__statusbar">
+            <span class="c95-window__statusbar-cell">12 files</span>
+            <span class="c95-window__statusbar-cell">Modified · 11:32</span>
+            <span class="c95-window__statusbar-cell" style="margin-left:auto">Online</span>
+          </div>
+        </article>
+
+        <div class="right-col">
+          <!-- Signature: CRT terminal -->
+          <article class="c95-terminal term">
+            <header class="c95-terminal__titlebar">
+              <span class="c95-window__title">
+                <svg class="c95-window__title-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M5 7l5 5l-5 5"/>
+                  <path d="M12 19l7 0"/>
+                </svg>
+                MS-DOS Prompt
+              </span>
+              <span class="c95-window__controls">
+                <button type="button" class="c95-window__ctrl" aria-label="Minimize">_</button>
+                <button type="button" class="c95-window__ctrl" aria-label="Maximize">□</button>
+                <button type="button" class="c95-window__ctrl" aria-label="Close">×</button>
+              </span>
+            </header>
+            <div class="c95-terminal__screen">
+              <span class="c95-terminal__line"><span class="c95-terminal__comment">Microsoft(R) Windows 95</span></span>
+              <span class="c95-terminal__line"><span class="c95-terminal__comment">(C) Copyright Microsoft Corp 1981-1995.</span></span>
+              <span class="c95-terminal__line">&nbsp;</span>
+              <span class="c95-terminal__line"><span class="c95-terminal__prompt">C:\\WIN95&gt;</span> dir <span class="c95-terminal__string">/w</span></span>
+              <span class="c95-terminal__line">  TOKENS &nbsp;BUTTONS &nbsp;TABS &nbsp;CHECKS &nbsp;TERMINAL</span>
+              <span class="c95-terminal__line">  INPUTS &nbsp;CARDS &nbsp;&nbsp;&nbsp;ICONS DIALOGS &nbsp;DESIGN.MD</span>
+              <span class="c95-terminal__line">&nbsp;</span>
+              <span class="c95-terminal__line">  <span class="c95-terminal__keyword">10</span> file(s) &nbsp;&nbsp;&nbsp;<span class="c95-terminal__string">42,128</span> bytes</span>
+              <span class="c95-terminal__line"><span class="c95-terminal__prompt">C:\\WIN95&gt;</span> build <span class="c95-terminal__keyword">--theme</span> light<span class="c95-terminal__caret" aria-hidden="true"></span></span>
+            </div>
+          </article>
+
+          <!-- Control Panel -->
+          <article class="c95-window ctrl-panel">
+            <header class="c95-window__titlebar">
+              <span class="c95-window__title">
+                <svg class="c95-window__title-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M10.325 4.317c.426 -1.756 2.924 -1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543 -.94 3.31 .826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756 .426 1.756 2.924 0 3.35a1.724 1.724 0 0 0 -1.066 2.573c.94 1.543 -.826 3.31 -2.37 2.37a1.724 1.724 0 0 0 -2.572 1.065c-.426 1.756 -2.924 1.756 -3.35 0a1.724 1.724 0 0 0 -2.573 -1.066c-1.543 .94 -3.31 -.826 -2.37 -2.37a1.724 1.724 0 0 0 -1.065 -2.572c-1.756 -.426 -1.756 -2.924 0 -3.35a1.724 1.724 0 0 0 1.066 -2.573c-.94 -1.543 .826 -3.31 2.37 -2.37c1 .608 2.296 .07 2.572 -1.065z"/>
+                  <path d="M9 12a3 3 0 1 0 6 0a3 3 0 0 0 -6 0"/>
+                </svg>
+                Control Panel
+              </span>
+              <span class="c95-window__controls">
+                <button type="button" class="c95-window__ctrl" aria-label="Minimize">_</button>
+                <button type="button" class="c95-window__ctrl" aria-label="Maximize">□</button>
+                <button type="button" class="c95-window__ctrl" aria-label="Close">×</button>
+              </span>
+            </header>
+            <div class="c95-window__body">
+              <button type="button" class="ctrl-tile">
+                <span class="glyph">
+                  <svg class="c95-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M3 5a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v10a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-10z"/>
+                    <path d="M7 20h10"/><path d="M9 16v4"/><path d="M15 16v4"/>
+                  </svg>
+                </span>
+                Display
+              </button>
+              <button type="button" class="ctrl-tile">
+                <span class="glyph">
+                  <svg class="c95-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M2 6m0 1a1 1 0 0 1 1 -1h18a1 1 0 0 1 1 1v10a1 1 0 0 1 -1 1h-18a1 1 0 0 1 -1 -1z"/>
+                    <path d="M6 10h0"/><path d="M10 10h0"/><path d="M14 10h0"/><path d="M18 10h0"/>
+                    <path d="M6 14h12"/>
+                  </svg>
+                </span>
+                Keyboard
+              </button>
+              <button type="button" class="ctrl-tile">
+                <span class="glyph">
+                  <svg class="c95-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M15 8a5 5 0 0 1 0 8"/>
+                    <path d="M17.7 5a9 9 0 0 1 0 14"/>
+                    <path d="M6 15h-2a1 1 0 0 1 -1 -1v-4a1 1 0 0 1 1 -1h2l3.5 -4.5a.8 .8 0 0 1 1.5 .5v14a.8 .8 0 0 1 -1.5 .5l-3.5 -4.5"/>
+                  </svg>
+                </span>
+                Sound
+              </button>
+              <button type="button" class="ctrl-tile alert">
+                <span class="glyph">
+                  <svg class="c95-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M12 9v2m0 4v.01"/>
+                    <path d="M5 19h14a2 2 0 0 0 1.84 -2.75l-7.1 -12.25a2 2 0 0 0 -3.5 0l-7.1 12.25a2 2 0 0 0 1.75 2.75"/>
+                  </svg>
+                </span>
+                Updates
+              </button>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION: Properties / tabs / pricing-ish -->
+    <section class="section" aria-labelledby="props-head">
+      <header class="section-head">
+        <h2 id="props-head">Properties dialog.</h2>
+        <p>Tabs, property lists, and meters reuse the bevel grammar so dense settings panels stay readable at workstation density.</p>
+      </header>
+
+      <article class="c95-window props-window">
+        <header class="c95-window__titlebar">
+          <span class="c95-window__title">
+            <svg class="c95-window__title-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M3 5a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v10a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-10z"/>
+              <path d="M7 20h10"/><path d="M9 16v4"/><path d="M15 16v4"/>
+            </svg>
+            Display Properties
+          </span>
+          <span class="c95-window__controls">
+            <button type="button" class="c95-window__ctrl" aria-label="Help">?</button>
+            <button type="button" class="c95-window__ctrl" aria-label="Close">×</button>
+          </span>
+        </header>
+
+        <div class="c95-window__body">
+          <div class="c95-tabs tabs-mock" role="tablist">
+            <div class="c95-tabs__strip">
+              <button type="button" class="c95-tabs__tab" role="tab" aria-selected="false">Background</button>
+              <button type="button" class="c95-tabs__tab" role="tab" aria-selected="true">Appearance</button>
+              <button type="button" class="c95-tabs__tab" role="tab" aria-selected="false">Effects</button>
+              <button type="button" class="c95-tabs__tab" role="tab" aria-selected="false">Settings</button>
+            </div>
+            <div class="c95-tabs__panel" role="tabpanel">
+              <div class="props-row">
+                <div class="props-left">
+                  <div class="props-figure">
+                    <div class="device" aria-hidden="true">
+                      <div class="screen">
+                        <span class="bar"></span><span class="bar"></span><span class="bar"></span>
+                      </div>
+                    </div>
+                    <h3>Inactive Window</h3>
+                    <span class="pp-meta">Preview · 800×600 · 16 colors</span>
+                    <div class="chip-row">
+                      <span class="c95-tag">3D Objects</span>
+                      <span class="c95-tag">Buttons</span>
+                      <span class="c95-tag c95-tag--alert">Recommended</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="props-right">
+                  <div class="c95-field" style="margin-bottom:10px">
+                    <label class="c95-field__label" for="scheme">Color scheme</label>
+                    <select id="scheme" class="c95-select">
+                      <option>Chicago 95 (Standard)</option>
+                      <option>Rainy Day</option>
+                      <option>Eggplant</option>
+                      <option>Plum (Hi-Color)</option>
+                    </select>
+                  </div>
+                  <dl class="props-list">
+                    <dt>Item</dt><dd>Active title bar</dd>
+                    <dt>Size</dt><dd><code>22px</code></dd>
+                    <dt>Color 1</dt><dd>
+                      <span style="display:inline-block;width:18px;height:14px;background:#000080;box-shadow:var(--c95-bevel-out-thin);vertical-align:middle;margin-right:6px"></span>
+                      <code>#000080</code>
+                    </dt>
+                    <dt>Color 2</dt><dd>
+                      <span style="display:inline-block;width:18px;height:14px;background:#1084d0;box-shadow:var(--c95-bevel-out-thin);vertical-align:middle;margin-right:6px"></span>
+                      <code>#1084d0</code>
+                    </dt>
+                    <dt>Font</dt><dd>Pixelify Sans · 12px · Bold</dd>
+                    <dt>Bevel</dt><dd><code>--c95-bevel-out</code></dd>
+                  </dl>
+
+                  <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:18px">
+                    <button type="button" class="c95-button">Save As...</button>
+                    <button type="button" class="c95-button">Delete</button>
+                    <button type="button" class="c95-button c95-button--primary">OK</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <!-- SECTION: Gallery of small windows -->
+    <section class="section" aria-labelledby="gallery-head">
+      <header class="section-head">
+        <h2 id="gallery-head">Component shelf.</h2>
+        <p>Five primitives blended into one bevel vocabulary. Each control sits as a small window so they read as the same family.</p>
+      </header>
+
+      <div class="gallery">
+        <article class="c95-window gallery-card">
+          <header class="c95-window__titlebar">
+            <span class="c95-window__title">
+              <svg class="c95-window__title-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M3 9l4 -4l4 4"/>
+                <path d="M7 5v14"/>
+                <path d="M21 15l-4 4l-4 -4"/>
+                <path d="M17 5v14"/>
+              </svg>
+              Buttons.btn
+            </span>
+            <span class="c95-window__controls"><button type="button" class="c95-window__ctrl">×</button></span>
+          </header>
+          <div class="c95-window__body">
+            <div class="button-row">
+              <button type="button" class="c95-button c95-button--primary">OK</button>
+              <button type="button" class="c95-button">Cancel</button>
+              <button type="button" class="c95-button" disabled>Disabled</button>
+            </div>
+            <div class="button-row">
+              <button type="button" class="c95-button" aria-pressed="true">Pressed</button>
+              <button type="button" class="c95-button c95-button--sm">Small</button>
+              <button type="button" class="c95-button c95-button--icon" aria-label="Save">
+                <svg class="c95-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M6 4h10l4 4v10a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2"/>
+                  <path d="M6 4v4h8v-4"/>
+                  <path d="M6 18v-5h12v5"/>
+                </svg>
+              </button>
+            </div>
+            <span class="c95-caption">Active state inverts the bevel and nudges content one pixel down-right.</span>
+          </div>
+        </article>
+
+        <article class="c95-window gallery-card">
+          <header class="c95-window__titlebar">
+            <span class="c95-window__title">
+              <svg class="c95-window__title-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M3 5m0 2a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v10a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2z"/>
+                <path d="M7 11h10"/>
+              </svg>
+              Inputs.fld
+            </span>
+            <span class="c95-window__controls"><button type="button" class="c95-window__ctrl">×</button></span>
+          </header>
+          <div class="c95-window__body">
+            <div class="field-row">
+              <div class="c95-field">
+                <label class="c95-field__label" for="email">Email address</label>
+                <input id="email" class="c95-input" type="email" value="ada@chicago95.dev" />
+              </div>
+              <div class="c95-field">
+                <label class="c95-field__label" for="pwd">Password</label>
+                <input id="pwd" class="c95-input" type="password" value="••••••••" />
+              </div>
+              <div class="c95-field">
+                <label class="c95-field__label" for="qty">Threads</label>
+                <div class="c95-input-group">
+                  <input id="qty" class="c95-input c95-input--mono" type="text" value="8" />
+                  <span class="c95-input-group__addon">/ 16</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <article class="c95-window gallery-card">
+          <header class="c95-window__titlebar">
+            <span class="c95-window__title">
+              <svg class="c95-window__title-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M5 12l5 5l10 -10"/>
+              </svg>
+              Toggles.chk
+            </span>
+            <span class="c95-window__controls"><button type="button" class="c95-window__ctrl">×</button></span>
+          </header>
+          <div class="c95-window__body">
+            <div class="checks">
+              <label class="c95-check">
+                <input class="c95-check__input" type="checkbox" checked>
+                <span class="c95-check__box" aria-hidden="true"></span>
+                <span class="c95-check__label">Show hidden files</span>
+              </label>
+              <label class="c95-check">
+                <input class="c95-check__input" type="checkbox" checked>
+                <span class="c95-check__box" aria-hidden="true"></span>
+                <span class="c95-check__label">Display full path in title bar</span>
+              </label>
+              <label class="c95-check">
+                <input class="c95-check__input" type="checkbox">
+                <span class="c95-check__box" aria-hidden="true"></span>
+                <span class="c95-check__label">Hide extensions for known types</span>
+              </label>
+              <label class="c95-check c95-radio">
+                <input class="c95-check__input" type="radio" name="view" checked>
+                <span class="c95-check__box" aria-hidden="true"></span>
+                <span class="c95-check__label">Large icons</span>
+              </label>
+              <label class="c95-check c95-radio">
+                <input class="c95-check__input" type="radio" name="view">
+                <span class="c95-check__box" aria-hidden="true"></span>
+                <span class="c95-check__label">Details</span>
+              </label>
+            </div>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <!-- ACTION / CTA -->
+    <section class="section action" aria-labelledby="action-head">
+      <article class="c95-window">
+        <header class="c95-window__titlebar">
+          <span class="c95-window__title">
+            <svg class="c95-window__title-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M14 3v4a1 1 0 0 0 1 1h4"/>
+              <path d="M17 21h-10a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v11a2 2 0 0 1 -2 2z"/>
+              <path d="M9 17l2 2l4 -4"/>
+            </svg>
+            Setup.exe
+          </span>
+          <span class="c95-window__controls">
+            <button type="button" class="c95-window__ctrl">_</button>
+            <button type="button" class="c95-window__ctrl">□</button>
+            <button type="button" class="c95-window__ctrl">×</button>
+          </span>
+        </header>
+        <div class="c95-window__body">
+          <div>
+            <h2 id="action-head">Ready to boot up.</h2>
+            <p>One CSS file, plain HTML. Drop the system into any framework or zero-build project and start composing tiny windows.</p>
+            <div class="cta-row">
+              <button type="button" class="c95-button c95-button--primary">
+                <svg class="c95-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2 -2v-2"/>
+                  <path d="M7 11l5 5l5 -5"/>
+                  <path d="M12 4l0 12"/>
+                </svg>
+                Download v2.1
+              </button>
+              <button type="button" class="c95-button">View on GitHub</button>
+              <button type="button" class="c95-button c95-button--ghost">What's new →</button>
+            </div>
+            <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap">
+              <span class="c95-tag">MIT License</span>
+              <span class="c95-tag">No build</span>
+              <span class="c95-tag">42 tokens</span>
+              <span class="c95-tag c95-tag--alert">v2.1 RC</span>
+            </div>
+          </div>
+          <pre class="install"><span><span class="lbl">$</span> npm i chicago-95</span><span><span class="arrow">&gt;</span> resolving manifest...</span><span><span class="arrow">&gt;</span> bevel-out ............. ok</span><span><span class="arrow">&gt;</span> bevel-in .............. ok</span><span><span class="arrow">&gt;</span> 18 components ......... ok</span><span><span class="lbl">$</span> open ./preview.html</span></pre>
+        </div>
+        <div class="c95-window__statusbar">
+          <span class="c95-window__statusbar-cell">Step 3 of 3</span>
+          <span class="c95-window__statusbar-cell" style="margin-left:auto">Ready</span>
+        </div>
+      </article>
+
+      <div class="footstrip">
+        <span>Chicago 95 · A workstation-flavored design system.</span>
+        <span>Made for dense, opinionated product surfaces.</span>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

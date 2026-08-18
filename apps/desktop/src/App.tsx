@@ -5,9 +5,12 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
+  EMPTY_STATE_CARDS,
   JOB_PAGE_SIZE,
   certificationLabel,
+  defaultPlanConstraints,
   elapsedProgressSeconds,
+  emptyStateCardAvailability,
   engineRecoveryNotices,
   engineRecoveryState,
   inputHasRunnableFamily,
@@ -16,12 +19,18 @@ import {
   latestJobProgress,
   packBadgeKind,
   parseDesktopError,
+  localizeDesktopError,
+  pdfPageCountFromReport,
+  plainLossSummary,
+  basicModeFailureCopy,
   presetFieldChangeInvalidatesPreview,
   qualityFieldApplies,
   progressForJob,
   recommendedTargets,
+  resolvePendingCapabilityTarget,
   suggestedOutput,
   targetOptionViews,
+  type EmptyStateCardId,
   type EngineRecoveryOutcome,
   type JobProgressUpdate,
 } from "./desktopModel";
@@ -93,6 +102,18 @@ type JobRecord = {
 };
 
 type ShellOpen = { path: string; directory: boolean; convert_to?: string | null };
+type DropClassification = { kind: "file" | "directory" | "rejected"; path?: string | null };
+type ShellConvertBatch = { target: string; paths: string[] };
+type IngestResult = {
+  ran_immediately: boolean;
+  batch_id?: string | null;
+  queued: number;
+  job?: JobRecord | null;
+  report?: ValidationReport | null;
+  skipped_conflict: number;
+  skipped_disk: number;
+  rejected: number;
+};
 
 type JobQueryPage = {
   jobs: JobRecord[];
@@ -395,6 +416,8 @@ export default function App() {
   const mounted = useRef(true);
   const pendingShellConvert = useRef<string | null>(null);
   const shellConvertRunning = useRef(false);
+  const [probePdfRoutes, setProbePdfRoutes] = useState<CapabilitySnapshot["routes"] | null>(null);
+  const [probeVideoRoutes, setProbeVideoRoutes] = useState<CapabilitySnapshot["routes"] | null>(null);
   const copy = messages[language];
   jobQuery.current = {
     batchId: jobBatchId,
@@ -466,6 +489,36 @@ export default function App() {
           disposers.push(dispose);
           void consumeShellOpens();
         });
+      let consumingConvert = false;
+      let convertRequested = false;
+      const consumeConvertBatches = async () => {
+        convertRequested = true;
+        if (consumingConvert) return;
+        consumingConvert = true;
+        try {
+          do {
+            convertRequested = false;
+            while (mounted.current) {
+              const batch = await invoke<ShellConvertBatch | null>("take_desktop_shell_convert_batch");
+              if (!batch) break;
+              await handleIngestBatch(batch);
+            }
+          } while (mounted.current && convertRequested);
+        } catch (reason) {
+          if (mounted.current) setError(parseDesktopError(reason));
+        } finally {
+          consumingConvert = false;
+        }
+      };
+      void listen<void>("formatwright://shell-convert-batch", () => void consumeConvertBatches())
+        .then((dispose) => {
+          if (!mounted.current) {
+            dispose();
+            return;
+          }
+          disposers.push(dispose);
+          void consumeConvertBatches();
+        });
       void invoke<ApplicationSettings | null>("get_desktop_settings")
         .then(async (settings) => {
           if (!mounted.current) return;
@@ -501,7 +554,7 @@ export default function App() {
           if (event.payload.type === "drop") {
             setDragging(false);
             const first = event.payload.paths[0];
-            if (first) selectInput(first);
+            if (first) void classifyAndSelectDrop(first);
           }
         })
         .then((dispose) => disposers.push(dispose));
@@ -512,6 +565,7 @@ export default function App() {
     void refreshMaintenanceStatus();
     void refreshEngines();
     void refreshPresets();
+    void loadStarterProbes();
     return () => {
       mounted.current = false;
       for (const dispose of disposers) dispose();
@@ -542,18 +596,18 @@ export default function App() {
       .then((snapshot) => {
         if (!current) return;
         setCapabilities(snapshot);
-        const normalizedTarget = target === "jpeg" ? "jpg" : target === "yml" ? "yaml" : target;
-        if (!snapshot.routes[normalizedTarget]?.available) {
-          const firstRecommended = recommendedTargets(inputPath).find(
-            (candidate) => snapshot.routes[candidate]?.available,
-          );
-          const firstAvailable = Object.values(snapshot.routes).find((candidate) => candidate.available)
-            ?.target_format;
-          const next = firstRecommended ?? firstAvailable;
-          if (next) {
-            setTarget(next);
-            setOutputPath(suggestedOutput(inputPath, next));
-          }
+        const decision = resolvePendingCapabilityTarget({
+          pendingWanted: pendingShellConvert.current,
+          currentTarget: target,
+          inputPath,
+          routes: snapshot.routes,
+        });
+        if (decision.clearPending) {
+          pendingShellConvert.current = null;
+        }
+        if (decision.target) {
+          setTarget(decision.target);
+          setOutputPath(suggestedOutput(inputPath, decision.target));
         }
       })
       .catch((reason) => {
@@ -567,8 +621,18 @@ export default function App() {
     };
   }, [inputPath]);
 
+  function applyDefaultPlanConstraints(nextTarget: string) {
+    const defaults = defaultPlanConstraints(nextTarget);
+    setQuality(defaults.quality == null ? "" : String(defaults.quality));
+    setWidth(defaults.width == null ? "" : String(defaults.width));
+    setDpi(defaults.dpi == null ? "" : String(defaults.dpi));
+    setColorMode(defaults.colorMode ?? "");
+    setPreserveAllStreams(defaults.preserveAllStreams);
+  }
+
   function selectInput(path: string) {
     const recommended = recommendedTargets(path)[0] ?? "";
+    applyDefaultPlanConstraints(recommended);
     setInputPath(path);
     setTarget(recommended);
     setOutputPath(recommended ? suggestedOutput(path, recommended) : "");
@@ -587,6 +651,7 @@ export default function App() {
       selectInput(shellOpen.path);
       setConvertMode("file");
       if (shellOpen.convert_to) {
+        applyDefaultPlanConstraints(shellOpen.convert_to);
         setTarget(shellOpen.convert_to);
         setOutputPath(suggestedOutput(shellOpen.path, shellOpen.convert_to));
         pendingShellConvert.current = shellOpen.convert_to;
@@ -597,7 +662,47 @@ export default function App() {
     setTab("convert");
   }
 
+  async function classifyAndSelectDrop(path: string) {
+    try {
+      const classified = await invoke<DropClassification>("classify_desktop_drop_path", { path });
+      if (classified.kind === "directory" && classified.path) {
+        pendingShellConvert.current = null;
+        setConvertMode("folder");
+        setFolderInputRoot(classified.path);
+        setFolderPreview(null);
+        setError(null);
+        return;
+      }
+      if (classified.kind === "file" && classified.path) {
+        selectInput(classified.path);
+        setConvertMode("file");
+      }
+    } catch (reason) {
+      setError(parseDesktopError(reason));
+    }
+  }
+
+  async function loadStarterProbes() {
+    if (!("__TAURI_INTERNALS__" in window)) return;
+    try {
+      const [pdf, video] = await Promise.all([
+        invoke<CapabilitySnapshot>("desktop_capability_snapshot", {
+          inputPath: "C:\\formatwright-probe.pdf",
+        }),
+        invoke<CapabilitySnapshot>("desktop_capability_snapshot", {
+          inputPath: "C:\\formatwright-probe.mkv",
+        }),
+      ]);
+      if (!mounted.current) return;
+      setProbePdfRoutes(pdf.routes);
+      setProbeVideoRoutes(video.routes);
+    } catch (reason) {
+      if (mounted.current) setError(parseDesktopError(reason));
+    }
+  }
+
   function changeTarget(next: string) {
+    pendingShellConvert.current = null;
     setTarget(next);
     setOutputPath(suggestedOutput(inputPath, next));
     setPreview(null);
@@ -613,12 +718,40 @@ export default function App() {
     }
   }
 
+  async function activateEmptyStateCard(cardId: EmptyStateCardId) {
+    const spec = EMPTY_STATE_CARDS.find((card) => card.id === cardId);
+    if (!spec) return;
+    const routes = cardId === "pdf-png" ? probePdfRoutes : cardId === "video-mp4" ? probeVideoRoutes : null;
+    const availability = emptyStateCardAvailability(cardId, routes);
+    if (!availability.available) {
+      setTab("engines");
+      return;
+    }
+    try {
+      const selected = await open({
+        directory: false,
+        multiple: false,
+        title: copy.chooseFile,
+        filters: [spec.filters],
+      });
+      if (typeof selected !== "string") return;
+      selectInput(selected);
+      setConvertMode("file");
+      applyDefaultPlanConstraints(spec.target);
+      setTarget(spec.target);
+      setOutputPath(suggestedOutput(selected, spec.target));
+    } catch (reason) {
+      setError(parseDesktopError(reason));
+    }
+  }
+
   async function chooseOutput() {
     try {
       const selected = isDirectoryOutput(inputPath, target)
         ? await open({ directory: true, multiple: false, title: copy.chooseOutput })
         : await save({ defaultPath: outputPath || undefined, title: copy.chooseOutput });
       if (typeof selected === "string") {
+        pendingShellConvert.current = null;
         setOutputPath(selected);
         setPreview(null);
       }
@@ -698,8 +831,8 @@ export default function App() {
       targetFormat: target,
       quality: target === "png" || !quality ? null : Number(quality),
       width: width ? Number(width) : null,
-      dpi: target === "png" || target === "jpg" || target === "jpeg" ? Number(dpi) : null,
-      colorMode: target === "png" || target === "jpg" || target === "jpeg" ? colorMode : null,
+      dpi: (target === "png" || target === "jpg" || target === "jpeg") && dpi ? Number(dpi) : null,
+      colorMode: (target === "png" || target === "jpg" || target === "jpeg") && colorMode ? colorMode : null,
       preserveAllStreams,
       approvedPlanHash,
       idempotencyKey,
@@ -707,6 +840,7 @@ export default function App() {
   }
 
   async function previewPlan() {
+    pendingShellConvert.current = null;
     setBusy("plan");
     setError(null);
     setReport(null);
@@ -733,57 +867,89 @@ export default function App() {
       );
       setReport(result.report);
       setActiveJobId(null);
-      setTab("reports");
+      await notifyToast(copy.toastSuccess, result.report.output.display_path ?? outputPath);
       await refreshJobs();
     } catch (reason) {
+      const parsed = parseDesktopError(reason);
       setPreview(null);
-      setError(parseDesktopError(reason));
+      setError({
+        ...parsed,
+        message: basicModeFailureCopy(inputPath, parsed, [], {
+          oldExcel: copy.oldExcel,
+          unsupported: copy.pairUnsupported,
+          engineMissing: copy.engineMissingPack,
+          outputConflict: copy.outputExists,
+          policyBlocked: copy.policyBlocked,
+        }),
+      });
       setActiveJobId(null);
+      await notifyToast(copy.toastFailed, parsed.message);
       await refreshJobs();
     } finally {
       setBusy(null);
     }
   }
 
-  useEffect(() => {
-    const wanted = pendingShellConvert.current;
-    if (!wanted || shellConvertRunning.current || capabilityBusy || busy !== null) return;
-    if (!inputPath || target !== wanted || !outputPath || !capabilities) return;
-    const route = capabilities.routes[wanted];
-    if (!route?.available) {
-      pendingShellConvert.current = null;
-      return;
+  async function notifyToast(title: string, body: string) {
+    try {
+      await invoke("show_desktop_toast", { title, body });
+    } catch {
+      // Toast is best-effort; conversion result still shows in the window.
     }
-    shellConvertRunning.current = true;
+  }
+
+  async function handleIngestBatch(batch: ShellConvertBatch) {
     pendingShellConvert.current = null;
-    void (async () => {
-      setBusy("plan");
-      setError(null);
-      try {
-        const nextPreview = await invoke<Preview>("preview_conversion", { request: request() });
-        if (!mounted.current) return;
-        setPreview(nextPreview);
-        setBusy("run");
-        const result = await invoke<{ job: JobRecord; report: ValidationReport }>(
-          "run_desktop_conversion",
-          { request: request(nextPreview.plan.plan_hash) },
-        );
-        if (!mounted.current) return;
+    const first = batch.paths[0] ?? "";
+    applyDefaultPlanConstraints(batch.target);
+    if (first) {
+      setInputPath(first);
+      setTarget(batch.target);
+      setOutputPath(suggestedOutput(first, batch.target));
+      setConvertMode("file");
+      setTab("convert");
+    }
+    setBusy("run");
+    setError(null);
+    try {
+      const result = await invoke<IngestResult>("ingest_shell_convert_paths", {
+        paths: batch.paths,
+        target: batch.target,
+      });
+      if (result.ran_immediately && result.report) {
         setReport(result.report);
         setActiveJobId(null);
-        setTab("reports");
-        await refreshJobs();
-      } catch (reason) {
-        if (mounted.current) {
-          setPreview(null);
-          setError(parseDesktopError(reason));
+        await notifyToast(copy.toastSuccess, result.report.output.display_path ?? first);
+      } else {
+        if (result.batch_id) {
+          setJobBatchId(result.batch_id);
+          setTab("jobs");
         }
-      } finally {
-        shellConvertRunning.current = false;
-        if (mounted.current) setBusy(null);
+        const summary = [
+          copy.queuedCount.replace("{count}", String(result.queued)),
+          result.skipped_conflict ? copy.skippedConflictCount.replace("{count}", String(result.skipped_conflict)) : "",
+        ].filter(Boolean).join(" · ");
+        await notifyToast(result.queued > 0 ? copy.toastQueued : copy.toastFailed, summary);
       }
-    })();
-  }, [inputPath, outputPath, target, capabilities, capabilityBusy, busy]);
+      await refreshJobs();
+      await refreshJobBatches();
+    } catch (reason) {
+      const parsed = parseDesktopError(reason);
+      setError({
+        ...parsed,
+        message: basicModeFailureCopy(first, parsed, [], {
+          oldExcel: copy.oldExcel,
+          unsupported: copy.pairUnsupported,
+          engineMissing: copy.engineMissingPack,
+          outputConflict: copy.outputExists,
+          policyBlocked: copy.policyBlocked,
+        }),
+      });
+      await notifyToast(copy.toastFailed, parsed.message);
+    } finally {
+      setBusy(null);
+    }
+  }
 
   async function cancel() {
     if (activeJobId) await invoke("cancel_desktop_job", { jobId: activeJobId });
@@ -1348,7 +1514,7 @@ export default function App() {
   const targetOptions = targetOptionViews(recommendations, capabilities ? capabilities.routes : null, convertMode === "file" ? "convert-file" : "convert-folder", unavailableLabels);
   const presetTargetOptions = targetOptionViews(recommendations, capabilities ? capabilities.routes : null, "preset", unavailableLabels);
   const applyPresetField = (field: Parameters<typeof presetFieldChangeInvalidatesPreview>[0]) => {
-    if (presetFieldChangeInvalidatesPreview(field)) setPreview(null);
+    if (presetFieldChangeInvalidatesPreview(field, target)) setPreview(null);
   };
   const tabs: Tab[] = ["convert", "jobs", "presets", "engines", "reports", "maintenance", "settings"];
   const recoveryCounts = Object.fromEntries(
@@ -1367,31 +1533,52 @@ export default function App() {
   const pageStart = jobTotal === 0 ? 0 : jobOffset + 1;
   const pageEnd = Math.min(jobOffset + jobs.length, jobTotal);
   const activeProgress = activeJobId ? jobProgress[activeJobId] : undefined;
+  const windowChrome = getCurrentWebviewWindow();
 
   return (
-    <div className="shell">
+    <div className="c95-desktop fw-app">
       <a className="skip-link" href="#main-content">{copy.skipToContent}</a>
-      <header className="topbar">
-        <button className="brandmark" type="button" onClick={() => setTab("convert")} aria-label={copy.product}>FW</button>
-        <div className="brandcopy"><strong>{copy.product}</strong><span>{copy.tagline}</span></div>
-        <nav aria-label={copy.primaryNavigation}>
-          {tabs.map((item) => (
-            <button key={item} type="button" className={tab === item ? "nav-active" : ""} aria-current={tab === item ? "page" : undefined} onClick={() => setTab(item)}>
-              {copy[item]}
-            </button>
-          ))}
-        </nav>
-        <span className="local-badge">● {copy.localOnly}</span>
-      </header>
-
-      <main id="main-content" tabIndex={-1}>
-      {error && (
-        <section className="error-banner" role="alert">
-          <strong>{error.code ?? copy.stageError}{error.stage ? ` · ${error.stage}` : ""}</strong>
-          <span>{error.message}</span>
-          {error.recovery && <small>{error.recovery}</small>}
-        </section>
-      )}
+      <article className="c95-window fw-main-window">
+        <header className="c95-window__titlebar">
+          <span className="c95-window__title" data-tauri-drag-region>
+            <svg className="c95-window__title-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M14 3v4a1 1 0 0 0 1 1h4" />
+              <path d="M17 21h-10a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v11a2 2 0 0 1 -2 2z" />
+            </svg>
+            {copy.product} — {copy[tab]}
+          </span>
+          <span className="c95-window__controls">
+            <button type="button" className="c95-window__ctrl" aria-label="Minimize" onClick={() => void windowChrome.minimize()}>_</button>
+            <button type="button" className="c95-window__ctrl" aria-label="Maximize" onClick={() => void windowChrome.toggleMaximize()}>□</button>
+            <button type="button" className="c95-window__ctrl" aria-label="Close" onClick={() => void windowChrome.close()}>×</button>
+          </span>
+        </header>
+        <div className="c95-tabs fw-tabs">
+          <div className="c95-tabs__strip" role="tablist" aria-label={copy.primaryNavigation}>
+            {tabs.map((item) => (
+              <button
+                key={item}
+                type="button"
+                role="tab"
+                className="c95-tabs__tab"
+                aria-selected={tab === item}
+                onClick={() => setTab(item)}
+              >
+                {copy[item]}
+              </button>
+            ))}
+          </div>
+          <div className="c95-tabs__panel c95-scroll fw-tabs-panel" id="main-content" tabIndex={-1} role="tabpanel">
+      {error && (() => {
+        const localized = localizeDesktopError(error, copy);
+        return (
+          <section className="error-banner" role="alert">
+            <strong>{localized.title}</strong>
+            <span>{localized.message}</span>
+            {localized.recovery && <small>{localized.recovery}</small>}
+          </section>
+        );
+      })()}
 
       {showRecovery && (
         <section className="recovery-banner" role="status" aria-live="polite">
@@ -1418,11 +1605,39 @@ export default function App() {
               <div><h1>{copy.dropTitle}</h1><p>{copy.dropBody}</p></div>
               <button className="secondary choose-file" type="button" onClick={chooseInput}>{copy.chooseFile}</button>
             </div>}
+            {convertMode === "file" && !inputPath && (
+              <div className="empty-cards" aria-label={copy.recommended}>
+                {EMPTY_STATE_CARDS.map((card) => {
+                  const routes = card.id === "pdf-png" ? probePdfRoutes : card.id === "video-mp4" ? probeVideoRoutes : null;
+                  const availability = emptyStateCardAvailability(card.id, routes);
+                  const title = card.id === "pdf-png" ? copy.emptyCardPdf : card.id === "json-yaml" ? copy.emptyCardJson : copy.emptyCardVideo;
+                  const body = card.id === "pdf-png" ? copy.emptyCardPdfBody : card.id === "json-yaml" ? copy.emptyCardJsonBody : copy.emptyCardVideoBody;
+                  return (
+                    <button
+                      key={card.id}
+                      type="button"
+                      className={`empty-card ${availability.available ? "" : "is-unavailable"}`}
+                      onClick={() => void activateEmptyStateCard(card.id)}
+                    >
+                      <strong>{title}</strong>
+                      <span>{body}</span>
+                      {!availability.available && (
+                        <small>
+                          {availability.missingEngines.length > 0
+                            ? copy.emptyCardMissing.replace("{names}", availability.missingEngines.join(", "))
+                            : copy.emptyCardUnavailable}
+                        </small>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
             {convertMode === "folder" && <section className="folder-intro"><p className="section-label">BOUNDED BATCH</p><h1>{copy.folderBatch}</h1><p>{copy.folderBatchHint}</p></section>}
 
             <div className="form-grid">
               {convertMode === "file" && <div className="form-field wide"><label htmlFor="input-path">{copy.inputPath}</label><span className="path-control"><input id="input-path" dir="auto" spellCheck={false} value={inputPath} onChange={(event) => selectInput(event.target.value)} placeholder="C:\\…\\input.ext" /><button className="secondary" type="button" onClick={chooseInput}>{copy.chooseFile}</button></span></div>}
-              {convertMode === "file" && <div className="form-field wide"><label htmlFor="output-path">{copy.outputPath}</label><span className="path-control"><input id="output-path" dir="auto" spellCheck={false} value={outputPath} onChange={(event) => { setOutputPath(event.target.value); setPreview(null); }} placeholder="C:\\…\\output.ext" /><button className="secondary" type="button" disabled={!inputPath} onClick={chooseOutput}>{copy.chooseOutput}</button></span></div>}
+              {convertMode === "file" && <div className="form-field wide"><label htmlFor="output-path">{copy.outputPath}</label><span className="path-control"><input id="output-path" dir="auto" spellCheck={false} value={outputPath} onChange={(event) => { pendingShellConvert.current = null; setOutputPath(event.target.value); setPreview(null); }} placeholder="C:\\…\\output.ext" /><button className="secondary" type="button" disabled={!inputPath} onClick={chooseOutput}>{copy.chooseOutput}</button></span></div>}
               {convertMode === "folder" && <div className="form-field wide"><label htmlFor="input-folder">{copy.inputFolder}</label><span className="path-control"><input id="input-folder" dir="auto" spellCheck={false} value={folderInputRoot} onChange={(event) => { setFolderInputRoot(event.target.value); setFolderPreview(null); }} placeholder="C:\\…\\source-folder" /><button className="secondary" type="button" onClick={() => chooseFolderRoot("input")}>{copy.chooseInputFolder}</button></span></div>}
               {convertMode === "folder" && <div className="form-field wide"><label htmlFor="output-folder">{copy.outputFolder}</label><span className="path-control"><input id="output-folder" dir="auto" spellCheck={false} value={folderOutputRoot} onChange={(event) => { setFolderOutputRoot(event.target.value); setFolderPreview(null); }} placeholder="C:\\…\\output-folder" /><button className="secondary" type="button" onClick={() => chooseFolderRoot("output")}>{copy.chooseOutputFolder}</button></span></div>}
               <label>{copy.target}<select value={target} onChange={(event) => changeTarget(event.target.value)} disabled={convertMode === "file" && capabilityBusy}>
@@ -1435,7 +1650,7 @@ export default function App() {
               {expert && <label className="checkbox-control"><input type="checkbox" checked={preserveAllStreams} onChange={(event) => { setPreserveAllStreams(event.target.checked); setPreview(null); }} />{copy.preserveAllStreams}</label>}
             </div>
 
-            {inputPath && (capabilityBusy ? <p className="capability-notice" role="status">{copy.capabilityLoading}</p> : route && !route.available ? <p className="capability-notice capability-blocked" role="status"><strong>{copy.routeUnavailable}</strong>{route.missing_engines.length > 0 ? ` ${copy.missingEngines}: ${route.missing_engines.join(", ")}.` : ` ${route.message}`}</p> : capabilities && !Object.values(capabilities.routes).some((candidate) => candidate.available) ? <p className="capability-notice capability-blocked" role="status">{inputHasRunnableFamily(capabilities.routes) ? copy.noAvailableTargets : copy.inputNotSupported}</p> : null)}
+            {inputPath && (capabilityBusy ? <p className="capability-notice" role="status">{copy.capabilityLoading}</p> : route && !route.available ? <p className="capability-notice capability-blocked" role="status"><strong>{copy.routeUnavailable}</strong> {basicModeFailureCopy(inputPath, { code: route.missing_engines.length > 0 ? "ENGINE_MISSING" : "UNSUPPORTED", message: "" }, route.missing_engines, { oldExcel: copy.oldExcel, unsupported: copy.pairUnsupported, engineMissing: copy.engineMissingPack, outputConflict: copy.outputExists, policyBlocked: copy.policyBlocked })}</p> : capabilities && !Object.values(capabilities.routes).some((candidate) => candidate.available) ? <p className="capability-notice capability-blocked" role="status">{["xls", "xlsm", "xlsb"].includes(inputPath.split(/[\\/]/).pop()?.split(".").pop()?.toLowerCase() ?? "") ? copy.oldExcel : inputHasRunnableFamily(capabilities.routes) ? copy.noAvailableTargets : copy.inputNotSupported}</p> : null)}
 
             <div className="preset-row" aria-label="Presets">
               <button type="button" disabled={capabilities ? !capabilities.routes.webp?.available : false} onClick={() => { changeTarget("webp"); setQuality("78"); }}>{copy.presetImage}</button>
@@ -1455,6 +1670,25 @@ export default function App() {
             </div>
 
             {convertMode === "file" && busy === "run" && activeProgress && <p className="execution-progress" role="status"><span>{copy.stageLabel}: {activeProgress.state}</span><span>{copy.elapsedLabel}: {elapsedProgressSeconds(activeProgress, progressClock)}s</span><span>{copy.rateEtaUnavailable}</span></p>}
+
+            {convertMode === "file" && report && (report.status === "pass" || report.status === "warning") && (
+              <section className="success-notice convert-success" role="status">
+                <div>
+                  <strong>{report.status === "warning" ? copy.conversionWarning : copy.conversionComplete}</strong>
+                  {pdfPageCountFromReport(report) != null
+                    ? <span>{copy.conversionPages.replace("{count}", String(pdfPageCountFromReport(report)))}</span>
+                    : report.output.display_path
+                      ? <span>{report.output.display_path}</span>
+                      : null}
+                </div>
+                <span className="heading-actions">
+                  <button className="primary" type="button" disabled={reportBusy === "reveal"} onClick={() => void revealOutput()}>
+                    {reportBusy === "reveal" ? copy.openingOutput : copy.openOutputLocation}
+                  </button>
+                  <button type="button" onClick={() => setTab("reports")}>{copy.selectJob}</button>
+                </span>
+              </section>
+            )}
 
             {convertMode === "file" && preview && <PlanView preview={preview} expert={expert} copy={copy} />}
             {convertMode === "folder" && folderPreview && <section className="folder-preview"><div className="plan-heading"><div><p className="section-label">MAPPING PREVIEW</p><h2>{folderPreview.planned.toLocaleString()} {copy.filesReady}</h2></div><span className={`loss ${folderPreview.disk_budget.sufficient ? "loss-safe" : "loss-lossy"}`}>{folderPreview.disk_budget.sufficient ? copy.diskReady : copy.diskInsufficient}</span></div><p>{copy.folderPreviewSummary}: {folderPreview.discovered.toLocaleString()} {copy.discovered} · {folderPreview.planned.toLocaleString()} {copy.planned} · {folderPreview.skipped.toLocaleString()} {copy.skipped} · {copy.diskRequired} {formatBytes(folderPreview.disk_budget.required_bytes)} / {copy.diskAvailable} {formatBytes(folderPreview.disk_budget.available_bytes)}</p><div className="mapping-list">{folderPreview.sample.map((entry) => <div key={entry.input_path}><bdi>{entry.relative_input_path}</bdi><strong>→</strong><bdi>{entry.output_path}</bdi></div>)}</div>{folderPreview.truncated && <p className="typed-note">{copy.mappingTruncated}</p>}<p className="typed-note">{copy.previewExpires}: {new Date(folderPreview.expires_unix_ms).toLocaleTimeString()}</p></section>}
@@ -1542,7 +1776,7 @@ export default function App() {
           {presetNotice && <p className="success-notice" role="status" aria-live="polite">{presetNotice}</p>}
           <section className="preset-editor" aria-label={copy.presetEditor}>
             <div><p className="section-label">{editingPresetId ? copy.editPreset : copy.newPreset}</p><h2>{editingPresetId ? copy.editPreset : copy.saveCurrentSettings}</h2></div>
-            <div className="preset-fields"><label>{copy.presetName}<input maxLength={80} value={presetName} onChange={(event) => setPresetName(event.target.value)} /></label><label>{copy.target}<select value={target} onChange={(event) => changeTarget(event.target.value)}>{presetTargetOptions.map((option) => <option key={option.value} value={option.value} disabled={option.disabled}>{option.label}</option>)}</select></label><label>{copy.quality}<input type="number" min="1" max="100" value={quality} onChange={(event) => { setQuality(event.target.value); applyPresetField("quality"); }} /></label><label>{copy.width}<input type="number" min="1" max="16384" value={width} onChange={(event) => { setWidth(event.target.value); applyPresetField("width"); }} /></label><label>{copy.dpi}<input type="number" min="36" max="600" value={dpi} onChange={(event) => { setDpi(event.target.value); applyPresetField("dpi"); }} /></label><label>{copy.colorMode}<select value={colorMode} onChange={(event) => { setColorMode(event.target.value); applyPresetField("color-mode"); }}><option value="rgb">RGB</option><option value="gray">Gray</option></select></label><label className="checkbox-control"><input type="checkbox" checked={preserveAllStreams} onChange={(event) => { setPreserveAllStreams(event.target.checked); applyPresetField("preserve-all-streams"); }} />{copy.preserveAllStreams}</label></div>
+            <div className="preset-fields"><label>{copy.presetName}<input maxLength={80} value={presetName} onChange={(event) => setPresetName(event.target.value)} /></label><label>{copy.target}<select value={target} onChange={(event) => changeTarget(event.target.value)}>{presetTargetOptions.map((option) => <option key={option.value} value={option.value} disabled={option.disabled}>{option.label}</option>)}</select></label>{qualityFieldApplies(target) && <label>{copy.quality}<input type="number" min="1" max="100" value={quality} onChange={(event) => { setQuality(event.target.value); applyPresetField("quality"); }} /></label>}<label>{copy.width}<input type="number" min="1" max="16384" value={width} onChange={(event) => { setWidth(event.target.value); applyPresetField("width"); }} /></label><label>{copy.dpi}<input type="number" min="36" max="600" value={dpi} onChange={(event) => { setDpi(event.target.value); applyPresetField("dpi"); }} /></label><label>{copy.colorMode}<select value={colorMode} onChange={(event) => { setColorMode(event.target.value); applyPresetField("color-mode"); }}><option value="rgb">RGB</option><option value="gray">Gray</option></select></label><label className="checkbox-control"><input type="checkbox" checked={preserveAllStreams} onChange={(event) => { setPreserveAllStreams(event.target.checked); applyPresetField("preserve-all-streams"); }} />{copy.preserveAllStreams}</label></div>
             <div className="action-row"><button className="primary" type="button" disabled={presetBusy || presetName.trim().length === 0} onClick={savePreset}>{presetBusy ? copy.savingPreset : copy.savePreset}</button>{editingPresetId && <button className="secondary" type="button" onClick={resetPresetEditor}>{copy.cancelEdit}</button>}</div>
           </section>
           <div className="preset-list">{presets.length === 0 ? <p className="empty">{copy.noPresets}</p> : presets.map((preset) => <article key={preset.preset_id}><div><strong>{preset.name}</strong><small>{preset.target_format.toUpperCase()} · Q {preset.quality ?? "—"} · {preset.width ? `${preset.width}px` : copy.originalSize}</small></div><div className="preset-actions"><button type="button" onClick={() => applyPreset(preset)}>{copy.applyPreset}</button><button type="button" onClick={() => editPreset(preset)}>{copy.editPreset}</button><button className={pendingDeleteId === preset.preset_id ? "danger" : "secondary"} type="button" disabled={presetBusy} onClick={() => deletePreset(preset.preset_id)}>{pendingDeleteId === preset.preset_id ? copy.confirmDelete : copy.deletePreset}</button></div></article>)}</div>
@@ -1594,13 +1828,22 @@ export default function App() {
           <p>{copy.privacy}</p><p>{copy.accessibility}</p>
         </section>
       )}
-      </main>
+          </div>
+        </div>
+        <footer className="c95-window__statusbar">
+          <span className="c95-window__statusbar-cell">{copy.localOnly}</span>
+          <span className="c95-window__statusbar-cell">{jobTotal.toLocaleString()} {copy.jobs}</span>
+          <span className="c95-window__statusbar-cell" style={{ marginLeft: "auto" }}>{busy ?? "Ready"}</span>
+        </footer>
+      </article>
     </div>
   );
 }
 
 function PlanView({ preview, expert, copy }: { preview: Preview; expert: boolean; copy: (typeof messages)[Language] }) {
-  return <section className="plan-card" aria-live="polite"><div className="plan-heading"><div><p className="section-label">{copy.detected}</p><h2>{preview.probe.format.id.toUpperCase()} → {preview.plan.target_format.toUpperCase()}</h2></div><span className={`loss loss-${preview.plan.steps.some((step) => step.loss_class === "lossy") ? "lossy" : "safe"}`}>{preview.plan.steps.map((step) => step.loss_class).join(" · ")}</span></div><div className="change-grid"><ChangeList title={copy.preserved} values={preview.plan.changes.preserved} symbol="✓" /><ChangeList title={copy.changed} values={preview.plan.changes.changed} symbol="△" /><ChangeList title={copy.dropped} values={preview.plan.changes.dropped} symbol="−" /><ChangeList title={copy.unknown} values={preview.plan.changes.unknown} symbol="?" /></div><h3>{copy.engineSteps}</h3><ol className="steps">{preview.plan.steps.map((step) => <li key={step.step_id}><div><strong>{step.engine.engine_id}</strong><small>{step.operation} · {certificationLabel(step.engine.certification, copy)}</small></div><code>{step.capability_id}</code>{expert && <pre>{JSON.stringify(step.arguments, null, 2)}</pre>}</li>)}</ol>{expert && <p className="typed-note">{copy.commandBoundary}<br /><code>{preview.plan.plan_hash}</code></p>}</section>;
+  const badge = plainLossSummary(preview.plan);
+  const badgeLabel = badge === "lossy" ? copy.lossySummary : badge === "drop-tracks" ? copy.dropTracksSummary : badge === "unknown" ? copy.unknownLossSummary : badge === "container" ? copy.containerSummary : copy.losslessSummary;
+  return <section className="plan-card" aria-live="polite"><div className="plan-heading"><div><p className="section-label">{copy.detected}</p><h2>{preview.probe.format.id.toUpperCase()} → {preview.plan.target_format.toUpperCase()}</h2></div><span className={`loss loss-${badge === "lossy" || badge === "drop-tracks" ? "lossy" : "safe"}`}>{badgeLabel}</span></div><div className="change-grid"><ChangeList title={copy.preserved} values={preview.plan.changes.preserved} symbol="✓" /><ChangeList title={copy.changed} values={preview.plan.changes.changed} symbol="△" /><ChangeList title={copy.dropped} values={preview.plan.changes.dropped} symbol="−" /><ChangeList title={copy.unknown} values={preview.plan.changes.unknown} symbol="?" /></div><h3>{copy.engineSteps}</h3><ol className="steps">{preview.plan.steps.map((step) => <li key={step.step_id}><div><strong>{step.engine.engine_id}</strong><small>{step.operation} · {certificationLabel(step.engine.certification, copy)}</small></div><code>{step.capability_id}</code>{expert && <pre>{step.loss_class}{'\n'}{JSON.stringify(step.arguments, null, 2)}</pre>}</li>)}</ol>{expert && <p className="typed-note">{copy.commandBoundary}<br /><code>{preview.plan.plan_hash}</code></p>}</section>;
 }
 
 function ChangeList({ title, values, symbol }: { title: string; values: string[]; symbol: string }) {

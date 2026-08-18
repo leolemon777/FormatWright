@@ -117,9 +117,14 @@ finally {
         Assert-True (-not (Test-Path -LiteralPath $InstallRoot)) 'uninstall left the install root behind'
         Assert-True (-not (Test-Path "$env:APPDATA\local.formatwright.desktop")) 'uninstall left user app-state behind'
         Assert-True (-not (Test-Path "$env:LOCALAPPDATA\local.formatwright.desktop")) 'uninstall left user local app-state behind'
+        $verbTable = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\apps\desktop\src-tauri\explorer-verbs.json') -Raw -Encoding utf8 | ConvertFrom-Json
         $shellKeys = @(
-            'HKCU:\Software\Classes\*\shell\FormatWrightConvert',
-            'HKCU:\Software\Classes\Directory\shell\FormatWrightConvert'
+            'HKCU:\Software\Classes\*\shell\FormatWright',
+            'HKCU:\Software\Classes\Directory\shell\FormatWright'
+        ) + @(
+            foreach ($item in $verbTable.convert) {
+                "HKCU:\Software\Classes\SystemFileAssociations\$($item.assoc)\shell\$($item.verb)"
+            }
         )
         foreach ($key in $shellKeys) {
             Assert-True (-not (Test-Path $key)) "uninstall left owned shell key: $key"
