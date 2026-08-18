@@ -22,7 +22,7 @@ clap = { version = "4", features = ["derive", "env"] }
 csv = "1.4.0"
 ed25519-dalek = "2"
 fs2 = "0.4.3"
-image = { version = "=0.25.9", default-features = false, features = ["jpeg", "png"] }
+image = { version = "=0.25.10", default-features = false, features = ["jpeg", "png"] }
 nix = { version = "0.31.3", default-features = false, features = ["signal"] }
 quick-xml = "0.41.0"
 rusqlite = { version = "0.37", features = ["backup", "bundled"] }
