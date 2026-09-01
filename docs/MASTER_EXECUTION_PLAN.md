@@ -8,6 +8,7 @@
 - Windows 日常双入口规格：[`specs/WINDOWS_DAILY_USE_SPEC_PLAN.md`](specs/WINDOWS_DAILY_USE_SPEC_PLAN.md)
 - 逐需求证据来源：[`docs/specs/TRACEABILITY.md`](specs/TRACEABILITY.md)
 - 活跃缺陷与关闭证据：[`docs/DEFECT_REGISTER.md`](DEFECT_REGISTER.md)
+- v0.2+ 竞品差距路线图（VERT/Stirling-PDF/Gotenberg 对标）：[`COMPETITIVE_GAP_ROADMAP.md`](COMPETITIVE_GAP_ROADMAP.md)
 
 ## 1. 文档用途与状态口径
 

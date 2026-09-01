@@ -1,6 +1,26 @@
 # Implementation Notes
 
-## Current milestone — Desktop verification session: title-bar drag fix, local engine provisioning, engine guide (2026-09-01)
+## Current milestone — Competitive gap analysis and v0.2+ roadmap (2026-09-01)
+
+### Spec Interpretation
+- User asked for a deep, source-verified gap analysis against competitors (VERT, File Converter, Stirling-PDF, Gotenberg, HandBrake) and then a master plan covering all findings.
+
+### Decisions Made
+- Evidence base: read `capabilities.rs` routing (15 targets, lane model), CLI surface (doctor/identify/inspect/plan/convert/jobs/engines/maintenance), full i18n key inventory as the UI feature face, sandbox suite list, `pdf.rs` (inspection + render only — no PDF post-processing), `runner.rs` hardcoded `-crf 20 -preset medium`, absence of updater config, and the CI/release-docs inventory. Confirmed CI (ci/fuzz/release-candidate/dependabot) already exists.
+- Deliverable: new [`docs/COMPETITIVE_GAP_ROADMAP.md`](docs/COMPETITIVE_GAP_ROADMAP.md) with G-xxx numbering (no clash with master-plan R-xxx), four waves: W1 release blockers (G-01..04), W2 quick wins (G-10 epub via pandoc, G-11 native archives, G-12 qpdf merge/split with page-conservation validation, G-13 expose codec/CRF/framerate parameters), W3 PDF toolbox on the G-12 operation-routing model (rotate/crop/compress/encrypt/watermark/OCR), W4 breadth+service (ODT/RTF, track selection UI, target-size compression, REST API aligned to Phase 6, macOS/Linux).
+- Every new lane must carry machine-readable validation checks (page-count conservation, text-layer retention, hash manifests) — the project's differentiator extended to new capabilities; stated as the entry rule in the roadmap.
+- One new architecture decision identified: operation-style routing (multi-input + operation → PDF) for G-12, flagged for ADR-0013 before implementation.
+- Explicit non-goals recorded: CAD, PDF→DOCX editable round-trip, Ghostscript (AGPL undecided), chasing VERT's format count.
+
+### Verification
+- All claims trace to named source files (see roadmap tables); competitor facts from official sites/GitHub (VERT 15.4k stars AGPL, Stirling 60+ tools, Gotenberg Chromium-based API).
+- Linked from `MASTER_EXECUTION_PLAN.md` header; master plan v0.7 body untouched (it still owns v0.1 closure).
+
+### Risks / Follow-up
+- Roadmap is a planning artifact; priorities need owner confirmation before Wave 2 starts.
+- G-12's operation-routing model is the only structural change — schedule the ADR first.
+
+## Previous milestone — Desktop verification session: title-bar drag fix, local engine provisioning, engine guide (2026-09-01)
 
 ### Spec Interpretation
 - User smoke-tested the merged browser-lane build and reported two gaps: the window could not be dragged after resizing, and the doctor page showed missing engines. Goal: fix the drag bug, provision this machine's engines, and document engine acquisition for the upcoming open-source release.
