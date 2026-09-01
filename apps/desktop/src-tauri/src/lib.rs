@@ -2640,6 +2640,7 @@ pub fn run() {
             },
         ))
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(move |app| {
             setup_desktop(app, Arc::clone(&shell_open_paths), Arc::clone(&convert_batches))
         })

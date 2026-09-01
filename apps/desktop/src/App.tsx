@@ -367,6 +367,7 @@ export default function App() {
   const [dpi, setDpi] = useState("144");
   const [colorMode, setColorMode] = useState("rgb");
   const [videoCrf, setVideoCrf] = useState("");
+  const [updateStatus, setUpdateStatus] = useState("");
   const [videoPreset, setVideoPreset] = useState("");
   const [audioBitrate, setAudioBitrate] = useState("");
   const [preserveAllStreams, setPreserveAllStreams] = useState(true);
@@ -1263,6 +1264,23 @@ export default function App() {
     }
   }
 
+  async function checkForUpdates() {
+    setUpdateStatus(copy.updateChecking);
+    try {
+      const { check } = await import("@tauri-apps/plugin-updater");
+      const update = await check();
+      if (update?.version) {
+        setUpdateStatus(copy.updateAvailable.replace("{version}", update.version));
+      } else {
+        setUpdateStatus(copy.upToDate);
+      }
+    } catch (error) {
+      setUpdateStatus(
+        copy.updateUnavailable + (error instanceof Error ? ` (${error.message})` : ""),
+      );
+    }
+  }
+
   function applyPreset(preset: ConversionPreset, destination: Tab = "convert") {
     setTarget(preset.target_format);
     setQuality(preset.quality == null ? "" : String(preset.quality));
@@ -1851,6 +1869,10 @@ export default function App() {
           <label>{copy.language}<select value={language} onChange={(event) => setLanguage(event.target.value as Language)}><option value="zh-CN">简体中文</option><option value="en">English</option></select></label>
           <label>{copy.mode}<select value={expert ? "expert" : "basic"} onChange={(event) => setExpert(event.target.value === "expert")}><option value="basic">{copy.basic}</option><option value="expert">{copy.expert}</option></select></label>
           <p>{copy.privacy}</p><p>{copy.accessibility}</p>
+          <div><label>{copy.updates}</label>
+            <button type="button" className="secondary" onClick={() => void checkForUpdates()}>{copy.checkUpdate}</button>
+            {updateStatus && <p className="typed-note" role="status">{updateStatus}</p>}
+          </div>
         </section>
       )}
           </div>
