@@ -1,6 +1,28 @@
 # Implementation Notes
 
-## Current milestone — Competitive gap analysis and v0.2+ roadmap (2026-09-01)
+## Current milestone — Gap-roadmap execution wave: G-10/30/13/11/12/01 landed (2026-09-01)
+
+### Spec Interpretation
+- User goal: execute the full competitive-gap roadmap, item by item, each with tests and evidence ("全部都改，都改完，确认无误"), toward an iteratively superior product.
+
+### Decisions Made & Landed (all on main, each commit gated by fmt+clippy+full tests)
+- **G-10 EPUB target** (`5387c70`/`659cbac`): md/html → epub via Pandoc; OCF magic detection distinguishes EPUB from DOCX prefixes; validation = EPUB_PACKAGE_OPENS/TARGET_FORMAT/CONTENT_DOCUMENTS/TEXT_COVERAGE(required, ≥80%)/TEXT_FIDELITY(Warning — nav/toc repeats chapter titles, same rationale class as EDGE_PDF_TEXT_FIDELITY). E2E: 2-chapter md → 9-entry publication, pandoc reads back complete.
+- **G-30 text slice** (`c494208`): .txt/.text → 'plain' format riding the GFM reader (Pandoc has no plain reader; every plain doc is valid Markdown); routes pdf/docx/epub. ODT/RTF deferred — they need ODF/RTF package inspection, not a whitelist.
+- **G-13 knobs core+CLI** (`7ac5c21`): PlanRequest.video_crf(0-51)/video_preset(allowlist)/audio_bitrate_kbps(8-320) flow into mp4+audio plans and replace the hardcoded `-preset medium -crf 20`/192k; CLI --video-crf/--video-preset/--audio-bitrate-kbps. E2E proof: VP9→MP4 at 64 kbps measured 64.6 kbps by independent ffprobe. **Desktop UI wiring remains the open G-13 follow-up.**
+- **G-11 archive lane** (`4244c45`): built-in formatwright.archive engine; zip ↔ tar.gz in-memory repack (no extraction, deterministic mtime 0, traversal paths rejected, links/devices refused); validation = ENTRY_COUNT + name:size manifest digest. Added tar crate; flate2 promoted from transitive. E2E: 3-entry zip → tar.gz → zip round trip byte-identical.
+- **ADR-0013 + G-12** (`1c87a36`/`4903ffc`): PlanRequest.operation/inputs/page_range (serde-default); pdf-merge (joint fingerprint) & pdf-extract via qpdf --empty --pages; MEASURED page-count conservation (PDF_OPS_PAGE_COUNT) via post-execution pdfinfo; verbatim `\\?\` prefixes stripped for qpdf (external_process_path). qpdf 12.4.1 installed to E:\DevCaches with engine override. E2E: 3+2→5 pages Pass; '2-3' extract = exactly source pages 2-3 by pdftotext.
+- **G-01 sandbox** (`aadaa7b`): scripts/test_browser_print_sandbox.ps1 + docs/testing/BROWSER_PRINT_SANDBOX.md; GW-10 matrix caveat cleared. Two pre-existing main bugs fixed en route: structured_format_hint swallowed every '<'-prefixed file (CLI inspect of doctype HTML/SVG died as XML), and is_document_path missed svg/epub/txt.
+
+### Verification
+- Per-commit: cargo fmt --check clean, clippy zero warnings, core lib tests green (197 passed + 4 pre-existing symlink-privilege os-1314 failures, unchanged baseline).
+- Every feature has an end-to-end run on this machine with independent verifier (pandoc read-back, python zipfile, ffprobe, pdfinfo/pdftotext) — evidence captured in commit messages.
+
+### Risks / Follow-up
+- **G-13 desktop UI wiring** (form/preset/lib.rs bridges for the three knobs) is the only roadmap item started-but-not-finished.
+- ODT/RTF inputs, W3 PDF toolbox (rotate/compress/encrypt/watermark/OCR), API service, updater, cross-platform remain queued per COMPETITIVE_GAP_ROADMAP W3/W4.
+- Operation routing is not yet surfaced in the desktop UI (CLI-only); capability snapshot doesn't advertise operations.
+
+## Previous milestone — Competitive gap analysis and v0.2+ roadmap (2026-09-01)
 
 ### Spec Interpretation
 - User asked for a deep, source-verified gap analysis against competitors (VERT, File Converter, Stirling-PDF, Gotenberg, HandBrake) and then a master plan covering all findings.
