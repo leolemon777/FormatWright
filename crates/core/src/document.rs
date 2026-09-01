@@ -1104,7 +1104,7 @@ mod tests {
         assert!(
             plan.validators
                 .iter()
-                .any(|validator| validator == "epub.text-extractable")
+                .any(|validator| validator == "epub.text-coverage")
         );
         assert!(!plan.plan_hash.is_empty(), "plan hash is computed");
 
