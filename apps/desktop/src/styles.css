@@ -434,6 +434,7 @@ label.wide,
   background: transparent;
   border-bottom: 1px solid var(--color-border);
   color: var(--color-ink);
+  user-select: none;
   -webkit-app-region: drag;
 }
 
@@ -456,6 +457,7 @@ label.wide,
   display: inline-block;
   flex-shrink: 0;
   color: var(--color-primary);
+  pointer-events: none;
 }
 
 .c95-window__controls {

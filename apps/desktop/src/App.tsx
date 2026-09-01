@@ -1539,7 +1539,7 @@ export default function App() {
     <div className="c95-desktop fw-app">
       <a className="skip-link" href="#main-content">{copy.skipToContent}</a>
       <article className="c95-window fw-main-window">
-        <header className="c95-window__titlebar">
+        <header className="c95-window__titlebar" data-tauri-drag-region>
           <span className="c95-window__title" data-tauri-drag-region>
             <svg className="c95-window__title-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M14 3v4a1 1 0 0 0 1 1h4" />
