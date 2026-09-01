@@ -16,6 +16,12 @@ pub struct ConversionPreset {
     pub width: Option<u32>,
     pub dpi: Option<u16>,
     pub color_mode: Option<String>,
+    #[serde(default)]
+    pub video_crf: Option<u8>,
+    #[serde(default)]
+    pub video_preset: Option<String>,
+    #[serde(default)]
+    pub audio_bitrate_kbps: Option<u32>,
     pub preserve_all_streams: bool,
 }
 
@@ -84,6 +90,40 @@ impl ConversionPreset {
             return Err(invalid_preset(
                 "Preset color mode must be rgb or gray",
                 "Choose a supported color mode.",
+            ));
+        }
+        if self.video_crf.is_some_and(|crf| crf > 51) {
+            return Err(invalid_preset(
+                "Preset video CRF must be between 0 and 51",
+                "Choose a supported CRF value.",
+            ));
+        }
+        if self.video_preset.as_deref().is_some_and(|preset| {
+            !matches!(
+                preset,
+                "ultrafast"
+                    | "superfast"
+                    | "veryfast"
+                    | "faster"
+                    | "fast"
+                    | "medium"
+                    | "slow"
+                    | "slower"
+                    | "veryslow"
+            )
+        }) {
+            return Err(invalid_preset(
+                "Preset video preset must be an x264 speed preset",
+                "Choose a supported encode preset.",
+            ));
+        }
+        if self
+            .audio_bitrate_kbps
+            .is_some_and(|kbps| !(8..=320).contains(&kbps))
+        {
+            return Err(invalid_preset(
+                "Preset audio bitrate must be between 8 and 320 kbps",
+                "Choose a supported bitrate.",
             ));
         }
         Ok(())
@@ -234,6 +274,9 @@ mod tests {
             width: Some(1920),
             dpi: None,
             color_mode: Some("rgb".to_owned()),
+            video_crf: None,
+            video_preset: None,
+            audio_bitrate_kbps: None,
             preserve_all_streams: true,
         }
     }

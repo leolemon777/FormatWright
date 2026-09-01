@@ -24,7 +24,7 @@ import {
   plainLossSummary,
   basicModeFailureCopy,
   presetFieldChangeInvalidatesPreview,
-  qualityFieldApplies,
+  audioBitrateApplies, qualityFieldApplies, videoKnobsApply,
   progressForJob,
   recommendedTargets,
   resolvePendingCapabilityTarget,
@@ -311,6 +311,9 @@ type ConversionPreset = {
   width?: number;
   dpi?: number;
   color_mode?: string;
+  video_crf?: number;
+  video_preset?: string;
+  audio_bitrate_kbps?: number;
   preserve_all_streams: boolean;
 };
 
@@ -363,6 +366,9 @@ export default function App() {
   const [width, setWidth] = useState("");
   const [dpi, setDpi] = useState("144");
   const [colorMode, setColorMode] = useState("rgb");
+  const [videoCrf, setVideoCrf] = useState("");
+  const [videoPreset, setVideoPreset] = useState("");
+  const [audioBitrate, setAudioBitrate] = useState("");
   const [preserveAllStreams, setPreserveAllStreams] = useState(true);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [report, setReport] = useState<ValidationReport | null>(null);
@@ -627,6 +633,11 @@ export default function App() {
     setWidth(defaults.width == null ? "" : String(defaults.width));
     setDpi(defaults.dpi == null ? "" : String(defaults.dpi));
     setColorMode(defaults.colorMode ?? "");
+    setVideoCrf(defaults.videoCrf == null ? "" : String(defaults.videoCrf));
+    setVideoPreset(defaults.videoPreset ?? "");
+    setAudioBitrate(
+      defaults.audioBitrateKbps == null ? "" : String(defaults.audioBitrateKbps),
+    );
     setPreserveAllStreams(defaults.preserveAllStreams);
   }
 
@@ -790,6 +801,9 @@ export default function App() {
           width: width ? Number(width) : null,
           dpi: target === "png" || target === "jpg" || target === "jpeg" ? Number(dpi) : null,
           colorMode: target === "png" || target === "jpg" || target === "jpeg" ? colorMode : null,
+          videoCrf: target === "mp4" && videoCrf ? Number(videoCrf) : null,
+          videoPreset: target === "mp4" && videoPreset ? videoPreset : null,
+          audioBitrateKbps: audioBitrate ? Number(audioBitrate) : null,
           preserveAllStreams,
         },
       }));
@@ -833,6 +847,9 @@ export default function App() {
       width: width ? Number(width) : null,
       dpi: (target === "png" || target === "jpg" || target === "jpeg") && dpi ? Number(dpi) : null,
       colorMode: (target === "png" || target === "jpg" || target === "jpeg") && colorMode ? colorMode : null,
+      videoCrf: target === "mp4" && videoCrf ? Number(videoCrf) : null,
+      videoPreset: target === "mp4" && videoPreset ? videoPreset : null,
+      audioBitrateKbps: audioBitrate ? Number(audioBitrate) : null,
       preserveAllStreams,
       approvedPlanHash,
       idempotencyKey,
@@ -1252,6 +1269,11 @@ export default function App() {
     setWidth(preset.width == null ? "" : String(preset.width));
     setDpi(preset.dpi == null ? "144" : String(preset.dpi));
     setColorMode(preset.color_mode ?? "rgb");
+    setVideoCrf(preset.video_crf == null ? "" : String(preset.video_crf));
+    setVideoPreset(preset.video_preset ?? "");
+    setAudioBitrate(
+      preset.audio_bitrate_kbps == null ? "" : String(preset.audio_bitrate_kbps),
+    );
     setPreserveAllStreams(preset.preserve_all_streams);
     setOutputPath(suggestedOutput(inputPath, preset.target_format));
     setPreview(null);
@@ -1288,6 +1310,9 @@ export default function App() {
           width: width ? Number(width) : null,
           dpi: dpi ? Number(dpi) : null,
           colorMode: colorMode || null,
+          videoCrf: target === "mp4" && videoCrf ? Number(videoCrf) : null,
+          videoPreset: target === "mp4" && videoPreset ? videoPreset : null,
+          audioBitrateKbps: audioBitrate ? Number(audioBitrate) : null,
           preserveAllStreams,
         },
       });
@@ -1646,7 +1671,7 @@ export default function App() {
               {qualityFieldApplies(target) && <label>{copy.quality}<input type="number" min="1" max="100" value={quality} onChange={(event) => { setQuality(event.target.value); setPreview(null); }} /></label>}
               {expert && <label>{copy.width}<input type="number" min="1" max="16384" value={width} onChange={(event) => { setWidth(event.target.value); setPreview(null); }} /></label>}
               {expert && <label>{copy.dpi}<input type="number" min="36" max="600" value={dpi} onChange={(event) => { setDpi(event.target.value); setPreview(null); }} /></label>}
-              {expert && <label>{copy.colorMode}<select value={colorMode} onChange={(event) => { setColorMode(event.target.value); setPreview(null); }}><option value="rgb">RGB</option><option value="gray">Gray</option></select></label>}
+              {expert && <label>{copy.colorMode}<select value={colorMode} onChange={(event) => { setColorMode(event.target.value); setPreview(null); }}><option value="rgb">RGB</option><option value="gray">Gray</option></select></label>}{expert && videoKnobsApply(target) && <label>{copy.videoCrf}<input type="number" min="0" max="51" value={videoCrf} onChange={(event) => { setVideoCrf(event.target.value); setPreview(null); }} /></label>}{expert && videoKnobsApply(target) && <label>{copy.videoPreset}<select value={videoPreset} onChange={(event) => { setVideoPreset(event.target.value); setPreview(null); }}><option value="">medium (default)</option><option value="ultrafast">ultrafast</option><option value="superfast">superfast</option><option value="veryfast">veryfast</option><option value="faster">faster</option><option value="fast">fast</option><option value="medium">medium</option><option value="slow">slow</option><option value="slower">slower</option><option value="veryslow">veryslow</option></select></label>}{expert && audioBitrateApplies(target) && <label>{copy.audioBitrate}<input type="number" min="8" max="320" value={audioBitrate} onChange={(event) => { setAudioBitrate(event.target.value); setPreview(null); }} /></label>}
               {expert && <label className="checkbox-control"><input type="checkbox" checked={preserveAllStreams} onChange={(event) => { setPreserveAllStreams(event.target.checked); setPreview(null); }} />{copy.preserveAllStreams}</label>}
             </div>
 
@@ -1776,7 +1801,7 @@ export default function App() {
           {presetNotice && <p className="success-notice" role="status" aria-live="polite">{presetNotice}</p>}
           <section className="preset-editor" aria-label={copy.presetEditor}>
             <div><p className="section-label">{editingPresetId ? copy.editPreset : copy.newPreset}</p><h2>{editingPresetId ? copy.editPreset : copy.saveCurrentSettings}</h2></div>
-            <div className="preset-fields"><label>{copy.presetName}<input maxLength={80} value={presetName} onChange={(event) => setPresetName(event.target.value)} /></label><label>{copy.target}<select value={target} onChange={(event) => changeTarget(event.target.value)}>{presetTargetOptions.map((option) => <option key={option.value} value={option.value} disabled={option.disabled}>{option.label}</option>)}</select></label>{qualityFieldApplies(target) && <label>{copy.quality}<input type="number" min="1" max="100" value={quality} onChange={(event) => { setQuality(event.target.value); applyPresetField("quality"); }} /></label>}<label>{copy.width}<input type="number" min="1" max="16384" value={width} onChange={(event) => { setWidth(event.target.value); applyPresetField("width"); }} /></label><label>{copy.dpi}<input type="number" min="36" max="600" value={dpi} onChange={(event) => { setDpi(event.target.value); applyPresetField("dpi"); }} /></label><label>{copy.colorMode}<select value={colorMode} onChange={(event) => { setColorMode(event.target.value); applyPresetField("color-mode"); }}><option value="rgb">RGB</option><option value="gray">Gray</option></select></label><label className="checkbox-control"><input type="checkbox" checked={preserveAllStreams} onChange={(event) => { setPreserveAllStreams(event.target.checked); applyPresetField("preserve-all-streams"); }} />{copy.preserveAllStreams}</label></div>
+            <div className="preset-fields"><label>{copy.presetName}<input maxLength={80} value={presetName} onChange={(event) => setPresetName(event.target.value)} /></label><label>{copy.target}<select value={target} onChange={(event) => changeTarget(event.target.value)}>{presetTargetOptions.map((option) => <option key={option.value} value={option.value} disabled={option.disabled}>{option.label}</option>)}</select></label>{qualityFieldApplies(target) && <label>{copy.quality}<input type="number" min="1" max="100" value={quality} onChange={(event) => { setQuality(event.target.value); applyPresetField("quality"); }} /></label>}<label>{copy.width}<input type="number" min="1" max="16384" value={width} onChange={(event) => { setWidth(event.target.value); applyPresetField("width"); }} /></label><label>{copy.dpi}<input type="number" min="36" max="600" value={dpi} onChange={(event) => { setDpi(event.target.value); applyPresetField("dpi"); }} /></label><label>{copy.colorMode}<select value={colorMode} onChange={(event) => { setColorMode(event.target.value); applyPresetField("color-mode"); }}><option value="rgb">RGB</option><option value="gray">Gray</option></select></label>{videoKnobsApply(target) && <label>{copy.videoCrf}<input type="number" min="0" max="51" value={videoCrf} onChange={(event) => { setVideoCrf(event.target.value); applyPresetField("video-crf"); }} /></label>}{videoKnobsApply(target) && <label>{copy.videoPreset}<select value={videoPreset} onChange={(event) => { setVideoPreset(event.target.value); applyPresetField("video-preset"); }}><option value="">medium (default)</option><option value="ultrafast">ultrafast</option><option value="superfast">superfast</option><option value="veryfast">veryfast</option><option value="faster">faster</option><option value="fast">fast</option><option value="medium">medium</option><option value="slow">slow</option><option value="slower">slower</option><option value="veryslow">veryslow</option></select></label>}{audioBitrateApplies(target) && <label>{copy.audioBitrate}<input type="number" min="8" max="320" value={audioBitrate} onChange={(event) => { setAudioBitrate(event.target.value); applyPresetField("audio-bitrate"); }} /></label>}<label className="checkbox-control"><input type="checkbox" checked={preserveAllStreams} onChange={(event) => { setPreserveAllStreams(event.target.checked); applyPresetField("preserve-all-streams"); }} />{copy.preserveAllStreams}</label></div>
             <div className="action-row"><button className="primary" type="button" disabled={presetBusy || presetName.trim().length === 0} onClick={savePreset}>{presetBusy ? copy.savingPreset : copy.savePreset}</button>{editingPresetId && <button className="secondary" type="button" onClick={resetPresetEditor}>{copy.cancelEdit}</button>}</div>
           </section>
           <div className="preset-list">{presets.length === 0 ? <p className="empty">{copy.noPresets}</p> : presets.map((preset) => <article key={preset.preset_id}><div><strong>{preset.name}</strong><small>{preset.target_format.toUpperCase()} · Q {preset.quality ?? "—"} · {preset.width ? `${preset.width}px` : copy.originalSize}</small></div><div className="preset-actions"><button type="button" onClick={() => applyPreset(preset)}>{copy.applyPreset}</button><button type="button" onClick={() => editPreset(preset)}>{copy.editPreset}</button><button className={pendingDeleteId === preset.preset_id ? "danger" : "secondary"} type="button" disabled={presetBusy} onClick={() => deletePreset(preset.preset_id)}>{pendingDeleteId === preset.preset_id ? copy.confirmDelete : copy.deletePreset}</button></div></article>)}</div>

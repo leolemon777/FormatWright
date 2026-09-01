@@ -237,6 +237,9 @@ fn preset_library() -> PresetLibrary {
             dpi: None,
             color_mode: Some("rgb".to_owned()),
             preserve_all_streams: true,
+            video_crf: None,
+            video_preset: None,
+            audio_bitrate_kbps: None,
         }],
     }
 }

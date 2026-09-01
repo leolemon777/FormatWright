@@ -1692,6 +1692,9 @@ mod tests {
             dpi: None,
             color_mode: None,
             preserve_all_streams: true,
+            video_crf: None,
+            video_preset: None,
+            audio_bitrate_kbps: None,
         };
         let library = PresetLibrary {
             schema_version: PRESET_SCHEMA_VERSION,

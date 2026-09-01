@@ -158,6 +158,9 @@ describe("target option views", () => {
       width: null,
       dpi: null,
       colorMode: null,
+      videoCrf: null,
+      videoPreset: null,
+      audioBitrateKbps: null,
       preserveAllStreams: true,
     });
     expect(defaultPlanConstraints("jpg")).toEqual(defaultPlanConstraints("png"));

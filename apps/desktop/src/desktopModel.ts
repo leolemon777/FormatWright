@@ -144,8 +144,21 @@ export type PlanConstraintSnapshot = {
   width: number | null;
   dpi: number | null;
   colorMode: string | null;
+  videoCrf: number | null;
+  videoPreset: string | null;
+  audioBitrateKbps: number | null;
   preserveAllStreams: boolean;
 };
+
+export function videoKnobsApply(target: string): boolean {
+  return target.toLowerCase() === "mp4";
+}
+
+export function audioBitrateApplies(target: string): boolean {
+  return [
+    "mp4", "mp3", "m4a", "wav", "flac", "ogg", "opus", "aac",
+  ].includes(target.toLowerCase());
+}
 
 // CLI `convert INPUT --to T` has no leftover GUI flags. Explorer convert and a
 // fresh selectInput must start from this snapshot, not a hot Convert form.
@@ -155,6 +168,9 @@ export function defaultPlanConstraints(_target: string): PlanConstraintSnapshot 
     width: null,
     dpi: null,
     colorMode: null,
+    videoCrf: null,
+    videoPreset: null,
+    audioBitrateKbps: null,
     preserveAllStreams: true,
   };
 }
@@ -389,6 +405,9 @@ export type PresetFormField =
   | "width"
   | "dpi"
   | "color-mode"
+  | "video-crf"
+  | "video-preset"
+  | "audio-bitrate"
   | "preserve-all-streams";
 
 // Every preset field except the display name feeds conversion plan arguments;

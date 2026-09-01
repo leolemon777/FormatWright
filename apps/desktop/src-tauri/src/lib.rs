@@ -262,6 +262,9 @@ struct DesktopPresetRequest {
     width: Option<u32>,
     dpi: Option<u16>,
     color_mode: Option<String>,
+    video_crf: Option<u8>,
+    video_preset: Option<String>,
+    audio_bitrate_kbps: Option<u32>,
     preserve_all_streams: Option<bool>,
 }
 
@@ -276,6 +279,9 @@ impl DesktopPresetRequest {
             width: self.width,
             dpi: self.dpi,
             color_mode: self.color_mode,
+            video_crf: self.video_crf,
+            video_preset: self.video_preset,
+            audio_bitrate_kbps: self.audio_bitrate_kbps,
             preserve_all_streams: self.preserve_all_streams.unwrap_or(true),
         }
     }
@@ -320,6 +326,9 @@ struct DesktopConversionRequest {
     width: Option<u32>,
     dpi: Option<u16>,
     color_mode: Option<String>,
+    video_crf: Option<u8>,
+    video_preset: Option<String>,
+    audio_bitrate_kbps: Option<u32>,
     preserve_all_streams: Option<bool>,
     approved_plan_hash: Option<String>,
     idempotency_key: Option<String>,
@@ -335,6 +344,9 @@ impl DesktopConversionRequest {
             width: self.width,
             dpi: self.dpi,
             color_mode: self.color_mode.clone(),
+            video_crf: self.video_crf,
+            video_preset: self.video_preset.clone(),
+            audio_bitrate_kbps: self.audio_bitrate_kbps,
             ..PlanRequest::default()
         }
     }
