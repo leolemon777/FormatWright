@@ -64,3 +64,4 @@
 - [ ] Engine certification records attached.
 
 Generate the application dependency SBOM with `python scripts/generate_sbom.py`. Set `SOURCE_DATE_EPOCH` to the signed release commit timestamp for reproducible creation metadata. This application SBOM does not replace the separate SBOM required inside every engine pack.
+- [ ] Updater release keypair (not the dev keypair) is set via CI secrets and the matching `pubkey` is pinned in `tauri.conf.json` before signing; see [UPDATER.md](UPDATER.md).

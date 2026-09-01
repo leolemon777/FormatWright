@@ -32,6 +32,19 @@ jobs:
       - name: Prepare pinned Windows Starter packs
         shell: pwsh
         run: scripts/prepare_windows_starter_pack.ps1
+      - name: Assert the starter pack is populated
+        shell: pwsh
+        run: |
+          $root = 'dist/engine-packs/windows-x86_64/starter'
+          $bundle = Join-Path $root 'bundle.json'
+          if (-not (Test-Path -LiteralPath $bundle)) {
+            throw "starter pack is empty or missing $bundle - an empty-directory workaround must never ship"
+          }
+          $entries = @(Get-ChildItem -LiteralPath $root -Recurse -File)
+          if ($entries.Count -lt 5) {
+            throw "starter pack looks incomplete: only $($entries.Count) files under $root"
+          }
+          Write-Output "starter pack verified: $($entries.Count) files, bundle.json present"
       - name: Build offline NSIS candidate
         run: pnpm --filter @formatwright/desktop tauri build --bundles nsis
       - name: Generate checksums
