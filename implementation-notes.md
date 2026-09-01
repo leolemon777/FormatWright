@@ -4,6 +4,7 @@
 
 ### Spec Interpretation
 - User goal: execute the full competitive-gap roadmap, item by item, each with tests and evidence ("全部都改，都改完，确认无误"), toward an iteratively superior product.
+- Wave status after this session: W2 (G-10/G-11/G-13/G-30) and G-01 fully landed; G-12 + ADR-0013 landed; remaining backlog is W1 release engineering (G-02/G-03/G-04), W3 PDF toolbox extensions, and W4.
 
 ### Decisions Made & Landed (all on main, each commit gated by fmt+clippy+full tests)
 - **G-10 EPUB target** (`5387c70`/`659cbac`): md/html → epub via Pandoc; OCF magic detection distinguishes EPUB from DOCX prefixes; validation = EPUB_PACKAGE_OPENS/TARGET_FORMAT/CONTENT_DOCUMENTS/TEXT_COVERAGE(required, ≥80%)/TEXT_FIDELITY(Warning — nav/toc repeats chapter titles, same rationale class as EDGE_PDF_TEXT_FIDELITY). E2E: 2-chapter md → 9-entry publication, pandoc reads back complete.
@@ -18,7 +19,7 @@
 - Every feature has an end-to-end run on this machine with independent verifier (pandoc read-back, python zipfile, ffprobe, pdfinfo/pdftotext) — evidence captured in commit messages.
 
 ### Risks / Follow-up
-- **G-13 desktop UI wiring** (form/preset/lib.rs bridges for the three knobs) is the only roadmap item started-but-not-finished.
+- **G-13 desktop UI wiring** landed in `f48af08`: expert form + preset editor expose CRF/preset/bitrate per target, preset validation mirrors runner ranges, 28/28 frontend tests.
 - ODT/RTF inputs, W3 PDF toolbox (rotate/compress/encrypt/watermark/OCR), API service, updater, cross-platform remain queued per COMPETITIVE_GAP_ROADMAP W3/W4.
 - Operation routing is not yet surfaced in the desktop UI (CLI-only); capability snapshot doesn't advertise operations.
 
