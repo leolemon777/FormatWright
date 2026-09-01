@@ -113,6 +113,19 @@ enum Command {
         )]
         loop_count: Option<u16>,
 
+        #[arg(long, value_name = "0-51", help = "Video encode CRF (lower is better)")]
+        video_crf: Option<u8>,
+
+        #[arg(
+            long,
+            value_name = "ultrafast..veryslow",
+            help = "Video encode preset"
+        )]
+        video_preset: Option<String>,
+
+        #[arg(long, value_name = "8-320", help = "Audio bitrate in kbps")]
+        audio_bitrate_kbps: Option<u32>,
+
         #[arg(long, help = "Allow explicitly reported lossy structured-data mapping")]
         allow_lossy_data: bool,
     },
@@ -164,6 +177,19 @@ enum Command {
             help = "GIF loop count; zero means infinite"
         )]
         loop_count: Option<u16>,
+
+        #[arg(long, value_name = "0-51", help = "Video encode CRF (lower is better)")]
+        video_crf: Option<u8>,
+
+        #[arg(
+            long,
+            value_name = "ultrafast..veryslow",
+            help = "Video encode preset"
+        )]
+        video_preset: Option<String>,
+
+        #[arg(long, value_name = "8-320", help = "Audio bitrate in kbps")]
+        audio_bitrate_kbps: Option<u32>,
 
         #[arg(long, help = "Allow explicitly reported lossy structured-data mapping")]
         allow_lossy_data: bool,
@@ -571,6 +597,9 @@ async fn run(cli: Cli) -> Result<(), FormatWrightError> {
             color_mode,
             fps,
             loop_count,
+            video_crf,
+            video_preset,
+            audio_bitrate_kbps,
             allow_lossy_data,
         } => {
             let output = output.unwrap_or_else(|| default_output_path(&input, &to));
@@ -587,6 +616,9 @@ async fn run(cli: Cli) -> Result<(), FormatWrightError> {
                 color_mode,
                 frames_per_second: fps,
                 loop_count,
+                video_crf,
+                video_preset,
+                audio_bitrate_kbps,
                 allow_lossy_data,
             };
             let (_, plan, _) = prepare_conversion(&input, &request).await?;
@@ -611,6 +643,9 @@ async fn run(cli: Cli) -> Result<(), FormatWrightError> {
             color_mode,
             fps,
             loop_count,
+            video_crf,
+            video_preset,
+            audio_bitrate_kbps,
             allow_lossy_data,
             dry_run,
             queue_only,
@@ -631,6 +666,9 @@ async fn run(cli: Cli) -> Result<(), FormatWrightError> {
                 color_mode,
                 frames_per_second: fps,
                 loop_count,
+                video_crf,
+                video_preset,
+                audio_bitrate_kbps,
                 allow_lossy_data,
             };
             let (probe, plan, validation_engine) = prepare_conversion(&input, &request).await?;

@@ -135,6 +135,12 @@ pub struct PlanRequest {
     #[serde(default)]
     pub loop_count: Option<u16>,
     #[serde(default)]
+    pub video_crf: Option<u8>,
+    #[serde(default)]
+    pub video_preset: Option<String>,
+    #[serde(default)]
+    pub audio_bitrate_kbps: Option<u32>,
+    #[serde(default)]
     pub allow_lossy_data: bool,
 }
 

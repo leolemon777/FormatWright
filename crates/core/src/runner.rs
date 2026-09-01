@@ -2185,11 +2185,18 @@ fn configure_ffmpeg_output(command: &mut Command, plan: &Plan, partial_path: &Pa
             let audio_mode = checked_argument(step, "audio_mode", &["copy", "aac"])?;
             command.arg("-c:v").arg(video_mode);
             if video_mode != "copy" {
-                command.arg("-preset").arg("medium").arg("-crf").arg("20");
+                let preset = video_preset_argument(step)?;
+                let crf = video_crf_argument(step)?;
+                command
+                    .arg("-preset")
+                    .arg(preset)
+                    .arg("-crf")
+                    .arg(crf.to_string());
             }
             command.arg("-c:a").arg(audio_mode);
             if audio_mode != "copy" {
-                command.arg("-b:a").arg("192k");
+                let bitrate = audio_bitrate_argument(step)?;
+                command.arg("-b:a").arg(format!("{bitrate}k"));
             }
             if step.arguments.get("subtitle_mode").map(String::as_str) == Some("copy") {
                 command.arg("-c:s").arg("copy");
@@ -2234,10 +2241,12 @@ fn configure_ffmpeg_output(command: &mut Command, plan: &Plan, partial_path: &Pa
                     command.arg("-q:a").arg("5");
                 }
                 "libopus" => {
-                    command.arg("-b:a").arg("160k");
+                    let bitrate = audio_bitrate_argument(step)?.max(8);
+                    command.arg("-b:a").arg(format!("{bitrate}k"));
                 }
                 "libmp3lame" | "aac" => {
-                    command.arg("-b:a").arg("192k");
+                    let bitrate = audio_bitrate_argument(step)?;
+                    command.arg("-b:a").arg(format!("{bitrate}k"));
                 }
                 _ => {}
             }
@@ -2470,6 +2479,61 @@ fn checked_argument<'a>(
         Ok(value)
     } else {
         Err(invalid_plan_argument(name))
+    }
+}
+
+/// Reads the requested x264 preset with an allowlist; defaults to `medium`,
+/// which is the value the hardcoded pipeline used before the knob existed.
+fn video_preset_argument(step: &crate::domain::PlanStep) -> Result<&str> {
+    let preset = step
+        .arguments
+        .get("video_preset")
+        .map_or("medium", String::as_str);
+    if matches!(
+        preset,
+        "ultrafast"
+            | "superfast"
+            | "veryfast"
+            | "faster"
+            | "fast"
+            | "medium"
+            | "slow"
+            | "slower"
+            | "veryslow"
+    ) {
+        Ok(preset)
+    } else {
+        Err(invalid_plan_argument("video_preset"))
+    }
+}
+
+/// Reads the requested CRF quality (0-51); defaults to 20.
+fn video_crf_argument(step: &crate::domain::PlanStep) -> Result<u8> {
+    let crf = step
+        .arguments
+        .get("video_crf")
+        .map_or("20", String::as_str)
+        .parse::<u8>()
+        .map_err(|_| invalid_plan_argument("video_crf"))?;
+    if crf <= 51 {
+        Ok(crf)
+    } else {
+        Err(invalid_plan_argument("video_crf"))
+    }
+}
+
+/// Reads the requested audio bitrate in kbps (8-320); defaults to 192.
+fn audio_bitrate_argument(step: &crate::domain::PlanStep) -> Result<u32> {
+    let bitrate = step
+        .arguments
+        .get("audio_bitrate_kbps")
+        .map_or("192", String::as_str)
+        .parse::<u32>()
+        .map_err(|_| invalid_plan_argument("audio_bitrate_kbps"))?;
+    if (8..=320).contains(&bitrate) {
+        Ok(bitrate)
+    } else {
+        Err(invalid_plan_argument("audio_bitrate_kbps"))
     }
 }
 
@@ -2850,7 +2914,65 @@ mod tests {
         staged_output_candidates, staged_output_path,
     };
     use crate::ErrorCode;
-    use crate::domain::{ChangeSet, NetworkPolicy, Plan, SCHEMA_VERSION};
+    use crate::domain::{ChangeSet, NetworkPolicy, Plan, PlanStep, SCHEMA_VERSION};
+
+    fn knob_step(arguments: &[(&str, &str)]) -> PlanStep {
+        PlanStep {
+            step_id: "step-1".to_owned(),
+            capability_id: "ffmpeg.test".to_owned(),
+            engine: formatwright_engine_sdk::EngineIdentity {
+                engine_id: "ffmpeg".to_owned(),
+                version: "test".to_owned(),
+                binary_path: std::path::PathBuf::from("ffmpeg.exe"),
+                binary_sha256: "0".repeat(64),
+                manifest_sha256: None,
+                build_configuration: None,
+                certification: formatwright_engine_sdk::Certification::Unverified,
+            },
+            operation: formatwright_engine_sdk::Operation::Transcode,
+            loss_class: formatwright_engine_sdk::LossClass::Lossy,
+            arguments: arguments
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+                .collect(),
+            estimated_temporary_bytes: None,
+        }
+    }
+
+    #[test]
+    fn quality_knob_helpers_apply_defaults_and_validate_ranges() {
+        use super::{audio_bitrate_argument, video_crf_argument, video_preset_argument};
+
+        let bare = knob_step(&[]);
+        assert_eq!(
+            video_preset_argument(&bare).expect("default preset"),
+            "medium"
+        );
+        assert_eq!(video_crf_argument(&bare).expect("default crf"), 20);
+        assert_eq!(audio_bitrate_argument(&bare).expect("default bitrate"), 192);
+
+        let tuned = knob_step(&[
+            ("video_preset", "slow"),
+            ("video_crf", "28"),
+            ("audio_bitrate_kbps", "96"),
+        ]);
+        assert_eq!(video_preset_argument(&tuned).expect("tuned preset"), "slow");
+        assert_eq!(video_crf_argument(&tuned).expect("tuned crf"), 28);
+        assert_eq!(audio_bitrate_argument(&tuned).expect("tuned bitrate"), 96);
+
+        assert!(
+            video_preset_argument(&knob_step(&[("video_preset", "turbo")])).is_err(),
+            "unknown presets are rejected"
+        );
+        assert!(
+            video_crf_argument(&knob_step(&[("video_crf", "52")])).is_err(),
+            "CRF above 51 is rejected"
+        );
+        assert!(
+            audio_bitrate_argument(&knob_step(&[("audio_bitrate_kbps", "4")])).is_err(),
+            "bitrates below 8 kbps are rejected"
+        );
+    }
 
     #[test]
     fn refuses_a_plan_that_requests_network_access() {

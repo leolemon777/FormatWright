@@ -796,6 +796,15 @@ fn plan_mp4_conversion(
         .to_owned(),
     );
     arguments.insert("movflags".to_owned(), "+faststart".to_owned());
+    if let Some(crf) = request.video_crf {
+        arguments.insert("video_crf".to_owned(), crf.to_string());
+    }
+    if let Some(preset) = request.video_preset.as_deref() {
+        arguments.insert("video_preset".to_owned(), preset.to_owned());
+    }
+    if let Some(bitrate) = request.audio_bitrate_kbps {
+        arguments.insert("audio_bitrate_kbps".to_owned(), bitrate.to_string());
+    }
 
     let mut changes = ChangeSet {
         preserved: vec![
@@ -971,6 +980,9 @@ fn plan_audio_conversion(
     );
     arguments.insert("muxer".to_owned(), muxer.to_owned());
     arguments.insert("target_codec".to_owned(), target_codec.to_owned());
+    if let Some(bitrate) = request.audio_bitrate_kbps {
+        arguments.insert("audio_bitrate_kbps".to_owned(), bitrate.to_string());
+    }
 
     let mut changes = ChangeSet {
         preserved: vec![
@@ -1240,6 +1252,9 @@ mod tests {
             frames_per_second: None,
             loop_count: None,
             allow_lossy_data: false,
+            video_crf: None,
+            video_preset: None,
+            audio_bitrate_kbps: None,
         }
     }
 
@@ -1276,6 +1291,31 @@ mod tests {
         assert_eq!(plan.steps[0].operation, Operation::Transcode);
         assert_eq!(plan.steps[0].arguments["video_mode"], "libx264");
         assert_eq!(plan.steps[0].arguments["audio_mode"], "aac");
+    }
+
+    #[test]
+    fn quality_knobs_flow_into_the_transcode_plan() {
+        let mut tuned = request();
+        tuned.video_crf = Some(23);
+        tuned.video_preset = Some("slow".to_owned());
+        tuned.audio_bitrate_kbps = Some(128);
+        let plan = plan_conversion(&probe("vp9", Some("opus")), &tuned, &engine())
+            .expect("tuned transcode plan");
+        assert_eq!(plan.steps[0].arguments["video_crf"], "23");
+        assert_eq!(plan.steps[0].arguments["video_preset"], "slow");
+        assert_eq!(plan.steps[0].arguments["audio_bitrate_kbps"], "128");
+
+        // Untuned requests must not carry knob arguments so the executor's
+        // documented defaults (preset medium / CRF 20 / 192k) stay in charge.
+        let untuned = plan_conversion(&probe("vp9", Some("opus")), &request(), &engine())
+            .expect("default transcode plan");
+        assert!(!untuned.steps[0].arguments.contains_key("video_crf"));
+        assert!(!untuned.steps[0].arguments.contains_key("video_preset"));
+        assert!(
+            !untuned.steps[0]
+                .arguments
+                .contains_key("audio_bitrate_kbps")
+        );
     }
 
     #[test]
