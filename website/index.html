@@ -1,0 +1,850 @@
+<!doctype html>
+<html lang="en" data-lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FormatWright — Local conversion, with receipts.</title>
+  <meta name="description" content="Open-source local file conversion for Windows. Every conversion ships a machine-readable acceptance proof: text layers, embedded fonts, page-count and archive-entry conservation. Zero telemetry, zero network.">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#f8f4ed">
+  <meta property="og:title" content="FormatWright — Local conversion, with receipts.">
+  <meta property="og:description" content="Open-source, local-first file conversion with a machine-readable acceptance proof for every job. Zero telemetry, zero network.">
+  <meta property="og:type" content="website">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%231f3a46'/%3E%3Ctext x='16' y='22' font-family='Georgia,serif' font-size='17' fill='%23f8f4ed' text-anchor='middle'%3EF%3C/text%3E%3C/svg%3E">
+  <style>
+    /* ============================================================
+       FormatWright landing — Meadowlark tokens
+       (mirrors apps/desktop/src/styles.css :root palette & type)
+       Paper / archival look: cream stock, deep ink, one vermilion
+       accent. Carrier: the acceptance receipt itself.
+       ============================================================ */
+    :root {
+      --color-page: #f8f4ed;
+      --color-surface: #ffffff;
+      --color-surface-peach: #f4d9ce;
+      --color-ink: #1f3a46;
+      --color-ink-soft: #4a5c63;
+      --color-primary: #e8674a;
+      --color-primary-deep: #cf4f33;
+      --color-secondary: #2e6b76;
+      --color-secondary-deep: #1f545e;
+      --color-border: #e7dfd3;
+      --color-border-strong: #d7cbb8;
+
+      --font-display: "Marcellus", Georgia, "Times New Roman", "Songti SC", "SimSun", serif;
+      --font-text: "Urbanist", "Segoe UI", system-ui, -apple-system, "Microsoft YaHei", "PingFang SC", sans-serif;
+      --font-mono: "Cascadia Mono", "Consolas", ui-monospace, "SFMono-Regular", Menlo, monospace;
+
+      --shadow-md: 0 1px 2px rgba(31, 58, 70, 0.05), 0 12px 32px rgba(31, 58, 70, 0.09);
+      --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      background: var(--color-page);
+      color: var(--color-ink);
+      font-family: var(--font-text);
+      font-size: 1rem;
+      line-height: 1.65;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* Paper grain over everything — the load-bearing texture layer. */
+    body::after {
+      content: "";
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      pointer-events: none;
+      opacity: 0.38;
+      mix-blend-mode: overlay;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='4'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)' opacity='.55'/%3E%3C/svg%3E");
+    }
+
+    ::selection { background: var(--color-surface-peach); color: var(--color-ink); }
+
+    h1, h2, h3 {
+      font-family: var(--font-display);
+      font-weight: 400;
+      line-height: 1.15;
+      margin: 0 0 0.6em;
+      text-wrap: balance;
+    }
+
+    p { margin: 0 0 1em; }
+    a { color: var(--color-secondary-deep); text-underline-offset: 3px; }
+
+    .container {
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: 0 1.5rem;
+    }
+
+    /* ---------- language switching (no-JS fallback: English only) ---------- */
+    html:not([data-lang="zh-Hans"]) [lang="zh-Hans"]:not([data-lang-btn]) { display: none; }
+    html[data-lang="zh-Hans"] [lang="en"]:not([data-lang-btn]) { display: none; }
+
+    /* ---------- skip link & focus ---------- */
+    .skip-link {
+      position: absolute;
+      left: 1rem;
+      top: -3.5rem;
+      z-index: 10000;
+      background: var(--color-ink);
+      color: #fff;
+      padding: 0.55rem 1rem;
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      text-decoration: none;
+      transition: top 160ms var(--ease);
+    }
+    .skip-link:focus { top: 1rem; }
+
+    a:focus-visible, button:focus-visible {
+      outline: 3px solid var(--color-primary-deep);
+      outline-offset: 2px;
+      border-radius: 2px;
+    }
+
+    /* ---------- header ---------- */
+    .site-header {
+      border-bottom: 1px solid var(--color-border);
+      background: rgba(248, 244, 237, 0.92);
+    }
+    .header-inner {
+      display: flex;
+      align-items: center;
+      gap: 1.25rem;
+      flex-wrap: wrap;
+      padding-top: 1rem;
+      padding-bottom: 1rem;
+    }
+    .wordmark {
+      font-family: var(--font-display);
+      font-size: 1.35rem;
+      color: var(--color-ink);
+      text-decoration: none;
+      letter-spacing: 0.01em;
+      margin-right: auto;
+    }
+    .wordmark .dot { color: var(--color-primary); }
+    .site-nav { display: flex; gap: 1.25rem; align-items: center; }
+    .site-nav a {
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      text-decoration: none;
+      color: var(--color-ink-soft);
+      padding: 0.2rem 0;
+    }
+    .site-nav a:hover { color: var(--color-ink); text-decoration: underline; }
+
+    .lang-switch {
+      display: inline-flex;
+      align-items: center;
+      border: 1px solid var(--color-border-strong);
+      border-radius: 999px;
+      overflow: hidden;
+      background: var(--color-surface);
+    }
+    .lang-switch .sep {
+      color: var(--color-border-strong);
+      font-size: 0.8rem;
+      user-select: none;
+    }
+    .lang-btn {
+      appearance: none;
+      border: 0;
+      background: transparent;
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      letter-spacing: 0.06em;
+      padding: 0.38rem 0.85rem;
+      color: var(--color-ink-soft);
+      cursor: pointer;
+    }
+    .lang-btn[aria-pressed="true"] {
+      background: var(--color-ink);
+      color: #fff;
+    }
+
+    /* ---------- hero ---------- */
+    .hero { padding: 4.5rem 0 4rem; }
+    .hero-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);
+      gap: 3.5rem;
+      align-items: center;
+    }
+    .eyebrow {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      font-family: var(--font-mono);
+      font-size: 0.76rem;
+      color: var(--color-secondary-deep);
+      margin: 0 0 1.4rem;
+    }
+    .eyebrow::before {
+      content: "";
+      width: 9px;
+      height: 9px;
+      background: var(--color-primary);
+      flex: none;
+    }
+    .eyebrow [lang="en"] { letter-spacing: 0.14em; text-transform: uppercase; }
+
+    .hero h1 {
+      font-size: clamp(2.4rem, 5.4vw, 3.55rem);
+      margin-bottom: 1.1rem;
+    }
+    .hero h1 em { font-style: italic; color: var(--color-primary-deep); }
+    [lang="zh-Hans"] em { font-style: normal; }
+
+    .lede {
+      font-size: 1.13rem;
+      color: var(--color-ink-soft);
+      max-width: 34em;
+      margin-bottom: 2rem;
+    }
+
+    .cta-row { display: flex; gap: 0.9rem; flex-wrap: wrap; margin-bottom: 1rem; }
+
+    .btn {
+      display: inline-block;
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+      letter-spacing: 0.09em;
+      text-transform: uppercase;
+      text-decoration: none;
+      padding: 0.85rem 1.5rem;
+      border-radius: 4px;
+      border: 1.5px solid var(--color-ink);
+      transition: transform 140ms var(--ease), box-shadow 140ms var(--ease);
+    }
+    .btn:hover { transform: translateY(-1px); box-shadow: var(--shadow-md); }
+    .btn-primary { background: var(--color-ink); color: #fff; }
+    .btn-ghost { background: transparent; color: var(--color-ink); }
+    .btn-ghost:hover { background: var(--color-surface); }
+
+    .hero-note {
+      font-family: var(--font-mono);
+      font-size: 0.74rem;
+      color: var(--color-ink-soft);
+      margin: 0;
+    }
+
+    /* ---------- the receipt (hero artifact) ---------- */
+    .receipt-wrap { position: relative; max-width: 430px; justify-self: end; width: 100%; }
+    .receipt-wrap .sheet {
+      position: absolute;
+      inset: 0;
+      border-radius: 3px;
+      box-shadow: 0 12px 26px rgba(31, 58, 70, 0.16);
+    }
+    .receipt-wrap .sheet-a { transform: translate(9px, -12px) rotate(2.3deg); background: #efe8db; }
+    .receipt-wrap .sheet-b { transform: translate(-6px, -6px) rotate(-1.4deg); background: #f2ece1; }
+
+    .receipt {
+      position: relative;
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-bottom: 2px dashed var(--color-border-strong);
+      border-radius: 3px 3px 0 0;
+      box-shadow: 0 18px 40px rgba(31, 58, 70, 0.14);
+      padding: 1.4rem 1.5rem 1.6rem;
+      font-family: var(--font-mono);
+    }
+    .receipt-band {
+      display: flex;
+      justify-content: space-between;
+      gap: 1rem;
+      font-size: 0.68rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--color-ink-soft);
+      border-bottom: 1px solid var(--color-border);
+      padding-bottom: 0.7rem;
+      margin-bottom: 0.9rem;
+    }
+    .sample-tag {
+      position: absolute;
+      top: -12px;
+      left: -10px;
+      transform: rotate(-4deg);
+      background: var(--color-page);
+      border: 1px solid var(--color-border-strong);
+      color: var(--color-ink-soft);
+      font-size: 0.62rem;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      padding: 0.18rem 0.55rem;
+      border-radius: 2px;
+      box-shadow: 0 1px 2px rgba(31, 58, 70, 0.08);
+    }
+    .receipt dl { margin: 0 0 0.9rem; }
+    .receipt .field {
+      display: flex;
+      gap: 0.9rem;
+      align-items: baseline;
+      border-bottom: 1px solid var(--color-border);
+      padding: 0.42rem 0;
+      font-size: 0.72rem;
+    }
+    .receipt dt {
+      min-width: 5.2rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--color-ink-soft);
+      font-weight: 400;
+      flex: none;
+    }
+    .receipt dd {
+      margin: 0;
+      color: var(--color-ink);
+      letter-spacing: 0.02em;
+      overflow-wrap: anywhere;
+    }
+    .receipt-checks { list-style: none; margin: 0 0 1rem; padding: 0; }
+    .receipt-checks li {
+      display: flex;
+      align-items: baseline;
+      gap: 0.6rem;
+      font-size: 0.72rem;
+      padding: 0.42rem 0;
+      border-bottom: 1px solid var(--color-border);
+    }
+    .check-name {
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--color-ink-soft);
+      min-width: 9.5rem;
+      flex: none;
+    }
+    .check-value { color: var(--color-ink); margin-right: auto; }
+    .chip-pass {
+      color: var(--color-secondary-deep);
+      border: 1px solid var(--color-secondary-deep);
+      border-radius: 2px;
+      font-size: 0.6rem;
+      letter-spacing: 0.14em;
+      padding: 0.08rem 0.4rem;
+      flex: none;
+    }
+    .receipt-verdict {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 0.78rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--color-ink);
+      padding-top: 0.9rem;
+    }
+    .stamp {
+      display: inline-block;
+      border: 3px double var(--color-primary);
+      color: var(--color-primary);
+      font-size: 1.35rem;
+      font-weight: 700;
+      letter-spacing: 0.28em;
+      padding: 0.22rem 0.8rem 0.22rem 1.08rem;
+      transform: rotate(-6deg);
+      opacity: 0.78;
+      border-radius: 3px;
+    }
+    .receipt-foot {
+      margin-top: 1rem;
+      font-size: 0.62rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--color-ink-soft);
+      display: flex;
+      justify-content: space-between;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+    }
+    .receipt figcaption {
+      font-family: var(--font-text);
+      font-size: 0.82rem;
+      color: var(--color-ink-soft);
+      margin-top: 1.6rem;
+      text-align: center;
+    }
+
+    /* ---------- sections ---------- */
+    section { padding: 3.6rem 0; }
+    .section-head { margin-bottom: 2.2rem; }
+    .section-head h2 { font-size: clamp(1.7rem, 3.4vw, 2.2rem); margin: 0; }
+
+    /* ---------- pillar cards ---------- */
+    .pillars { border-top: 1px solid var(--color-border); }
+    .card-grid {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 1.4rem;
+    }
+    .card {
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: 6px;
+      padding: 1.6rem 1.5rem 1.3rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+    }
+    .card-index {
+      font-family: var(--font-mono);
+      font-size: 1.2rem;
+      font-weight: 700;
+      color: var(--color-primary-deep);
+      margin: 0 0 0.3rem;
+    }
+    .card h3 { font-size: 1.28rem; margin-bottom: 0.4rem; }
+    .card p { font-size: 0.95rem; color: var(--color-ink-soft); }
+    .card .evidence {
+      margin-top: auto;
+      border-left: 2px solid var(--color-primary);
+      padding: 0.15rem 0 0.15rem 0.9rem;
+      font-size: 0.86rem;
+      color: var(--color-ink-soft);
+    }
+    .evidence-label {
+      display: block;
+      font-family: var(--font-mono);
+      font-size: 0.62rem;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--color-secondary-deep);
+      margin-bottom: 0.3rem;
+    }
+
+    /* ---------- formats table ---------- */
+    .formats { border-top: 1px solid var(--color-border); }
+    .table-scroll {
+      overflow-x: auto;
+      border: 1px solid var(--color-border);
+      border-radius: 6px;
+      background: var(--color-surface);
+    }
+    table { border-collapse: collapse; width: 100%; min-width: 40rem; }
+    th, td { text-align: left; padding: 0.72rem 1rem; vertical-align: top; }
+    thead th {
+      font-family: var(--font-mono);
+      font-size: 0.68rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      font-weight: 400;
+      color: var(--color-ink-soft);
+      border-bottom: 1px solid var(--color-border-strong);
+      background: #fdfaf4;
+      white-space: nowrap;
+    }
+    tbody tr + tr td { border-top: 1px solid var(--color-border); }
+    tbody tr:nth-child(even) { background: #fcf9f3; }
+    td.conv { white-space: nowrap; font-weight: 600; }
+    td.engine { font-family: var(--font-mono); font-size: 0.82rem; white-space: nowrap; }
+    td.check { color: var(--color-ink-soft); font-size: 0.92rem; }
+
+    /* ---------- engines ---------- */
+    .engines { border-top: 1px solid var(--color-border); }
+    .engines .prose { max-width: 46em; font-size: 1.02rem; color: var(--color-ink-soft); }
+    .engines .prose strong { color: var(--color-ink); font-weight: 600; }
+    .routing {
+      margin: 1.8rem 0;
+      border: 1px solid var(--color-border-strong);
+      border-radius: 6px;
+      background: var(--color-surface);
+      padding: 1.1rem 1.25rem;
+    }
+    .routing-label {
+      font-family: var(--font-mono);
+      font-size: 0.66rem;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--color-secondary-deep);
+      margin: 0 0 0.7rem;
+    }
+    .routing-chain {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem 0.65rem;
+      align-items: center;
+      font-family: var(--font-mono);
+      font-size: 0.76rem;
+    }
+    .routing-chain .node {
+      border: 1px solid var(--color-border-strong);
+      background: #fdfaf4;
+      border-radius: 3px;
+      padding: 0.3rem 0.6rem;
+      white-space: nowrap;
+    }
+    .routing-chain .arrow { color: var(--color-primary-deep); }
+    .engines-link { font-size: 1rem; }
+
+    /* ---------- footer ---------- */
+    .site-footer {
+      border-top: 3px double var(--color-border-strong);
+      padding: 2.6rem 0 3rem;
+      margin-top: 1.5rem;
+    }
+    .footer-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1.2rem 3rem;
+      align-items: baseline;
+      justify-content: space-between;
+    }
+    .footer-brand {
+      font-family: var(--font-display);
+      font-size: 1.25rem;
+      margin: 0 0 0.3rem;
+    }
+    .footer-tag { font-family: var(--font-mono); font-size: 0.68rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--color-ink-soft); margin: 0; }
+    .footer-legal { font-size: 0.85rem; color: var(--color-ink-soft); max-width: 34em; margin: 0; }
+    .footer-legal a { white-space: nowrap; }
+
+    /* ---------- responsive ---------- */
+    @media (max-width: 920px) {
+      .hero { padding: 3.2rem 0 3rem; }
+      .hero-grid { grid-template-columns: 1fr; gap: 3rem; }
+      .receipt-wrap { justify-self: center; }
+      .card-grid { grid-template-columns: 1fr; }
+      section { padding: 3rem 0; }
+    }
+    @media (max-width: 560px) {
+      .header-inner { gap: 0.8rem; }
+      .site-nav { gap: 0.9rem; }
+      .hero { padding: 2.6rem 0 2.6rem; }
+      .lede { font-size: 1.04rem; }
+      .receipt { padding: 1.15rem 1.05rem 1.3rem; }
+      .check-name { min-width: 7.5rem; }
+      section { padding: 2.6rem 0; }
+    }
+
+    /* ---------- motion & print ---------- */
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      *, *::before, *::after { transition: none !important; animation: none !important; }
+    }
+    @media print {
+      body::after { display: none; }
+      .lang-switch, .site-nav, .cta-row { display: none; }
+      body { background: #fff; }
+      .receipt-wrap { box-shadow: none; }
+    }
+  </style>
+  <noscript>
+    <style>.lang-switch { display: none; }</style>
+  </noscript>
+</head>
+<body>
+  <a class="skip-link" href="#main"><span lang="en">Skip to main content</span><span lang="zh-Hans">跳到主要内容</span></a>
+
+  <header class="site-header">
+    <div class="container header-inner">
+      <a class="wordmark" href="#top">FormatWright<span class="dot" aria-hidden="true">.</span></a>
+      <nav class="site-nav" id="site-nav" aria-label="Primary">
+        <a href="#formats"><span lang="en">Formats</span><span lang="zh-Hans">格式</span></a>
+        <a href="#engines"><span lang="en">Engines</span><span lang="zh-Hans">引擎</span></a>
+        <a href="#" data-gh="">GitHub</a>
+      </nav>
+      <div class="lang-switch" role="group" aria-label="Language">
+        <button type="button" class="lang-btn" data-lang-btn="en" lang="en" aria-pressed="true">EN</button>
+        <span class="sep" aria-hidden="true">/</span>
+        <button type="button" class="lang-btn" data-lang-btn="zh-Hans" lang="zh-Hans" aria-pressed="false">中文</button>
+      </div>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero" id="top" aria-labelledby="hero-title">
+      <div class="container hero-grid">
+        <div>
+          <p class="eyebrow"><span lang="en">Open source · Apache-2.0 · Windows desktop + CLI</span><span lang="zh-Hans">开源 · Apache-2.0 · Windows 桌面 + CLI</span></p>
+          <h1 id="hero-title">
+            <span lang="en">Local conversion, <em>with receipts</em>.</span>
+            <span lang="zh-Hans">本地转换，<em>结果有据可查</em>。</span>
+          </h1>
+          <p class="lede">
+            <span lang="en">FormatWright converts your files entirely on your machine — and then proves it. Every job ends with a machine-readable acceptance report: text layer extractable, fonts embedded, page counts conserved, archive entries accounted for. No cloud. No telemetry. No “trust me.”</span>
+            <span lang="zh-Hans">FormatWright 完全在本机完成转换，并且用证据说话：每个任务结束时都会生成机器可读的验收报告——文字层可提取、字体已嵌入、页数守恒、归档条目一件不少。没有云端，没有遥测，也没有「相信我」。</span>
+          </p>
+          <div class="cta-row">
+            <a class="btn btn-primary" href="#"><span lang="en">Download v0.1</span><span lang="zh-Hans">下载 v0.1</span></a>
+            <a class="btn btn-ghost" href="#" data-gh=""><span lang="en">View on GitHub</span><span lang="zh-Hans">在 GitHub 查看</span></a>
+          </div>
+          <p class="hero-note">
+            <span lang="en">Windows desktop + CLI · Apache-2.0 · Alpha — current status lives in the repository README.</span>
+            <span lang="zh-Hans">Windows 桌面 + CLI · Apache-2.0 · Alpha——当前状态见仓库 README。</span>
+          </p>
+        </div>
+
+        <figure class="receipt-wrap">
+          <div class="sheet sheet-a" aria-hidden="true"></div>
+          <div class="sheet sheet-b" aria-hidden="true"></div>
+          <div class="receipt">
+            <span class="sample-tag"><span lang="en">Sample</span><span lang="zh-Hans">示例</span></span>
+            <div class="receipt-band">
+              <span>FormatWright · Acceptance proof</span>
+              <span>No. FW-2026-0147</span>
+            </div>
+            <dl>
+              <div class="field"><dt>Job</dt><dd>merge-two-pdfs</dd></div>
+              <div class="field"><dt>Input</dt><dd>2 files · 7 pages</dd></div>
+              <div class="field"><dt>Engine</dt><dd>qpdf → poppler (verify)</dd></div>
+            </dl>
+            <ul class="receipt-checks">
+              <li><span class="check-name">Pages in → out</span><span class="check-value">7 → 7</span><span class="chip-pass">PASS</span></li>
+              <li><span class="check-name">Text layer</span><span class="check-value">extractable</span><span class="chip-pass">PASS</span></li>
+              <li><span class="check-name">Fonts embedded</span><span class="check-value">14 / 14</span><span class="chip-pass">PASS</span></li>
+            </ul>
+            <div class="receipt-verdict">
+              <span>Verdict · Pass</span>
+              <span class="stamp" aria-hidden="true">PASS</span>
+            </div>
+            <div class="receipt-foot">
+              <span>Issued 2026-09-01 · local</span>
+              <span>0 network calls</span>
+            </div>
+          </div>
+          <figcaption>
+            <span lang="en">Every conversion writes a report like this — machine-readable, archivable, yours to audit.</span>
+            <span lang="zh-Hans">每次转换都会写下这样一份报告——机器可读、可归档，随时可审计。</span>
+          </figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section class="pillars" aria-labelledby="pillars-title">
+      <div class="container">
+        <div class="section-head">
+          <p class="eyebrow"><span lang="en">§ 01 · Why FormatWright</span><span lang="zh-Hans">§ 01 · 为什么是 FormatWright</span></p>
+          <h2 id="pillars-title"><span lang="en">Three things other converters don’t do</span><span lang="zh-Hans">别的转换器不做的那三件事</span></h2>
+        </div>
+        <ul class="card-grid">
+          <li class="card">
+            <p class="card-index" aria-hidden="true">01</p>
+            <h3><span lang="en">Receipts, not exit codes</span><span lang="zh-Hans">要回执，不要退出码</span></h3>
+            <p>
+              <span lang="en">A zero exit code is not proof of success. After every conversion, FormatWright independently validates the output and writes a machine-readable acceptance report you can archive, diff, and audit.</span>
+              <span lang="zh-Hans">退出码为零不等于转换成功。每次转换之后，FormatWright 都会独立校验输出，并写下可归档、可比对、可审计的机器可读验收报告。</span>
+            </p>
+            <p class="evidence">
+              <span class="evidence-label"><span lang="en">Evidence</span><span lang="zh-Hans">证据</span></span>
+              <span lang="en">Merging two PDFs? Page-count conservation is re-measured by an independent Poppler pass — 7 pages in, 7 pages out, or the job fails.</span>
+              <span lang="zh-Hans">合并两份 PDF？页数守恒由独立的 Poppler 复测：进去 7 页、出来 7 页，差一页即判失败。</span>
+            </p>
+          </li>
+          <li class="card">
+            <p class="card-index" aria-hidden="true">02</p>
+            <h3><span lang="en">Local by default, quiet by design</span><span lang="zh-Hans">默认本地，天生安静</span></h3>
+            <p>
+              <span lang="en">Your files never leave the machine. Conversion engines run as network-isolated subprocesses, and the app keeps working with the network forcibly offline — no telemetry, no analytics, no phoning home.</span>
+              <span lang="zh-Hans">文件绝不离开你的电脑。转换引擎以网络隔离的子进程运行，强制断网也照常工作——没有遥测、没有统计上报、没有任何回传。</span>
+            </p>
+            <p class="evidence">
+              <span class="evidence-label"><span lang="en">Evidence</span><span lang="zh-Hans">证据</span></span>
+              <span lang="en">Zero network requests of its own: the desktop app and the CLI make no calls anywhere.</span>
+              <span lang="zh-Hans">自身零网络请求：桌面端与 CLI 不向任何地方发起调用。</span>
+            </p>
+          </li>
+          <li class="card">
+            <p class="card-index" aria-hidden="true">03</p>
+            <h3><span lang="en">An honest engine supply chain</span><span lang="zh-Hans">引擎供应链，诚实为本</span></h3>
+            <p>
+              <span lang="en">FormatWright deliberately ships without bundled third-party engines — their licenses and supply chains stay in the open, not hidden inside an installer. It discovers engines already on your system, or activates an auditable starter pack.</span>
+              <span lang="zh-Hans">FormatWright 刻意不捆绑第三方引擎——引擎的许可证与供应链摊在明处，而不是藏进安装包。它在你自己的系统上发现引擎，或激活可审查的 starter pack。</span>
+            </p>
+            <p class="evidence">
+              <span class="evidence-label"><span lang="en">Evidence</span><span lang="zh-Hans">证据</span></span>
+              <span lang="en">Every engine pack pins hashes and licenses, ships a deterministic SPDX 2.3 SBOM plus a <code>sources.json</code> provenance sidecar, and is re-verified at every start.</span>
+              <span lang="zh-Hans">每个引擎包都固定哈希与许可证，随附确定性 SPDX 2.3 SBOM 和 <code>sources.json</code> 来源清单，且每次启动重新校验。</span>
+            </p>
+          </li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="formats" id="formats" aria-labelledby="formats-title">
+      <div class="container">
+        <div class="section-head">
+          <p class="eyebrow"><span lang="en">§ 02 · Supported conversions</span><span lang="zh-Hans">§ 02 · 支持的转换</span></p>
+          <h2 id="formats-title"><span lang="en">What it converts today</span><span lang="zh-Hans">当前支持的转换</span></h2>
+        </div>
+        <div class="table-scroll" tabindex="0" role="region" aria-label="Supported conversions table, scrolls horizontally">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col"><span lang="en">Conversion</span><span lang="zh-Hans">转换</span></th>
+                <th scope="col"><span lang="en">Engine</span><span lang="zh-Hans">引擎</span></th>
+                <th scope="col"><span lang="en">Acceptance check</span><span lang="zh-Hans">验收项</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="conv"><span lang="en">HTML, SVG → PDF (vector)</span><span lang="zh-Hans">HTML、SVG → PDF（矢量）</span></td>
+                <td class="engine">msedge print</td>
+                <td class="check"><span lang="en">Text layer extractable · fonts embedded</span><span lang="zh-Hans">文字层可提取 · 字体已嵌入</span></td>
+              </tr>
+              <tr>
+                <td class="conv"><span lang="en">Office documents → PDF</span><span lang="zh-Hans">Office 文档 → PDF</span></td>
+                <td class="engine">libreoffice</td>
+                <td class="check"><span lang="en">Text layer · fonts embedded</span><span lang="zh-Hans">文字层 · 字体嵌入</span></td>
+              </tr>
+              <tr>
+                <td class="conv"><span lang="en">Markdown, text → PDF / DOCX / EPUB</span><span lang="zh-Hans">Markdown、纯文本 → PDF / DOCX / EPUB</span></td>
+                <td class="engine">pandoc</td>
+                <td class="check"><span lang="en">Body content present and readable</span><span lang="zh-Hans">正文完整可读</span></td>
+              </tr>
+              <tr>
+                <td class="conv"><span lang="en">PDF merge / split / extract</span><span lang="zh-Hans">PDF 合并 / 拆分 / 提取</span></td>
+                <td class="engine">qpdf</td>
+                <td class="check"><span lang="en">Page-count conservation, re-measured by Poppler</span><span lang="zh-Hans">页数守恒，独立 Poppler 复测</span></td>
+              </tr>
+              <tr>
+                <td class="conv">zip ↔ tar.gz</td>
+                <td class="engine"><span lang="en">built-in (Rust)</span><span lang="zh-Hans">内置（Rust）</span></td>
+                <td class="check"><span lang="en">Entry-list conservation — every file accounted for</span><span lang="zh-Hans">条目清单守恒——每个文件都有下落</span></td>
+              </tr>
+              <tr>
+                <td class="conv"><span lang="en">Audio / video transcoding</span><span lang="zh-Hans">音频 / 视频互转</span></td>
+                <td class="engine">ffmpeg</td>
+                <td class="check"><span lang="en">Stream inventory re-probed with ffprobe</span><span lang="zh-Hans">流清单由 ffprobe 复查</span></td>
+              </tr>
+              <tr>
+                <td class="conv">PDF → PNG / JPEG</td>
+                <td class="engine">poppler</td>
+                <td class="check"><span lang="en">One image per page, all pages counted</span><span lang="zh-Hans">每页一图，页页有数</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section class="engines" id="engines" aria-labelledby="engines-title">
+      <div class="container">
+        <div class="section-head">
+          <p class="eyebrow"><span lang="en">§ 03 · Engines</span><span lang="zh-Hans">§ 03 · 引擎</span></p>
+          <h2 id="engines-title"><span lang="en">Discovered on your system, not bundled in the box</span><span lang="zh-Hans">在系统上发现，而不是装进盒子里</span></h2>
+        </div>
+        <div class="prose">
+          <p>
+            <span lang="en">Third-party binaries carry their own license and supply-chain obligations — GPL, LGPL and MPL components, and Microsoft Edge may not be redistributed at all. So FormatWright <strong>ships without engines on purpose</strong> and finds them on your host instead. Discovered engines are reported as <strong>unverified by design</strong>, and the doctor never downloads anything.</span>
+            <span lang="zh-Hans">第三方二进制自带许可证与供应链义务——GPL、LGPL、MPL 组件，而 Microsoft Edge 根本不允许再分发。所以 FormatWright <strong>有意不带引擎发行</strong>，转而在你的主机上发现它们。被发现的引擎按设计标记为 <strong>unverified</strong>，doctor 永不下载任何东西。</span>
+          </p>
+        </div>
+        <div class="routing">
+          <p class="routing-label"><span lang="en">Discovery order</span><span lang="zh-Hans">发现顺序</span></p>
+          <div class="routing-chain">
+            <span class="node">engine pack</span>
+            <span class="arrow" aria-hidden="true">→</span>
+            <span class="node">FORMATWRIGHT_ENGINE_&lt;NAME&gt;</span>
+            <span class="arrow" aria-hidden="true">→</span>
+            <span class="node">PATH</span>
+            <span class="arrow" aria-hidden="true">→</span>
+            <span class="node"><span lang="en">vendor location (Edge)</span><span lang="zh-Hans">厂商安装位置（Edge）</span></span>
+          </div>
+        </div>
+        <p class="engines-link">
+          <a href="#" data-gh="#engines"><span lang="en">Read the full engine policy in the repository README (Engines section).</span><span lang="zh-Hans">完整引擎策略见仓库 README 的 Engines 一节。</span></a>
+        </p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-grid">
+      <div>
+        <p class="footer-brand">FormatWright</p>
+        <p class="footer-tag"><span lang="en">File conversion you can verify.</span><span lang="zh-Hans">可验证的文件转换。</span></p>
+      </div>
+      <p class="footer-legal">
+        <span lang="en">Apache-2.0, open source. Third-party engines keep their own licenses and ship separately. This page is static, collects nothing, and works fully offline.</span>
+        <span lang="zh-Hans">Apache-2.0 开源。第三方引擎保留各自许可、单独分发。本页面为纯静态，不收集任何数据，可完全离线打开。</span>
+        <br>
+        <a href="#" data-gh="">GitHub</a>
+      </p>
+    </div>
+  </footer>
+
+  <script>
+    (function () {
+      "use strict";
+
+      /* Placeholder for the repository URL, e.g. "https://github.com/owner/FormatWright".
+         When set, every [data-gh] link resolves to REPO_URL + its data-gh suffix. */
+      var REPO_URL = "#";
+
+      var strings = {
+        title: {
+          en: "FormatWright — Local conversion, with receipts.",
+          zh: "FormatWright — 本地转换，结果有据可查。"
+        },
+        description: {
+          en: "Open-source local file conversion for Windows. Every conversion ships a machine-readable acceptance proof: text layers, embedded fonts, page-count and archive-entry conservation. Zero telemetry, zero network.",
+          zh: "开源本地文件转换器（Windows 桌面 + CLI）。每次转换附带机器可读验收证明：文字层可提取、字体嵌入、页数与归档条目守恒。零遥测、零联网。"
+        },
+        aria: {
+          nav: { en: "Primary", zh: "主导航" },
+          lang: { en: "Language", zh: "语言" },
+          table: {
+            en: "Supported conversions table, scrolls horizontally",
+            zh: "支持的转换表格，可横向滚动"
+          }
+        }
+      };
+
+      var root = document.documentElement;
+      var buttons = Array.prototype.slice.call(document.querySelectorAll("[data-lang-btn]"));
+
+      function apply(lang) {
+        var zh = lang === "zh-Hans";
+        var key = zh ? "zh" : "en";
+        root.setAttribute("data-lang", zh ? "zh-Hans" : "en");
+        root.setAttribute("lang", zh ? "zh-Hans" : "en");
+        document.title = strings.title[key];
+        var desc = document.querySelector('meta[name="description"]');
+        if (desc) { desc.setAttribute("content", strings.description[key]); }
+        var nav = document.getElementById("site-nav");
+        if (nav) { nav.setAttribute("aria-label", strings.aria.nav[key]); }
+        var langGroup = document.querySelector('.lang-switch[role="group"]');
+        if (langGroup) { langGroup.setAttribute("aria-label", strings.aria.lang[key]); }
+        var tableRegion = document.querySelector(".table-scroll");
+        if (tableRegion) { tableRegion.setAttribute("aria-label", strings.aria.table[key]); }
+        buttons.forEach(function (btn) {
+          btn.setAttribute("aria-pressed", String(btn.getAttribute("data-lang-btn") === lang));
+        });
+        try { localStorage.setItem("fw-site-lang", lang); } catch (e) { /* file:// or blocked storage */ }
+      }
+
+      buttons.forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          apply(btn.getAttribute("data-lang-btn"));
+        });
+      });
+
+      var stored = null;
+      try { stored = localStorage.getItem("fw-site-lang"); } catch (e) { /* ignore */ }
+      if (stored === "en" || stored === "zh-Hans") { apply(stored); }
+
+      /* Resolve repository links from a single constant. */
+      if (REPO_URL !== "#") {
+        document.querySelectorAll("[data-gh]").forEach(function (a) {
+          a.href = REPO_URL + (a.getAttribute("data-gh") || "");
+        });
+      }
+    })();
+  </script>
+</body>
+</html>
