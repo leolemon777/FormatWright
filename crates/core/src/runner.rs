@@ -140,6 +140,23 @@ where
             "Choose a complete output path.",
         )
     })?;
+    if plan
+        .steps
+        .first()
+        .and_then(|step| step.arguments.get("operation"))
+        .is_some()
+    {
+        return execute_pdf_ops_plan(
+            input,
+            plan,
+            job_id,
+            cancellation,
+            &output_path,
+            &partial_path,
+            &mut observer,
+        )
+        .await;
+    }
     if step.engine.engine_id == "formatwright.archive" {
         return execute_archive_plan(
             input,
@@ -1904,6 +1921,172 @@ where
         tracing::warn!(partial = %partial_path.display(), %error, "committed markup PDF but could not clean workspace");
     }
     Ok(result)
+}
+
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+async fn execute_pdf_ops_plan<F>(
+    input: &Probe,
+    plan: &Plan,
+    job_id: Uuid,
+    cancellation: CancellationToken,
+    output_path: &Path,
+    partial_path: &Path,
+    observer: &mut F,
+) -> Result<ExecutionResult>
+where
+    F: FnMut(ExecutionMilestone) -> Result<()>,
+{
+    let step = plan
+        .steps
+        .first()
+        .ok_or_else(|| invalid_plan_argument("PDF operation step"))?;
+    let operation = checked_argument(step, "operation", &["pdf-merge", "pdf-extract"])?;
+    let expected_pages: u32 = step
+        .arguments
+        .get("expected_pages")
+        .and_then(|value| value.parse().ok())
+        .ok_or_else(|| invalid_plan_argument("expected_pages"))?;
+    let mut command = Command::new(&step.engine.binary_path);
+    command.arg("--empty").arg("--pages");
+    if operation == "pdf-merge" {
+        let inputs = step
+            .arguments
+            .get("inputs")
+            .ok_or_else(|| invalid_plan_argument("inputs"))?
+            .split(';')
+            .map(PathBuf::from)
+            .collect::<Vec<_>>();
+        if inputs.len() < 2 {
+            return Err(invalid_plan_argument("inputs"));
+        }
+        for input_path in &inputs {
+            command.arg(external_process_path(input_path)).arg("1-z");
+        }
+    } else {
+        let range = step
+            .arguments
+            .get("page_range")
+            .ok_or_else(|| invalid_plan_argument("page_range"))?;
+        command
+            .arg(external_process_path(&input.artifact.canonical_path))
+            .arg(range);
+    }
+    command.arg("--").arg(partial_path);
+    command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    #[cfg(unix)]
+    command.process_group(0);
+    let mut child = command.spawn().map_err(|error| {
+        FormatWrightError::new(
+            ErrorCode::EngineIncompatible,
+            Stage::Execute,
+            "Unable to start qpdf",
+            "Run doctor and verify the qpdf engine.",
+        )
+        .with_diagnostic(error.to_string())
+    })?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| invalid_plan_argument("qpdf stderr"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| invalid_plan_argument("qpdf stdout"))?;
+    let stdout_task = tokio::spawn(drain_stream(stdout));
+    let stderr_task = tokio::spawn(read_bounded_tail(stderr, MAX_STDERR_BYTES));
+    let status = tokio::select! {
+        status = child.wait() => status.map_err(|error| {
+            FormatWrightError::new(
+                ErrorCode::ExecutionFailed,
+                Stage::Execute,
+                "Unable to wait for qpdf",
+                "Retry the operation.",
+            )
+            .with_diagnostic(error.to_string())
+        })?,
+        () = cancellation.cancelled() => {
+            terminate_process_tree(&mut child).await;
+            cleanup_partial(partial_path);
+            return Err(FormatWrightError::new(
+                ErrorCode::Cancelled,
+                Stage::Execute,
+                "PDF operation was cancelled",
+                "Retry when ready.",
+            ));
+        }
+    };
+    let _ = stdout_task.await;
+    let stderr = stderr_task
+        .await
+        .unwrap_or_else(|error| format!("stderr reader failed: {error}"));
+    if !status.success() {
+        cleanup_partial(partial_path);
+        return Err(FormatWrightError::new(
+            ErrorCode::ExecutionFailed,
+            Stage::Execute,
+            format!("qpdf exited with status {status}"),
+            "Inspect the diagnostic and adjust the inputs.",
+        )
+        .with_diagnostic(stderr));
+    }
+    if !partial_path.is_file() {
+        cleanup_partial(partial_path);
+        return Err(FormatWrightError::new(
+            ErrorCode::ExecutionFailed,
+            Stage::Execute,
+            "qpdf produced no PDF output",
+            "Retry or report the inputs.",
+        ));
+    }
+    if let Err(error) = observer(ExecutionMilestone::EngineFinished) {
+        cleanup_partial(partial_path);
+        return Err(error);
+    }
+    if let Err(error) = ensure_input_unchanged(input, Stage::Commit).await {
+        cleanup_partial(partial_path);
+        return Err(error);
+    }
+    let pdfinfo = crate::doctor::inspect_engine("pdfinfo").await?;
+    let output_probe = match crate::pdf::inspect_pdf(partial_path, &pdfinfo).await {
+        Ok(probe) => probe,
+        Err(error) => {
+            cleanup_partial(partial_path);
+            return Err(error);
+        }
+    };
+    let mut report =
+        crate::pdf::validate_pdf_ops_output(input, &output_probe, plan, job_id, expected_pages);
+    if report.status == ValidationStatus::Fail {
+        cleanup_partial(partial_path);
+        return Err(FormatWrightError::new(
+            ErrorCode::ValidationFailed,
+            Stage::Validate,
+            "PDF operation output failed validation",
+            "Inspect the validation report and adjust the inputs.",
+        )
+        .with_diagnostic(serde_json::to_string(&report).unwrap_or_default()));
+    }
+    if output_path.exists() {
+        cleanup_partial(partial_path);
+        return Err(FormatWrightError::new(
+            ErrorCode::OutputConflict,
+            Stage::Commit,
+            "The PDF destination appeared while running",
+            "Choose another output path.",
+        ));
+    }
+    if let Err(error) = commit_path_no_replace(partial_path, output_path) {
+        cleanup_partial(partial_path);
+        return Err(error);
+    }
+    report.output.display_path = Some(output_path.to_string_lossy().into_owned());
+    Ok(ExecutionResult {
+        output_path: output_path.to_owned(),
+        report,
+    })
 }
 
 #[allow(clippy::too_many_arguments)]

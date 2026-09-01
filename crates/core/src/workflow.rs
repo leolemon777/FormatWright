@@ -26,6 +26,9 @@ pub async fn prepare_conversion(
     input: &Path,
     request: &PlanRequest,
 ) -> Result<(Probe, Plan, EngineIdentity)> {
+    if let Some(operation) = request.operation.as_deref() {
+        return prepare_pdf_operation(input, request, operation).await;
+    }
     crate::capabilities::ensure_route_available(
         input,
         &request.target_format,
@@ -191,6 +194,52 @@ fn is_archive_target(target: &str) -> bool {
             .as_str(),
         "zip" | "tar.gz" | "tgz" | "taz"
     )
+}
+
+/// Dispatches operation-style requests (ADR-0013): the operation name, not
+/// the (input, target) pair, routes the workflow.
+async fn prepare_pdf_operation(
+    input: &Path,
+    request: &PlanRequest,
+    operation: &str,
+) -> Result<(Probe, Plan, EngineIdentity)> {
+    let pdfinfo = inspect_engine("pdfinfo").await?;
+    let qpdf = inspect_engine("qpdf").await?;
+    match operation {
+        "pdf-merge" => {
+            let mut inputs = vec![input.to_path_buf()];
+            inputs.extend(request.inputs.iter().cloned());
+            let mut probes = Vec::with_capacity(inputs.len());
+            for path in &inputs {
+                probes.push(inspect_pdf(path, &pdfinfo).await?);
+            }
+            let output = required_output(request, "PDF merge")?;
+            let plan = crate::pdf::plan_pdf_merge(&probes, output, &qpdf)?;
+            // The joint plan reports the first input as its probe identity;
+            // every input participates in the fingerprint and the manifest.
+            Ok((probes.remove(0), plan, qpdf))
+        }
+        "pdf-extract" => {
+            let probe = inspect_pdf(input, &pdfinfo).await?;
+            let page_range = request.page_range.as_deref().ok_or_else(|| {
+                FormatWrightError::new(
+                    ErrorCode::InputInvalid,
+                    Stage::Plan,
+                    "PDF extraction needs a page range",
+                    "Pass --pages like 1-3,7.",
+                )
+            })?;
+            let output = required_output(request, "PDF extract")?;
+            let plan = crate::pdf::plan_pdf_extract(&probe, page_range, output, &qpdf)?;
+            Ok((probe, plan, qpdf))
+        }
+        other => Err(FormatWrightError::new(
+            ErrorCode::Unsupported,
+            Stage::Plan,
+            format!("Unknown operation: {other}"),
+            "Choose pdf-merge or pdf-extract.",
+        )),
+    }
 }
 
 #[cfg(test)]

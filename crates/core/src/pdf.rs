@@ -892,6 +892,339 @@ fn storage_error(path: &Path, error: &std::io::Error) -> FormatWrightError {
     .with_diagnostic(error.to_string())
 }
 
+/// Parses a page range like `1-3,7` into (sorted selected pages, total count),
+/// rejecting empty, zero, and overshooting selections.
+pub(crate) fn parse_page_range(range: &str, page_count: u32) -> Result<(Vec<u32>, u32)> {
+    let mut selected = Vec::new();
+    for part in range.split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        let bounds: Vec<&str> = part.split('-').collect();
+        match bounds.as_slice() {
+            [single] => {
+                let page = single.parse::<u32>().map_err(|_| invalid_page_range())?;
+                selected.push(page);
+            }
+            [start, end] => {
+                let start = start
+                    .trim()
+                    .parse::<u32>()
+                    .map_err(|_| invalid_page_range())?;
+                let end = end
+                    .trim()
+                    .parse::<u32>()
+                    .map_err(|_| invalid_page_range())?;
+                if end < start {
+                    return Err(invalid_page_range());
+                }
+                selected.extend(start..=end);
+            }
+            _ => return Err(invalid_page_range()),
+        }
+    }
+    if selected.is_empty() {
+        return Err(invalid_page_range());
+    }
+    if let Some(&maximum) = selected.iter().max()
+        && (maximum > page_count || selected.iter().min() == Some(&0))
+    {
+        return Err(FormatWrightError::new(
+            ErrorCode::InputInvalid,
+            Stage::Plan,
+            format!("Page range reaches page {maximum} but the PDF has {page_count} pages"),
+            "Adjust the range to the document.",
+        ));
+    }
+    let total = u32::try_from(selected.len()).unwrap_or(u32::MAX);
+    Ok((selected, total))
+}
+
+fn invalid_page_range() -> FormatWrightError {
+    FormatWrightError::new(
+        ErrorCode::InputInvalid,
+        Stage::Plan,
+        "Page range must look like 1-3,7 within the document",
+        "Use 1-based page numbers separated by commas and hyphens.",
+    )
+}
+
+fn joint_input_fingerprint(probes: &[Probe]) -> String {
+    let joined = probes
+        .iter()
+        .map(|probe| probe.artifact.fast_fingerprint.as_str())
+        .collect::<Vec<_>>()
+        .join("\u{1f}");
+    format!("joint:{}", blake3::hash(joined.as_bytes()).to_hex())
+}
+
+/// Plans a qpdf merge of ordered PDF inputs into one output (ADR-0013).
+///
+/// # Errors
+///
+/// Returns `Unsupported` for fewer than two inputs or a non-qpdf engine, and
+/// `ResourceExhausted` when the merged page count exceeds the alpha limit.
+pub fn plan_pdf_merge(
+    probes: &[Probe],
+    output_path: PathBuf,
+    qpdf: &EngineIdentity,
+) -> Result<Plan> {
+    if probes.len() < 2 {
+        return Err(FormatWrightError::new(
+            ErrorCode::Unsupported,
+            Stage::Plan,
+            "PDF merge needs at least two inputs",
+            "Pass two or more PDF files.",
+        ));
+    }
+    if probes
+        .iter()
+        .any(|probe| probe.format.id != "pdf" || probe.streams.is_empty())
+    {
+        return Err(FormatWrightError::new(
+            ErrorCode::Unsupported,
+            Stage::Plan,
+            "PDF merge inputs must all be inspected PDFs",
+            "Run doctor and retry with PDF files only.",
+        ));
+    }
+    if qpdf.engine_id != "qpdf" {
+        return Err(FormatWrightError::new(
+            ErrorCode::EngineIncompatible,
+            Stage::Plan,
+            "The merge Plan was given the wrong engine",
+            "Run doctor and use qpdf.",
+        ));
+    }
+    let expected_pages: u64 = probes
+        .iter()
+        .map(|probe| u64::try_from(probe.streams.len()).unwrap_or(u64::MAX))
+        .sum();
+    if expected_pages > u64::from(MAX_PDF_PAGES) {
+        return Err(FormatWrightError::new(
+            ErrorCode::ResourceExhausted,
+            Stage::Plan,
+            format!(
+                "Merged PDF would have {expected_pages} pages; the alpha limit is {MAX_PDF_PAGES}"
+            ),
+            "Merge fewer or smaller documents.",
+        ));
+    }
+    let inputs_argument = probes
+        .iter()
+        .map(|probe| {
+            let path = probe.artifact.canonical_path.to_string_lossy();
+            // qpdf rejects Windows verbatim (`\\?\`) paths, which
+            // canonicalization produces; strip the prefix for drive paths.
+            path.strip_prefix(r"\\?\")
+                .map(str::to_owned)
+                .unwrap_or_else(|| path.into_owned())
+        })
+        .collect::<Vec<_>>()
+        .join(";");
+    let arguments = BTreeMap::from([
+        ("operation".to_owned(), "pdf-merge".to_owned()),
+        ("inputs".to_owned(), inputs_argument),
+        ("expected_pages".to_owned(), expected_pages.to_string()),
+    ]);
+    let step = PlanStep {
+        step_id: "step-1".to_owned(),
+        capability_id: "qpdf.pdf-merge".to_owned(),
+        engine: qpdf.clone(),
+        operation: Operation::Transform,
+        loss_class: LossClass::None,
+        arguments,
+        estimated_temporary_bytes: Some(
+            probes
+                .iter()
+                .map(|probe| probe.artifact.size_bytes)
+                .sum::<u64>()
+                .saturating_mul(2),
+        ),
+    };
+    let mut plan = Plan {
+        schema_version: SCHEMA_VERSION,
+        plan_id: Uuid::new_v4(),
+        plan_hash: String::new(),
+        input_fingerprint: joint_input_fingerprint(probes),
+        target_format: "pdf".to_owned(),
+        constraints: BTreeMap::from([
+            ("network".to_owned(), json!("deny")),
+            ("external_resources".to_owned(), json!("deny")),
+        ]),
+        steps: vec![step],
+        changes: ChangeSet {
+            preserved: vec![
+                "every page of every input, in input order".to_owned(),
+                "page content streams".to_owned(),
+            ],
+            changed: vec!["documents are concatenated into one container".to_owned()],
+            dropped: vec![],
+            unknown: vec!["per-document metadata of all but the first input".to_owned()],
+        },
+        validators: vec!["pdf-ops.merge-page-count".to_owned()],
+        network_policy: NetworkPolicy::Deny,
+        output_path: Some(output_path),
+        estimated_output_bytes: None,
+    };
+    plan.plan_hash = deterministic_plan_hash(&plan)?;
+    Ok(plan)
+}
+
+/// Plans a qpdf page-range extraction into a new single PDF (ADR-0013).
+///
+/// # Errors
+///
+/// Returns `Unsupported`/`InputInvalid` for bad ranges or engines.
+pub fn plan_pdf_extract(
+    probe: &Probe,
+    page_range: &str,
+    output_path: PathBuf,
+    qpdf: &EngineIdentity,
+) -> Result<Plan> {
+    if probe.format.id != "pdf" {
+        return Err(FormatWrightError::new(
+            ErrorCode::Unsupported,
+            Stage::Plan,
+            "PDF extraction needs a PDF input",
+            "Retry with a PDF file.",
+        ));
+    }
+    if qpdf.engine_id != "qpdf" {
+        return Err(FormatWrightError::new(
+            ErrorCode::EngineIncompatible,
+            Stage::Plan,
+            "The extraction Plan was given the wrong engine",
+            "Run doctor and use qpdf.",
+        ));
+    }
+    let page_count = u32::try_from(probe.streams.len()).unwrap_or(u32::MAX);
+    let (_, selected) = parse_page_range(page_range, page_count)?;
+    let normalized_range = normalize_page_range_for_qpdf(page_range)?;
+    let arguments = BTreeMap::from([
+        ("operation".to_owned(), "pdf-extract".to_owned()),
+        ("page_range".to_owned(), normalized_range),
+        ("expected_pages".to_owned(), selected.to_string()),
+    ]);
+    let step = PlanStep {
+        step_id: "step-1".to_owned(),
+        capability_id: "qpdf.pdf-extract".to_owned(),
+        engine: qpdf.clone(),
+        operation: Operation::Transform,
+        loss_class: LossClass::None,
+        arguments,
+        estimated_temporary_bytes: Some(probe.artifact.size_bytes.saturating_mul(2)),
+    };
+    let mut plan = Plan {
+        schema_version: SCHEMA_VERSION,
+        plan_id: Uuid::new_v4(),
+        plan_hash: String::new(),
+        input_fingerprint: probe.artifact.fast_fingerprint.clone(),
+        target_format: "pdf".to_owned(),
+        constraints: BTreeMap::from([
+            ("network".to_owned(), json!("deny")),
+            ("external_resources".to_owned(), json!("deny")),
+        ]),
+        steps: vec![step],
+        changes: ChangeSet {
+            preserved: vec![
+                "selected pages in document order".to_owned(),
+                "page content streams".to_owned(),
+            ],
+            changed: vec!["unselected pages are removed".to_owned()],
+            dropped: vec!["pages outside the requested range".to_owned()],
+            unknown: vec!["document-level metadata is not certified".to_owned()],
+        },
+        validators: vec!["pdf-ops.extract-page-count".to_owned()],
+        network_policy: NetworkPolicy::Deny,
+        output_path: Some(output_path),
+        estimated_output_bytes: None,
+    };
+    plan.plan_hash = deterministic_plan_hash(&plan)?;
+    Ok(plan)
+}
+
+/// Validates a merge/extraction output by measured page-count conservation
+/// (ADR-0013): the probed output must carry exactly the planned page count.
+pub(crate) fn validate_pdf_ops_output(
+    input: &Probe,
+    output: &Probe,
+    plan: &Plan,
+    job_id: Uuid,
+    expected_pages: u32,
+) -> ValidationReport {
+    let observed_pages = output.streams.len();
+    let checks = vec![
+        ValidationCheck {
+            code: "PDF_OPS_OPENS".to_owned(),
+            status: ValidationStatus::Pass,
+            required: true,
+            expected: json!(true),
+            observed: json!(true),
+            evidence: "Poppler pdfinfo".to_owned(),
+            message: "pdfinfo opened the operation output.".to_owned(),
+        },
+        ValidationCheck {
+            code: "PDF_OPS_PAGE_COUNT".to_owned(),
+            status: if observed_pages as u32 == expected_pages {
+                ValidationStatus::Pass
+            } else {
+                ValidationStatus::Fail
+            },
+            required: true,
+            expected: json!(expected_pages),
+            observed: json!(observed_pages),
+            evidence: "Poppler pdfinfo".to_owned(),
+            message: "Measured output page count equals the planned conservation.".to_owned(),
+        },
+    ];
+    let report_status = checks.iter().fold(ValidationStatus::Pass, |state, check| {
+        state.worst(check.status)
+    });
+    ValidationReport {
+        schema_version: SCHEMA_VERSION,
+        report_id: Uuid::new_v4(),
+        job_id,
+        plan_hash: plan.plan_hash.clone(),
+        status: report_status,
+        input: ArtifactSummary {
+            display_path: Some(input.artifact.display_path.clone()),
+            format_id: input.format.id.clone(),
+            size_bytes: input.artifact.size_bytes,
+            fast_fingerprint: input.artifact.fast_fingerprint.clone(),
+            full_blake3: input.artifact.full_blake3.clone(),
+        },
+        output: ArtifactSummary {
+            display_path: Some(output.artifact.display_path.clone()),
+            format_id: output.format.id.clone(),
+            size_bytes: output.artifact.size_bytes,
+            fast_fingerprint: output.artifact.fast_fingerprint.clone(),
+            full_blake3: output.artifact.full_blake3.clone(),
+        },
+        engines: plan.steps.iter().map(|step| step.engine.clone()).collect(),
+        checks,
+        intentional_changes: plan.changes.changed.clone(),
+        redaction: ReportRedaction {
+            paths_redacted: false,
+            metadata_values_redacted: true,
+        },
+    }
+}
+
+fn normalize_page_range_for_qpdf(range: &str) -> Result<String> {
+    let parts: Vec<String> = range
+        .split(',')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .map(|part| part.replace(' ', ""))
+        .collect();
+    if parts.is_empty() {
+        return Err(invalid_page_range());
+    }
+    Ok(parts.join(","))
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -899,7 +1232,10 @@ mod tests {
 
     use formatwright_engine_sdk::{Certification, EngineIdentity};
 
-    use super::{parse_page_details, plan_pdf_render, poppler_raster_dimension};
+    use super::{
+        parse_page_details, parse_page_range, plan_pdf_extract, plan_pdf_merge, plan_pdf_render,
+        poppler_raster_dimension,
+    };
     use crate::domain::{
         ArtifactIdentity, FormatDescriptor, FormatKind, PlanRequest, Probe, ProbeEvidence,
         SCHEMA_VERSION,
@@ -996,5 +1332,84 @@ mod tests {
         request.quality = None;
         request.dpi = Some(601);
         assert!(plan_pdf_render(&probe(), &request, &engine()).is_err());
+    }
+
+    fn qpdf_engine() -> EngineIdentity {
+        EngineIdentity {
+            engine_id: "qpdf".to_owned(),
+            version: "12.0".to_owned(),
+            binary_path: PathBuf::from("qpdf"),
+            binary_sha256: "sha".to_owned(),
+            manifest_sha256: None,
+            build_configuration: None,
+            certification: Certification::Experimental,
+        }
+    }
+
+    #[test]
+    fn page_ranges_parse_with_bounds_enforcement() {
+        let (pages, total) = parse_page_range("1-3,7", 10).expect("valid range");
+        assert_eq!(pages, vec![1, 2, 3, 7]);
+        assert_eq!(total, 4);
+        assert!(parse_page_range("", 10).is_err(), "empty range is rejected");
+        assert!(
+            parse_page_range("5-3", 10).is_err(),
+            "reversed range is rejected"
+        );
+        assert!(parse_page_range("0", 10).is_err(), "page zero is rejected");
+        assert!(
+            parse_page_range("11", 10).is_err(),
+            "overshooting range is rejected"
+        );
+        assert!(
+            parse_page_range("9-11", 10).is_err(),
+            "overshooting span is rejected"
+        );
+    }
+
+    #[test]
+    fn merge_plans_carry_the_conservative_page_count() {
+        let first = probe();
+        let second = probe();
+        let plan = plan_pdf_merge(
+            &[first, second],
+            PathBuf::from("merged.pdf"),
+            &qpdf_engine(),
+        )
+        .expect("merge plan");
+        assert_eq!(plan.target_format, "pdf");
+        assert_eq!(plan.steps[0].arguments["expected_pages"], "4");
+        assert_eq!(plan.steps[0].arguments["operation"], "pdf-merge");
+        assert!(
+            plan.validators
+                .iter()
+                .any(|validator| validator == "pdf-ops.merge-page-count")
+        );
+
+        let single = plan_pdf_merge(&[probe()], PathBuf::from("x.pdf"), &qpdf_engine());
+        assert!(single.is_err(), "a merge needs at least two inputs");
+        let wrong_engine = plan_pdf_merge(&[probe(), probe()], PathBuf::from("x.pdf"), &engine());
+        assert!(
+            wrong_engine.is_err(),
+            "the merge plan rejects non-qpdf engines"
+        );
+    }
+
+    #[test]
+    fn extract_plans_count_the_requested_pages() {
+        let plan = plan_pdf_extract(&probe(), "1,2", PathBuf::from("subset.pdf"), &qpdf_engine())
+            .expect("extract plan");
+        assert_eq!(plan.steps[0].arguments["expected_pages"], "2");
+        assert_eq!(plan.steps[0].arguments["page_range"], "1,2");
+        assert_eq!(
+            plan.changes.dropped,
+            vec!["pages outside the requested range".to_owned()]
+        );
+
+        let overshoot = plan_pdf_extract(&probe(), "1-5", PathBuf::from("x.pdf"), &qpdf_engine());
+        assert!(
+            overshoot.is_err(),
+            "extraction beyond the last page is rejected"
+        );
     }
 }

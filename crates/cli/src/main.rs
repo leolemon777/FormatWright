@@ -194,6 +194,27 @@ enum Command {
         #[arg(long, help = "Allow explicitly reported lossy structured-data mapping")]
         allow_lossy_data: bool,
 
+        #[arg(
+            long,
+            value_name = "pdf-merge|pdf-extract",
+            help = "Run an operation-style PDF workflow (ADR-0013)"
+        )]
+        operation: Option<String>,
+
+        #[arg(
+            long = "input",
+            value_name = "PATH",
+            help = "Additional ordered input for pdf-merge (repeatable)"
+        )]
+        merge_input: Vec<PathBuf>,
+
+        #[arg(
+            long,
+            value_name = "RANGE",
+            help = "Page range for pdf-extract, e.g. 1-3,7"
+        )]
+        pages: Option<String>,
+
         #[arg(long, help = "Print the Plan and do not execute")]
         dry_run: bool,
 
@@ -619,6 +640,9 @@ async fn run(cli: Cli) -> Result<(), FormatWrightError> {
                 video_crf,
                 video_preset,
                 audio_bitrate_kbps,
+                operation: None,
+                inputs: Vec::new(),
+                page_range: None,
                 allow_lossy_data,
             };
             let (_, plan, _) = prepare_conversion(&input, &request).await?;
@@ -647,6 +671,9 @@ async fn run(cli: Cli) -> Result<(), FormatWrightError> {
             video_preset,
             audio_bitrate_kbps,
             allow_lossy_data,
+            operation,
+            merge_input: extra_inputs,
+            pages,
             dry_run,
             queue_only,
             idempotency_key,
@@ -669,6 +696,9 @@ async fn run(cli: Cli) -> Result<(), FormatWrightError> {
                 video_crf,
                 video_preset,
                 audio_bitrate_kbps,
+                operation,
+                inputs: extra_inputs,
+                page_range: pages,
                 allow_lossy_data,
             };
             let (probe, plan, validation_engine) = prepare_conversion(&input, &request).await?;

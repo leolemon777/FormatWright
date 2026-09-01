@@ -141,6 +141,12 @@ pub struct PlanRequest {
     #[serde(default)]
     pub audio_bitrate_kbps: Option<u32>,
     #[serde(default)]
+    pub operation: Option<String>,
+    #[serde(default)]
+    pub inputs: Vec<PathBuf>,
+    #[serde(default)]
+    pub page_range: Option<String>,
+    #[serde(default)]
     pub allow_lossy_data: bool,
 }
 

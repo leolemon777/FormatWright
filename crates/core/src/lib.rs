@@ -78,7 +78,7 @@ pub use maintenance::{
     RestorePreflightReport, RestoreReport,
 };
 pub use office::{inspect_office, office_format_hint, plan_office_to_pdf};
-pub use pdf::{inspect_pdf, pdf_format_hint, plan_pdf_render};
+pub use pdf::{inspect_pdf, pdf_format_hint, plan_pdf_extract, plan_pdf_merge, plan_pdf_render};
 pub use planner::{plan_conversion, plan_heic_conversion, plan_metadata_clean};
 pub use preset::{ConversionPreset, PRESET_SCHEMA_VERSION, PresetLibrary};
 pub use runner::{
