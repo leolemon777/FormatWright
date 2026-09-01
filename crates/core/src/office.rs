@@ -31,11 +31,14 @@ const MAX_RELATIONSHIP_BYTES: u64 = 8 * 1024 * 1024;
 /// malformed or exceeds bounded package limits.
 pub fn office_format_hint(path: impl AsRef<Path>) -> Result<Option<&'static str>> {
     let path = path.as_ref();
-    let mut prefix = [0_u8; 4];
+    let mut prefix = [0_u8; 6];
     let read = File::open(path)
         .and_then(|mut file| file.read(&mut prefix))
         .map_err(|error| input_error(path, &error))?;
-    if read < prefix.len() || prefix != *b"PK\x03\x04" {
+    if read >= 5 && &prefix[..5] == b"{\\rtf" {
+        return Ok(Some("rtf"));
+    }
+    if read < 4 || prefix[..4] != *b"PK\x03\x04" {
         return Ok(None);
     }
     let extension_is_office = path
@@ -44,7 +47,7 @@ pub fn office_format_hint(path: impl AsRef<Path>) -> Result<Option<&'static str>
         .is_some_and(|value| {
             matches!(
                 value.to_ascii_lowercase().as_str(),
-                "docx" | "pptx" | "xlsx"
+                "docx" | "pptx" | "xlsx" | "odt" | "ods" | "odp"
             )
         });
     let file = File::open(path).map_err(|error| input_error(path, &error))?;
@@ -57,27 +60,36 @@ pub fn office_format_hint(path: impl AsRef<Path>) -> Result<Option<&'static str>
     Ok(detect_package_family(&mut archive))
 }
 
-/// Inspects a DOCX/PPTX/XLSX package without executing macros or external links.
+/// Inspects a `DOCX`/`PPTX`/`XLSX`/ODF package or RTF envelope without
+/// executing macros or external links.
 ///
 /// # Errors
 ///
 /// Returns a typed error for unknown, malformed, macro-bearing, externally
 /// linked, or resource-exhausting packages.
+#[allow(clippy::too_many_lines)]
 pub async fn inspect_office(path: impl AsRef<Path>) -> Result<Probe> {
     let path = path.as_ref();
     let artifact = identify_artifact(path).await?;
     let owned = artifact.canonical_path.clone();
-    let inspection = tokio::task::spawn_blocking(move || inspect_package(&owned))
-        .await
-        .map_err(|error| {
-            FormatWrightError::new(
-                ErrorCode::Internal,
-                Stage::Inspect,
-                "Office inspection worker failed",
-                "Retry or report the input.",
-            )
-            .with_diagnostic(error.to_string())
-        })??;
+    let is_rtf = office_format_hint(path).ok().flatten() == Some("rtf");
+    let inspection = tokio::task::spawn_blocking(move || {
+        if is_rtf {
+            Ok(inspect_rtf_envelope(&owned))
+        } else {
+            inspect_package(&owned)
+        }
+    })
+    .await
+    .map_err(|error| {
+        FormatWrightError::new(
+            ErrorCode::Internal,
+            Stage::Inspect,
+            "Office inspection worker failed",
+            "Retry or report the input.",
+        )
+        .with_diagnostic(error.to_string())
+    })??;
     if inspection.has_macros {
         return Err(FormatWrightError::new(
             ErrorCode::PolicyBlocked,
@@ -117,7 +129,13 @@ pub async fn inspect_office(path: impl AsRef<Path>) -> Result<Probe> {
             id: inspection.format.to_owned(),
             kind: FormatKind::Document,
             mime_type: Some(mime_type(inspection.format).to_owned()),
-            container: Some("zip/opc".to_owned()),
+            container: Some(if inspection.format == "rtf" {
+                "text/rtf".to_owned()
+            } else if inspection.format.starts_with("od") {
+                "zip/odf".to_owned()
+            } else {
+                "zip/opc".to_owned()
+            }),
             extension_matches: Some(extension_matches),
             confidence: 1.0,
         },
@@ -128,7 +146,13 @@ pub async fn inspect_office(path: impl AsRef<Path>) -> Result<Probe> {
             } else {
                 StreamKind::Page
             },
-            codec: Some("ooxml".to_owned()),
+            codec: Some(if inspection.format == "rtf" {
+                "rtf".to_owned()
+            } else if inspection.format.starts_with("od") {
+                "odf".to_owned()
+            } else {
+                "ooxml".to_owned()
+            }),
             language: None,
             duration_seconds: None,
             width: None,
@@ -174,9 +198,12 @@ pub fn plan_office_to_pdf(
     pdfinfo: &EngineIdentity,
     pdftoppm: &EngineIdentity,
 ) -> Result<Plan> {
-    if !matches!(probe.format.id.as_str(), "docx" | "pptx" | "xlsx") {
+    if !matches!(
+        probe.format.id.as_str(),
+        "docx" | "pptx" | "xlsx" | "odt" | "ods" | "odp" | "rtf"
+    ) {
         return Err(unsupported(
-            "Office-to-PDF requires DOCX, PPTX, or XLSX input",
+            "Office-to-PDF requires OOXML, ODF, or RTF input",
         ));
     }
     if soffice.engine_id != "soffice"
@@ -406,6 +433,19 @@ struct PackageInspection {
     has_external_relationships: bool,
 }
 
+/// RTF is a plain-text envelope, not a ZIP package: no parts to enumerate,
+/// and the alpha policy relies on `LibreOffice`'s own parser rather than deep
+/// RTF inspection.
+fn inspect_rtf_envelope(path: &Path) -> PackageInspection {
+    PackageInspection {
+        format: "rtf",
+        entry_count: 1,
+        expanded_bytes: std::fs::metadata(path).map_or(0, |meta| meta.len()),
+        has_macros: false,
+        has_external_relationships: false,
+    }
+}
+
 fn inspect_package(path: &Path) -> Result<PackageInspection> {
     let file = File::open(path).map_err(|error| input_error(path, &error))?;
     let mut archive = ZipArchive::new(file).map_err(|error| invalid_zip(&error))?;
@@ -427,6 +467,9 @@ fn inspect_package(path: &Path) -> Result<PackageInspection> {
             .map_err(|error| package_read_error(&error))?;
         let name = entry.name().replace('\\', "/").to_ascii_lowercase();
         has_macros |= name.ends_with("vbaproject.bin");
+        // ODF stores Basic macro sources under a `Basic/` member folder,
+        // either at the package root or nested inside a subdirectory.
+        has_macros |= name.starts_with("basic/") || name.contains("/basic/");
         if is_relationship_part(&name) {
             relationship_bytes = relationship_bytes.saturating_add(entry.size());
             if relationship_bytes > MAX_RELATIONSHIP_BYTES {
@@ -478,6 +521,26 @@ fn detect_package_family<R: Read + Seek>(archive: &mut ZipArchive<R>) -> Option<
         Some("pptx")
     } else if archive.by_name("xl/workbook.xml").is_ok() {
         Some("xlsx")
+    } else if archive.by_name("content.xml").is_ok()
+        && archive.by_name("META-INF/manifest.xml").is_ok()
+    {
+        // ODF packages carry their exact flavor in the uncompressed
+        // `mimetype` entry; default to text when it cannot be read.
+        let flavor = archive
+            .by_name("mimetype")
+            .ok()
+            .and_then(|mut entry| {
+                let mut buffer = String::new();
+                entry.read_to_string(&mut buffer).ok().map(|_| buffer)
+            })
+            .unwrap_or_default();
+        if flavor.contains("presentation") {
+            Some("odp")
+        } else if flavor.contains("spreadsheet") {
+            Some("ods")
+        } else {
+            Some("odt")
+        }
     } else {
         None
     }
@@ -521,6 +584,10 @@ fn mime_type(format: &str) -> &'static str {
         "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         "pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
         "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "odt" => "application/vnd.oasis.opendocument.text",
+        "ods" => "application/vnd.oasis.opendocument.spreadsheet",
+        "odp" => "application/vnd.oasis.opendocument.presentation",
+        "rtf" => "application/rtf",
         _ => "application/octet-stream",
     }
 }
@@ -653,6 +720,114 @@ mod tests {
     use zip::write::SimpleFileOptions;
 
     use super::{inspect_office, office_format_hint, plan_office_to_pdf};
+
+    fn write_odf(path: &std::path::Path, flavor: &str) {
+        let file = std::fs::File::create(path).expect("create odf");
+        let mut archive = zip::ZipWriter::new(file);
+        let stored = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        archive.start_file("mimetype", stored).expect("mimetype");
+        archive
+            .write_all(flavor.as_bytes())
+            .expect("mimetype payload");
+        archive
+            .start_file("META-INF/manifest.xml", SimpleFileOptions::default())
+            .expect("manifest");
+        archive
+            .write_all(b"<?xml version=\"1.0\"?><manifest/>")
+            .expect("manifest payload");
+        archive
+            .start_file("content.xml", SimpleFileOptions::default())
+            .expect("content");
+        archive
+            .write_all(b"<?xml version=\"1.0\"?><office:document-content/>")
+            .expect("content payload");
+        archive.finish().expect("odf finish");
+    }
+
+    #[tokio::test]
+    async fn odf_packages_are_detected_by_flavor() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let cases = [
+            (
+                "letter.odt",
+                "application/vnd.oasis.opendocument.text",
+                "odt",
+            ),
+            (
+                "sheet.ods",
+                "application/vnd.oasis.opendocument.spreadsheet",
+                "ods",
+            ),
+            (
+                "deck.odp",
+                "application/vnd.oasis.opendocument.presentation",
+                "odp",
+            ),
+        ];
+        for (name, flavor, expected) in cases {
+            let path = directory.path().join(name);
+            write_odf(&path, flavor);
+            let probe = inspect_office(&path).await.expect("odf inspection");
+            assert_eq!(probe.format.id, expected, "{name} flavor detection");
+            assert_eq!(probe.format.container.as_deref(), Some("zip/odf"));
+        }
+    }
+
+    #[tokio::test]
+    async fn odf_macro_folders_are_rejected() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = directory.path().join("macro.odt");
+        // A complete ODF package that additionally carries a Basic macro
+        // member - the macro must dominate over the otherwise-valid parts.
+        let file = std::fs::File::create(&path).expect("create macro odf");
+        let mut archive = zip::ZipWriter::new(file);
+        let stored = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        archive.start_file("mimetype", stored).expect("mimetype");
+        archive
+            .write_all(b"application/vnd.oasis.opendocument.text")
+            .expect("mimetype payload");
+        archive
+            .start_file("META-INF/manifest.xml", SimpleFileOptions::default())
+            .expect("manifest");
+        archive
+            .write_all(b"<?xml version=\"1.0\"?><manifest/>")
+            .expect("manifest payload");
+        archive
+            .start_file("content.xml", SimpleFileOptions::default())
+            .expect("content");
+        archive
+            .write_all(b"<?xml version=\"1.0\"?><office:document-content/>")
+            .expect("content payload");
+        archive
+            .start_file("Basic/Module1.xml", SimpleFileOptions::default())
+            .expect("macro member");
+        archive.write_all(b"<basic/>").expect("macro payload");
+        archive.finish().expect("finish");
+        let error = inspect_office(&path)
+            .await
+            .expect_err("macro ODF must be blocked");
+        assert_eq!(error.code, crate::ErrorCode::PolicyBlocked);
+    }
+
+    #[tokio::test]
+    async fn rtf_envelopes_inspect_without_a_zip_package() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = directory.path().join("note.rtf");
+        std::fs::write(&path, b"{\\rtf1\\ansi ELECTRIC 440 cell}").expect("write rtf");
+        let probe = inspect_office(&path).await.expect("rtf inspection");
+        assert_eq!(probe.format.id, "rtf");
+        assert_eq!(probe.format.mime_type.as_deref(), Some("application/rtf"));
+        let plan = plan_office_to_pdf(
+            &probe,
+            PathBuf::from("out.pdf"),
+            &engine("soffice"),
+            &engine("pdfinfo"),
+            &engine("pdftoppm"),
+        );
+        assert!(plan.is_ok(), "RTF plans through the office lane");
+    }
 
     fn engine(id: &str) -> EngineIdentity {
         EngineIdentity {

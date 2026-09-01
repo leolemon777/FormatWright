@@ -179,7 +179,7 @@ fn supported_targets(input: Option<&str>) -> BTreeSet<&'static str> {
     let values: &[&str] = match input.unwrap_or_default() {
         "csv" | "json" | "yaml" | "yml" | "xml" => &["csv", "json", "yaml", "xml"],
         "pdf" | "heic" | "heif" => &["jpg", "png"],
-        "docx" | "pptx" | "xlsx" | "svg" => &["pdf"],
+        "docx" | "pptx" | "xlsx" | "odt" | "ods" | "odp" | "rtf" | "svg" => &["pdf"],
         "md" | "markdown" | "html" | "htm" | "txt" | "text" => &["pdf", "docx", "epub"],
         "zip" => &["tar.gz"],
         "tar.gz" => &["zip"],
@@ -226,7 +226,11 @@ fn required_engines(input: Option<&str>, target: &str) -> Vec<String> {
     if input == "pdf" && matches!(target.as_str(), "jpg" | "png") {
         return engine_names(&["pdfinfo", "pdftoppm", "ffprobe"]);
     }
-    if matches!(input, "docx" | "pptx" | "xlsx") && target == "pdf" {
+    if matches!(
+        input,
+        "docx" | "pptx" | "xlsx" | "odt" | "ods" | "odp" | "rtf"
+    ) && target == "pdf"
+    {
         return engine_names(&["soffice", "pdfinfo", "pdftoppm"]);
     }
     if matches!(input, "md" | "markdown" | "html" | "htm" | "txt" | "text")
