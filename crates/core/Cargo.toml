@@ -10,6 +10,7 @@ description = "Local-first inspection, planning, execution, recovery, and valida
 [dependencies]
 blake3.workspace = true
 csv.workspace = true
+flate2.workspace = true
 fs2.workspace = true
 formatwright-engine-sdk = { version = "=0.1.0", path = "../engine-sdk" }
 image.workspace = true
@@ -19,6 +20,7 @@ serde.workspace = true
 serde_json.workspace = true
 serde_yaml_ng.workspace = true
 sha2.workspace = true
+tar.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
 tokio.workspace = true

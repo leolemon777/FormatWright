@@ -38,6 +38,12 @@ pub async fn prepare_conversion(
         let plan = plan_structured_conversion(&probe, request, &engine)?;
         return Ok((probe, plan, engine));
     }
+    if is_archive_target(&request.target_format) {
+        let probe = crate::archive::inspect_archive(input).await?;
+        let engine = inspect_builtin_engine("formatwright.archive").await?;
+        let plan = crate::archive::plan_archive_conversion(&probe, request, &engine)?;
+        return Ok((probe, plan, engine));
+    }
     let target = normalized_target(&request.target_format);
     if matches!(target.as_str(), "docx" | "epub") {
         let probe = inspect_document(input).await?;
@@ -173,6 +179,17 @@ fn is_structured_target(target: &str) -> bool {
     matches!(
         normalized_target(target).as_str(),
         "csv" | "json" | "yaml" | "yml" | "xml"
+    )
+}
+
+fn is_archive_target(target: &str) -> bool {
+    matches!(
+        target
+            .trim()
+            .trim_start_matches('.')
+            .to_ascii_lowercase()
+            .as_str(),
+        "zip" | "tar.gz" | "tgz" | "taz"
     )
 }
 

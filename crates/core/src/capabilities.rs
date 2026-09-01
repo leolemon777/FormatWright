@@ -6,9 +6,9 @@ use serde::{Deserialize, Serialize};
 use crate::doctor::{EngineDiscoveryPolicy, inspect_engine_with_policy};
 use crate::error::{ErrorCode, FormatWrightError, Result, Stage};
 
-const KNOWN_TARGETS: [&str; 16] = [
+const KNOWN_TARGETS: [&str; 18] = [
     "jpg", "png", "webp", "avif", "mp4", "mp3", "m4a", "wav", "gif", "pdf", "docx", "epub", "json",
-    "csv", "yaml", "xml",
+    "csv", "yaml", "xml", "zip", "tar.gz",
 ];
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -181,6 +181,8 @@ fn supported_targets(input: Option<&str>) -> BTreeSet<&'static str> {
         "pdf" | "heic" | "heif" => &["jpg", "png"],
         "docx" | "pptx" | "xlsx" | "svg" => &["pdf"],
         "md" | "markdown" | "html" | "htm" | "txt" | "text" => &["pdf", "docx", "epub"],
+        "zip" => &["tar.gz"],
+        "tar.gz" => &["zip"],
         "png" | "jpg" | "jpeg" => &["webp", "avif"],
         "mov" | "mkv" | "avi" | "webm" | "mp4" => &["mp4", "gif", "mp3"],
         "wav" | "flac" | "aac" | "m4a" | "ogg" | "opus" | "mp3" => &["m4a", "mp3", "wav"],
@@ -218,6 +220,9 @@ fn required_engines(input: Option<&str>, target: &str) -> Vec<String> {
     {
         return Vec::new();
     }
+    if matches!(input, "zip" | "tar.gz") && matches!(target.as_str(), "zip" | "tar.gz") {
+        return Vec::new();
+    }
     if input == "pdf" && matches!(target.as_str(), "jpg" | "png") {
         return engine_names(&["pdfinfo", "pdftoppm", "ffprobe"]);
     }
@@ -241,7 +246,13 @@ fn required_engines(input: Option<&str>, target: &str) -> Vec<String> {
     engine_names(&["ffprobe", "ffmpeg"])
 }
 
+#[allow(clippy::case_sensitive_file_extension_comparisons)]
 fn input_extension(path: &Path) -> Option<String> {
+    // The name is lowercased first, so the comparisons are case-insensitive.
+    let name = path.file_name()?.to_str()?.to_ascii_lowercase();
+    if name.ends_with(".tar.gz") || name.ends_with(".tgz") || name.ends_with(".taz") {
+        return Some("tar.gz".to_owned());
+    }
     path.extension()
         .and_then(std::ffi::OsStr::to_str)
         .map(str::to_ascii_lowercase)
@@ -256,6 +267,7 @@ fn normalize_target(target: &str) -> String {
     {
         "jpeg" => "jpg".to_owned(),
         "yml" => "yaml".to_owned(),
+        "tgz" | "taz" => "tar.gz".to_owned(),
         value => value.to_owned(),
     }
 }

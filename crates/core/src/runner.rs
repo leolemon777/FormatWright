@@ -140,6 +140,18 @@ where
             "Choose a complete output path.",
         )
     })?;
+    if step.engine.engine_id == "formatwright.archive" {
+        return execute_archive_plan(
+            input,
+            plan,
+            job_id,
+            cancellation,
+            &output_path,
+            &partial_path,
+            &mut observer,
+        )
+        .await;
+    }
     if step.engine.engine_id == "formatwright.structured" {
         return execute_structured_plan(
             input,
@@ -1892,6 +1904,113 @@ where
         tracing::warn!(partial = %partial_path.display(), %error, "committed markup PDF but could not clean workspace");
     }
     Ok(result)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn execute_archive_plan<F>(
+    input: &Probe,
+    plan: &Plan,
+    job_id: Uuid,
+    cancellation: CancellationToken,
+    output_path: &Path,
+    partial_path: &Path,
+    observer: &mut F,
+) -> Result<ExecutionResult>
+where
+    F: FnMut(ExecutionMilestone) -> Result<()>,
+{
+    let step = plan
+        .steps
+        .first()
+        .ok_or_else(|| invalid_plan_argument("Archive step"))?;
+    let source = checked_argument(step, "source_format", &["zip", "tar.gz"])?;
+    let target = checked_argument(step, "target_format", &["zip", "tar.gz"])?;
+    if source == target {
+        return Err(invalid_plan_argument("target_format"));
+    }
+    let input_path = input.artifact.canonical_path.clone();
+    let partial = partial_path.to_path_buf();
+    let repack_source = source.to_owned();
+    let repack_target = target.to_owned();
+    tokio::task::spawn_blocking(move || {
+        if (repack_source.as_str(), repack_target.as_str()) == ("zip", "tar.gz") {
+            crate::archive::repack_zip_to_targz(&input_path, &partial)
+        } else {
+            crate::archive::repack_targz_to_zip(&input_path, &partial)
+        }
+    })
+    .await
+    .map_err(|error| {
+        FormatWrightError::new(
+            ErrorCode::Internal,
+            Stage::Execute,
+            "Archive repack worker failed",
+            "Retry the conversion.",
+        )
+        .with_diagnostic(error.to_string())
+    })??;
+    if !partial_path.is_file() {
+        cleanup_partial(partial_path);
+        return Err(FormatWrightError::new(
+            ErrorCode::ExecutionFailed,
+            Stage::Execute,
+            "Archive repack produced no output",
+            "Retry or report the input.",
+        ));
+    }
+    if cancellation.is_cancelled() {
+        cleanup_partial(partial_path);
+        return Err(FormatWrightError::new(
+            ErrorCode::Cancelled,
+            Stage::Execute,
+            "Archive conversion was cancelled",
+            "Retry when ready.",
+        ));
+    }
+    if let Err(error) = observer(ExecutionMilestone::EngineFinished) {
+        cleanup_partial(partial_path);
+        return Err(error);
+    }
+    if let Err(error) = ensure_input_unchanged(input, Stage::Commit).await {
+        cleanup_partial(partial_path);
+        return Err(error);
+    }
+    let output_probe = match crate::archive::inspect_archive(partial_path).await {
+        Ok(probe) => probe,
+        Err(error) => {
+            cleanup_partial(partial_path);
+            return Err(error);
+        }
+    };
+    let mut report = crate::archive::validate_archive_output(input, &output_probe, plan, job_id);
+    if report.status == ValidationStatus::Fail {
+        cleanup_partial(partial_path);
+        return Err(FormatWrightError::new(
+            ErrorCode::ValidationFailed,
+            Stage::Validate,
+            "Archive output failed validation",
+            "Inspect the validation report and adjust the source.",
+        )
+        .with_diagnostic(serde_json::to_string(&report).unwrap_or_default()));
+    }
+    if output_path.exists() {
+        cleanup_partial(partial_path);
+        return Err(FormatWrightError::new(
+            ErrorCode::OutputConflict,
+            Stage::Commit,
+            "The archive destination appeared while running",
+            "Choose another output path.",
+        ));
+    }
+    if let Err(error) = commit_path_no_replace(partial_path, output_path) {
+        cleanup_partial(partial_path);
+        return Err(error);
+    }
+    report.output.display_path = Some(output_path.to_string_lossy().into_owned());
+    Ok(ExecutionResult {
+        output_path: output_path.to_owned(),
+        report,
+    })
 }
 
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]

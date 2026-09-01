@@ -2,6 +2,7 @@
 
 pub mod application;
 pub mod application_state;
+mod archive;
 pub mod capabilities;
 pub mod doctor;
 mod document;
@@ -38,6 +39,7 @@ pub use application_state::{
     StateBundleComponents, StateBundleEntry, StateBundleManifest, StateBundleOptions,
     StateBundlePreflightReport, StateBundleRestoreReport,
 };
+pub use archive::{archive_format_hint, inspect_archive, plan_archive_conversion};
 pub use capabilities::{
     CapabilitySnapshot, RouteAvailability, capability_snapshot_for_input, ensure_route_available,
 };
