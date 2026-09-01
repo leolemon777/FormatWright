@@ -1017,9 +1017,10 @@ pub fn plan_pdf_merge(
             let path = probe.artifact.canonical_path.to_string_lossy();
             // qpdf rejects Windows verbatim (`\\?\`) paths, which
             // canonicalization produces; strip the prefix for drive paths.
-            path.strip_prefix(r"\\?\")
-                .map(str::to_owned)
-                .unwrap_or_else(|| path.into_owned())
+            match path.strip_prefix(r"\\?\") {
+                Some(stripped) => stripped.to_owned(),
+                None => path.into_owned(),
+            }
         })
         .collect::<Vec<_>>()
         .join(";");
@@ -1167,7 +1168,7 @@ pub(crate) fn validate_pdf_ops_output(
         },
         ValidationCheck {
             code: "PDF_OPS_PAGE_COUNT".to_owned(),
-            status: if observed_pages as u32 == expected_pages {
+            status: if u32::try_from(observed_pages).unwrap_or(u32::MAX) == expected_pages {
                 ValidationStatus::Pass
             } else {
                 ValidationStatus::Fail
