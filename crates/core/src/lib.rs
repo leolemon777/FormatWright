@@ -45,7 +45,9 @@ pub use doctor::{
     EngineDiscoveryPolicy, doctor, doctor_with_policy, find_executable, inspect_builtin_engine,
     inspect_engine, inspect_engine_with_policy,
 };
-pub use document::{inspect_document, plan_markup_to_docx, plan_markup_to_pdf};
+pub use document::{
+    inspect_document, plan_markup_to_docx, plan_markup_to_epub, plan_markup_to_pdf,
+};
 pub use domain::{
     ArtifactIdentity, ArtifactSummary, ChangeSet, FormatDescriptor, FormatKind, JobState,
     MetadataEntry, NetworkPolicy, Plan, PlanRequest, PlanStep, Probe, ProbeEvidence,

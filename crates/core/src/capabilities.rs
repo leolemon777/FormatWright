@@ -6,9 +6,9 @@ use serde::{Deserialize, Serialize};
 use crate::doctor::{EngineDiscoveryPolicy, inspect_engine_with_policy};
 use crate::error::{ErrorCode, FormatWrightError, Result, Stage};
 
-const KNOWN_TARGETS: [&str; 15] = [
-    "jpg", "png", "webp", "avif", "mp4", "mp3", "m4a", "wav", "gif", "pdf", "docx", "json", "csv",
-    "yaml", "xml",
+const KNOWN_TARGETS: [&str; 16] = [
+    "jpg", "png", "webp", "avif", "mp4", "mp3", "m4a", "wav", "gif", "pdf", "docx", "epub", "json",
+    "csv", "yaml", "xml",
 ];
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -180,7 +180,7 @@ fn supported_targets(input: Option<&str>) -> BTreeSet<&'static str> {
         "csv" | "json" | "yaml" | "yml" | "xml" => &["csv", "json", "yaml", "xml"],
         "pdf" | "heic" | "heif" => &["jpg", "png"],
         "docx" | "pptx" | "xlsx" | "svg" => &["pdf"],
-        "md" | "markdown" | "html" | "htm" => &["pdf", "docx"],
+        "md" | "markdown" | "html" | "htm" => &["pdf", "docx", "epub"],
         "png" | "jpg" | "jpeg" => &["webp", "avif"],
         "mov" | "mkv" | "avi" | "webm" | "mp4" => &["mp4", "gif", "mp3"],
         "wav" | "flac" | "aac" | "m4a" | "ogg" | "opus" | "mp3" => &["m4a", "mp3", "wav"],
@@ -224,7 +224,9 @@ fn required_engines(input: Option<&str>, target: &str) -> Vec<String> {
     if matches!(input, "docx" | "pptx" | "xlsx") && target == "pdf" {
         return engine_names(&["soffice", "pdfinfo", "pdftoppm"]);
     }
-    if matches!(input, "md" | "markdown" | "html" | "htm") && target == "docx" {
+    if matches!(input, "md" | "markdown" | "html" | "htm")
+        && matches!(target.as_str(), "docx" | "epub")
+    {
         return engine_names(&["pandoc"]);
     }
     if matches!(input, "html" | "htm" | "svg") && target == "pdf" {

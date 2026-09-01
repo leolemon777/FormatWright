@@ -3,7 +3,9 @@ use std::path::Path;
 use formatwright_engine_sdk::EngineIdentity;
 
 use crate::doctor::{inspect_builtin_engine, inspect_engine};
-use crate::document::{inspect_document, plan_markup_to_docx, plan_markup_to_pdf};
+use crate::document::{
+    inspect_document, plan_markup_to_docx, plan_markup_to_epub, plan_markup_to_pdf,
+};
 use crate::domain::{Plan, PlanRequest, Probe};
 use crate::edge_pdf::plan_edge_print_to_pdf;
 use crate::error::{ErrorCode, FormatWrightError, Result, Stage};
@@ -37,11 +39,15 @@ pub async fn prepare_conversion(
         return Ok((probe, plan, engine));
     }
     let target = normalized_target(&request.target_format);
-    if target == "docx" {
+    if matches!(target.as_str(), "docx" | "epub") {
         let probe = inspect_document(input).await?;
         let pandoc = inspect_engine("pandoc").await?;
-        let output = required_output(request, "DOCX conversion")?;
-        let plan = plan_markup_to_docx(&probe, output, &pandoc)?;
+        let output = required_output(request, "Document conversion")?;
+        let plan = if target == "epub" {
+            plan_markup_to_epub(&probe, output, &pandoc)?
+        } else {
+            plan_markup_to_docx(&probe, output, &pandoc)?
+        };
         return Ok((probe, plan, pandoc));
     }
     if target == "pdf" && office_format_hint(input)?.is_some() {

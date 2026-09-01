@@ -18,7 +18,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::EngineIdentity;
-use crate::document::{inspect_document, validate_docx_output};
+use crate::document::{inspect_document, validate_docx_output, validate_epub_output};
 use crate::domain::{Plan, Probe, ValidationReport, ValidationStatus};
 use crate::edge_pdf::{
     EdgePrintEvidence, extract_pdf_text, inspect_pdf_font_table, validate_edge_pdf_output,
@@ -1907,7 +1907,7 @@ where
         .first()
         .ok_or_else(|| invalid_plan_argument("Pandoc step"))?;
     let source = checked_argument(step, "source_format", &["markdown", "html"])?;
-    checked_argument(step, "target_format", &["docx"])?;
+    let target = checked_argument(step, "target_format", &["docx", "epub"])?;
     checked_argument(step, "sandbox", &["true"])?;
     checked_argument(step, "resource_policy", &["deny-all"])?;
     let reader = if source == "markdown" { "gfm" } else { "html" };
@@ -1919,7 +1919,7 @@ where
         .current_dir(output_parent)
         .arg("--sandbox=true")
         .arg(format!("--from={reader}"))
-        .arg("--to=docx")
+        .arg(format!("--to={target}"))
         .arg("--standalone")
         .arg("--output")
         .arg(partial_path)
@@ -1977,7 +1977,7 @@ where
         return Err(FormatWrightError::new(
             ErrorCode::ExecutionFailed,
             Stage::Execute,
-            "Pandoc produced no DOCX output",
+            format!("Pandoc produced no {} output", target.to_uppercase()),
             "Retry or report the input.",
         ));
     }
@@ -2005,13 +2005,17 @@ where
             return Err(error);
         }
     };
-    let mut report = validate_docx_output(input, &output_probe, plan, job_id);
+    let mut report = if target == "epub" {
+        validate_epub_output(input, &output_probe, plan, job_id)
+    } else {
+        validate_docx_output(input, &output_probe, plan, job_id)
+    };
     if report.status == ValidationStatus::Fail {
         cleanup_partial(partial_path);
         return Err(FormatWrightError::new(
             ErrorCode::ValidationFailed,
             Stage::Validate,
-            "DOCX output failed validation",
+            format!("{} output failed validation", target.to_uppercase()),
             "Inspect the validation report and adjust the source.",
         )
         .with_diagnostic(serde_json::to_string(&report).unwrap_or_default()));
@@ -2021,7 +2025,10 @@ where
         return Err(FormatWrightError::new(
             ErrorCode::OutputConflict,
             Stage::Commit,
-            "The DOCX destination appeared while running",
+            format!(
+                "The {} destination appeared while running",
+                target.to_uppercase()
+            ),
             "Choose another output path.",
         ));
     }
