@@ -83,6 +83,8 @@ Lossy image visual metrics are diagnostic evidence, not a universal fidelity gua
 
 For PDF-to-image page sets, required checks are exact selected/all-page count, deterministic ordered filenames, independent decode of every page, target format, point-size × DPI dimensions using the renderer's rounding rule, declared color mode, and the declared alpha/background policy. The page set is a single job output: any missing, extra, undecodable, or nonconforming page fails the set before directory commit.
 
+For browser-printed (HTML/SVG → PDF) outputs, required checks are: output opens under an independent parser, page count ≥ 1 with positive point dimensions, every page renders under the raster validator, a text layer is extractable by an independent text extractor whenever the inspected input declares text, and every font declared in the output font table is embedded. A heuristic extracted-character ratio versus the inspected input text is Warning-only; extraction loses hyphenation, ligatures, and reading-order joins, so a threshold is informational, not blocking.
+
 ## 8. Office-to-PDF rules
 
 Hard failures:

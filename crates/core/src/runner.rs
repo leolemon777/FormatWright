@@ -20,6 +20,9 @@ use uuid::Uuid;
 use crate::EngineIdentity;
 use crate::document::{inspect_document, validate_docx_output};
 use crate::domain::{Plan, Probe, ValidationReport, ValidationStatus};
+use crate::edge_pdf::{
+    EdgePrintEvidence, extract_pdf_text, inspect_pdf_font_table, validate_edge_pdf_output,
+};
 use crate::error::{ErrorCode, FormatWrightError, Result, Stage};
 use crate::fingerprint::{ensure_local_filesystem_path, identify_artifact};
 use crate::inspect::inspect_media;
@@ -32,6 +35,7 @@ use crate::validation::validate_media_output;
 use formatwright_engine_sdk::Operation;
 
 const MAX_STDERR_BYTES: usize = 64 * 1024;
+const EDGE_PRINT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
 #[cfg(unix)]
 const GRACEFUL_TERMINATION_TIMEOUT: Duration = Duration::from_millis(750);
 #[cfg(unix)]
@@ -109,6 +113,7 @@ where
     ensure_input_unchanged(input, Stage::Execute).await?;
 
     let partial_path = if step.engine.engine_id == "soffice"
+        || step.engine.engine_id == "msedge"
         || (step.engine.engine_id == "pandoc" && plan.target_format == "pdf")
     {
         office_staged_work_path(&output_path, job_id)?
@@ -188,6 +193,19 @@ where
     if step.engine.engine_id == "soffice" {
         return execute_office_pdf_plan(
             input,
+            input,
+            plan,
+            ffprobe,
+            job_id,
+            cancellation,
+            &output_path,
+            &partial_path,
+            &mut observer,
+        )
+        .await;
+    }
+    if step.engine.engine_id == "msedge" {
+        return execute_edge_print_plan(
             input,
             plan,
             ffprobe,
@@ -672,6 +690,321 @@ where
     Ok(ExecutionResult {
         output_path: output_path.to_owned(),
         report,
+    })
+}
+
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+async fn execute_edge_print_plan<F>(
+    input: &Probe,
+    plan: &Plan,
+    pdfinfo: &EngineIdentity,
+    job_id: Uuid,
+    cancellation: CancellationToken,
+    output_path: &Path,
+    partial_path: &Path,
+    observer: &mut F,
+) -> Result<ExecutionResult>
+where
+    F: FnMut(ExecutionMilestone) -> Result<()>,
+{
+    let planned_pdfinfo = plan
+        .steps
+        .iter()
+        .find(|value| value.engine.engine_id == "pdfinfo")
+        .ok_or_else(|| invalid_plan_argument("Browser-print structural-validation step"))?;
+    if pdfinfo.engine_id != "pdfinfo"
+        || pdfinfo.version != planned_pdfinfo.engine.version
+        || pdfinfo.binary_sha256 != planned_pdfinfo.engine.binary_sha256
+    {
+        return Err(invalid_plan_argument("pdfinfo validation engine"));
+    }
+    let step = plan
+        .steps
+        .first()
+        .ok_or_else(|| invalid_plan_argument("Browser-print step"))?;
+    let validation_step = plan
+        .steps
+        .iter()
+        .find(|value| value.engine.engine_id == "pdftoppm")
+        .ok_or_else(|| invalid_plan_argument("Browser-print render-validation step"))?;
+    let text_step = plan
+        .steps
+        .iter()
+        .find(|value| value.engine.engine_id == "pdftotext")
+        .ok_or_else(|| invalid_plan_argument("Browser-print text-validation step"))?;
+    let font_step = plan
+        .steps
+        .iter()
+        .find(|value| value.engine.engine_id == "pdffonts")
+        .ok_or_else(|| invalid_plan_argument("Browser-print font-validation step"))?;
+    checked_argument(step, "source_format", &["html", "svg"])?;
+    checked_argument(step, "target_format", &["pdf"])?;
+    checked_argument(step, "headless", &["true"])?;
+    checked_argument(step, "isolated_profile", &["true"])?;
+    checked_argument(step, "network", &["deny"])?;
+    checked_argument(step, "external_resources", &["deny"])?;
+    checked_argument(validation_step, "dpi", &["72"])?;
+    checked_argument(validation_step, "target_format", &["png"])?;
+    checked_argument(validation_step, "purpose", &["validation-only"])?;
+    checked_argument(text_step, "layout", &["reading-order"])?;
+    checked_argument(text_step, "purpose", &["validation-only"])?;
+    checked_argument(font_step, "embedded", &["required"])?;
+    std::fs::create_dir(partial_path).map_err(|error| {
+        FormatWrightError::new(
+            ErrorCode::StorageFailed,
+            Stage::Execute,
+            "Unable to create the staged browser-print workspace",
+            "Check destination permissions and storage health.",
+        )
+        .with_diagnostic(error.to_string())
+    })?;
+    let profile_directory = partial_path.join("profile");
+    let render_directory = partial_path.join("render-validation");
+    for directory in [&profile_directory, &render_directory] {
+        if let Err(error) = std::fs::create_dir(directory) {
+            cleanup_partial(partial_path);
+            return Err(FormatWrightError::new(
+                ErrorCode::StorageFailed,
+                Stage::Execute,
+                "Unable to create an isolated browser work directory",
+                "Check destination permissions and storage health.",
+            )
+            .with_diagnostic(error.to_string()));
+        }
+    }
+    let staged_pdf = partial_path.join("print.pdf");
+    let input_url = match local_file_url(&input.artifact.canonical_path) {
+        Ok(url) => url,
+        Err(error) => {
+            cleanup_partial(partial_path);
+            return Err(error);
+        }
+    };
+    let output_parent = output_path
+        .parent()
+        .ok_or_else(|| invalid_plan_argument("output parent"))?;
+    let engine_path = external_process_path(&step.engine.binary_path);
+    let print_target = external_process_path(&staged_pdf);
+    let profile_target = external_process_path(&profile_directory);
+    let mut command = Command::new(engine_path);
+    command
+        .current_dir(external_process_path(output_parent))
+        .arg("--headless=new")
+        .arg("--disable-gpu")
+        .arg("--no-first-run")
+        .arg("--no-default-browser-check")
+        .arg("--disable-extensions")
+        .arg("--disable-background-networking")
+        .arg("--disable-sync")
+        .arg(format!("--user-data-dir={}", profile_target.display()))
+        .arg("--host-resolver-rules=MAP * ~NOTFOUND")
+        .arg("--print-to-pdf-no-header")
+        .arg(format!("--print-to-pdf={}", print_target.display()))
+        .arg(&input_url)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    #[cfg(unix)]
+    command.process_group(0);
+    tracing::info!(
+        job_id = %job_id,
+        input = %input.artifact.canonical_path.display(),
+        partial = %partial_path.display(),
+        "starting isolated browser PDF print"
+    );
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            cleanup_partial(partial_path);
+            return Err(FormatWrightError::new(
+                ErrorCode::EngineIncompatible,
+                Stage::Execute,
+                "Unable to start the browser print engine",
+                "Run doctor and verify the Edge installation.",
+            )
+            .with_diagnostic(error.to_string()));
+        }
+    };
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| invalid_plan_argument("Browser stdout"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| invalid_plan_argument("Browser stderr"))?;
+    let stdout_task = tokio::spawn(read_bounded_tail(stdout, MAX_STDERR_BYTES));
+    let stderr_task = tokio::spawn(read_bounded_tail(stderr, MAX_STDERR_BYTES));
+    let status = tokio::select! {
+        status = child.wait() => status.map_err(|error| {
+            FormatWrightError::new(
+                ErrorCode::ExecutionFailed,
+                Stage::Execute,
+                "Unable to wait for the browser print engine",
+                "Retry the conversion.",
+            )
+            .with_diagnostic(error.to_string())
+        })?,
+        () = cancellation.cancelled() => {
+            terminate_process_tree(&mut child).await;
+            cleanup_partial(partial_path);
+            return Err(FormatWrightError::new(
+                ErrorCode::Cancelled,
+                Stage::Execute,
+                "Browser print was cancelled",
+                "Retry when ready.",
+            ));
+        }
+        () = tokio::time::sleep(EDGE_PRINT_TIMEOUT) => {
+            terminate_process_tree(&mut child).await;
+            cleanup_partial(partial_path);
+            return Err(FormatWrightError::new(
+                ErrorCode::ExecutionFailed,
+                Stage::Execute,
+                "The browser print engine timed out",
+                "Simplify the document or check the browser installation.",
+            ));
+        }
+    };
+    let stdout = stdout_task
+        .await
+        .unwrap_or_else(|error| format!("stdout reader failed: {error}"));
+    let stderr = stderr_task
+        .await
+        .unwrap_or_else(|error| format!("stderr reader failed: {error}"));
+    let diagnostic = format!("{stdout}\n{stderr}");
+    if !status.success() {
+        cleanup_partial(partial_path);
+        return Err(FormatWrightError::new(
+            ErrorCode::ExecutionFailed,
+            Stage::Execute,
+            format!("The browser print engine exited with status {status}"),
+            "Inspect the diagnostic and verify the HTML/SVG document.",
+        )
+        .with_diagnostic(diagnostic));
+    }
+    let output_appeared = wait_for_regular_file(
+        &staged_pdf,
+        &cancellation,
+        std::time::Duration::from_secs(30),
+    )
+    .await;
+    if cancellation.is_cancelled() {
+        cleanup_partial(partial_path);
+        return Err(FormatWrightError::new(
+            ErrorCode::Cancelled,
+            Stage::Execute,
+            "Browser print was cancelled while waiting for the printed PDF",
+            "Retry when ready.",
+        ));
+    }
+    if !output_appeared {
+        cleanup_partial(partial_path);
+        return Err(FormatWrightError::new(
+            ErrorCode::ExecutionFailed,
+            Stage::Execute,
+            "The browser print engine reported success but produced no PDF",
+            "Inspect the diagnostic and retry.",
+        )
+        .with_diagnostic(diagnostic));
+    }
+    if let Err(error) = observer(ExecutionMilestone::EngineFinished) {
+        cleanup_partial(partial_path);
+        return Err(error);
+    }
+    if cancellation.is_cancelled() {
+        cleanup_partial(partial_path);
+        return Err(FormatWrightError::new(
+            ErrorCode::Cancelled,
+            Stage::Validate,
+            "Browser print was cancelled before validation",
+            "Retry when ready.",
+        ));
+    }
+    if let Err(error) = ensure_input_unchanged(input, Stage::Commit).await {
+        cleanup_partial(partial_path);
+        return Err(error);
+    }
+    let output_probe = match inspect_pdf(&staged_pdf, pdfinfo).await {
+        Ok(probe) => probe,
+        Err(error) => {
+            cleanup_partial(partial_path);
+            return Err(error);
+        }
+    };
+    let rendered_page_count = match render_office_pdf_for_validation(
+        &staged_pdf,
+        &output_probe,
+        validation_step,
+        &render_directory,
+        cancellation.clone(),
+    )
+    .await
+    {
+        Ok(count) => count,
+        Err(error) => {
+            cleanup_partial(partial_path);
+            return Err(error);
+        }
+    };
+    let evidence = match gather_edge_print_evidence(text_step, font_step, &staged_pdf).await {
+        Ok(evidence) => evidence,
+        Err(error) => {
+            cleanup_partial(partial_path);
+            return Err(error);
+        }
+    };
+    let mut report = validate_edge_pdf_output(
+        input,
+        &output_probe,
+        plan,
+        job_id,
+        rendered_page_count,
+        &evidence,
+    );
+    if report.status == ValidationStatus::Fail {
+        cleanup_partial(partial_path);
+        return Err(FormatWrightError::new(
+            ErrorCode::ValidationFailed,
+            Stage::Validate,
+            "Browser-printed PDF failed required validation",
+            "Inspect the validation report and adjust the source.",
+        )
+        .with_diagnostic(serde_json::to_string(&report).unwrap_or_default()));
+    }
+    if output_path.exists() {
+        cleanup_partial(partial_path);
+        return Err(FormatWrightError::new(
+            ErrorCode::OutputConflict,
+            Stage::Commit,
+            "The PDF destination appeared while the browser was printing",
+            "Choose another output path.",
+        ));
+    }
+    if let Err(error) = commit_path_no_replace(&staged_pdf, output_path) {
+        cleanup_partial(partial_path);
+        return Err(error);
+    }
+    if let Err(error) = std::fs::remove_dir_all(partial_path) {
+        tracing::warn!(partial = %partial_path.display(), %error, "committed browser-printed PDF but could not clean workspace");
+    }
+    report.output.display_path = Some(output_path.to_string_lossy().into_owned());
+    Ok(ExecutionResult {
+        output_path: output_path.to_owned(),
+        report,
+    })
+}
+
+async fn gather_edge_print_evidence(
+    text_step: &crate::domain::PlanStep,
+    font_step: &crate::domain::PlanStep,
+    staged_pdf: &Path,
+) -> Result<EdgePrintEvidence> {
+    let extracted_text = extract_pdf_text(&text_step.engine, staged_pdf).await?;
+    let font_table = inspect_pdf_font_table(&font_step.engine, staged_pdf).await?;
+    Ok(EdgePrintEvidence {
+        extracted_text,
+        font_table,
     })
 }
 

@@ -9,6 +9,7 @@ pub mod domain;
 pub mod engine_pack;
 pub mod engine_registry;
 pub use engine_registry::{EngineFallback, EngineRecovery, EngineRegistry, InstalledEngineVersion};
+mod edge_pdf;
 pub mod error;
 pub mod fingerprint;
 pub mod inspect;
@@ -50,6 +51,7 @@ pub use domain::{
     MetadataEntry, NetworkPolicy, Plan, PlanRequest, PlanStep, Probe, ProbeEvidence,
     ReportRedaction, StreamKind, StreamProbe, ValidationCheck, ValidationReport, ValidationStatus,
 };
+pub use edge_pdf::plan_edge_print_to_pdf;
 pub use engine_pack::{
     ENGINE_PROTOCOL_VERSION, VerifiedEnginePack, activate_engine_pack, embedded_release_keyring,
     install_engine_pack, load_release_keyring, verify_engine_pack, verify_engine_pack_with_keyring,

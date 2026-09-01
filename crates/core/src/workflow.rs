@@ -5,6 +5,7 @@ use formatwright_engine_sdk::EngineIdentity;
 use crate::doctor::{inspect_builtin_engine, inspect_engine};
 use crate::document::{inspect_document, plan_markup_to_docx, plan_markup_to_pdf};
 use crate::domain::{Plan, PlanRequest, Probe};
+use crate::edge_pdf::plan_edge_print_to_pdf;
 use crate::error::{ErrorCode, FormatWrightError, Result, Stage};
 use crate::inspect::inspect_media;
 use crate::office::{inspect_office, office_format_hint, plan_office_to_pdf};
@@ -54,8 +55,36 @@ pub async fn prepare_conversion(
     }
     if target == "pdf"
         && let Ok(probe) = inspect_document(input).await
-        && matches!(probe.format.id.as_str(), "markdown" | "html")
+        && matches!(probe.format.id.as_str(), "markdown" | "html" | "svg")
     {
+        if matches!(probe.format.id.as_str(), "html" | "svg") {
+            // The browser lane prints vector PDFs; HTML falls back to the Pandoc
+            // lane when the browser lane is not fully available.
+            let browser_lane = (
+                inspect_engine("msedge").await,
+                inspect_engine("pdfinfo").await,
+                inspect_engine("pdftoppm").await,
+                inspect_engine("pdftotext").await,
+                inspect_engine("pdffonts").await,
+            );
+            if let (Ok(msedge), Ok(pdfinfo), Ok(pdftoppm), Ok(pdftotext), Ok(pdffonts)) =
+                browser_lane
+            {
+                let output = required_output(request, "Browser-print PDF conversion")?;
+                let plan = plan_edge_print_to_pdf(
+                    &probe, output, &msedge, &pdfinfo, &pdftoppm, &pdftotext, &pdffonts,
+                )?;
+                return Ok((probe, plan, pdfinfo));
+            }
+            if probe.format.id == "svg" {
+                return Err(FormatWrightError::new(
+                    ErrorCode::EngineMissing,
+                    Stage::Plan,
+                    "SVG-to-PDF requires the browser print engine lane",
+                    "Install Microsoft Edge and the Poppler utilities, then run doctor again.",
+                ));
+            }
+        }
         let pandoc = inspect_engine("pandoc").await?;
         let soffice = inspect_engine("soffice").await?;
         let pdfinfo = inspect_engine("pdfinfo").await?;

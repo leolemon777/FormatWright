@@ -53,11 +53,13 @@ Minimum exact OS releases must be frozen in ADR-0005 after Tauri, WebView, code-
 | GW-07 | FLAC, WAV, MP3, AAC, M4A, OGG, Opus | Selected audio target | FFmpeg | Experimental on Windows |
 | GW-08 | DOCX, PPTX, XLSX | PDF | LibreOffice + Poppler validation | Experimental on Windows |
 | GW-09 | PDF | PNG, JPG | Poppler pdfinfo/pdftoppm | Experimental on Windows |
-| GW-10 | Markdown, HTML | PDF, DOCX | Pandoc + LibreOffice + Poppler validation | Experimental on Windows |
+| GW-10 | Markdown, HTML | PDF, DOCX | HTML/SVG→PDF: system-discovered Edge print + Poppler vector validation (preferred); Markdown keeps Pandoc + LibreOffice | Experimental on Windows (browser lane: real-fixture end-to-end Pass 2026-08-31; formal sandbox script owed) |
 | GW-11 | CSV, JSON, YAML, XML | CSV, JSON, YAML, XML | Rust native | Experimental on Windows |
 | GW-12 | Supported media/document | Cleaned copy | Type-specific adapter | Experimental media slice on Windows |
 
 Windows Starter Media（FFmpeg）为本机 GW-04/05/06/07 切片提供 Experimental 证据（沙箱 remux、Explorer Convert to MP4 等）。全部行仍非 Certified：干净机 / 全 fixture / 签名包未关闭。
+
+GW-10 的浏览器打印 lane（ADR-0012）：HTML/HTM 与新增 SVG 输入在开发构建下经系统发现的 Edge 无头打印产出矢量 PDF，并用 pdfinfo/pdftoppm/pdftotext/pdffonts 验证（文字层可提取、字体全内嵌）；HTML 保留 Pandoc lane 作为回退，SVG 仅此 lane。Release 构建仍需激活已验证引擎包。
 
 ## 5. MP4 planning baseline
 

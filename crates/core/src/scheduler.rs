@@ -166,6 +166,13 @@ pub fn request_for_plan(job_id: Uuid, plan: &Plan) -> ResourceRequest {
             exclusivity_key = Some("soffice".to_owned());
             break;
         }
+        if step.engine.engine_id == "msedge" {
+            // One isolated browser instance prints at a time, mirroring the
+            // office renderer's serialized profile semantics.
+            class = WorkClass::SerialEngine;
+            exclusivity_key = Some("msedge".to_owned());
+            break;
+        }
         if step.arguments.values().any(|value| {
             let value = value.to_ascii_lowercase();
             ["nvenc", "qsv", "vaapi", "videotoolbox"]

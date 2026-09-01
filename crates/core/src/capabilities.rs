@@ -47,22 +47,23 @@ pub async fn capability_snapshot_for_input(
     policy: EngineDiscoveryPolicy,
 ) -> CapabilitySnapshot {
     let extension = input_extension(input);
-    let mut required_by_target = BTreeMap::new();
+    let mut lanes_by_target = BTreeMap::new();
     let supported_targets = supported_targets(extension.as_deref());
     for target in KNOWN_TARGETS {
-        required_by_target.insert(
+        lanes_by_target.insert(
             target.to_owned(),
             if supported_targets.contains(target) {
-                Some(required_engines(extension.as_deref(), target))
+                Some(route_engine_lanes(extension.as_deref(), target))
             } else {
                 None
             },
         );
     }
 
-    let unique_engines = required_by_target
+    let unique_engines = lanes_by_target
         .values()
         .filter_map(Option::as_ref)
+        .flatten()
         .flatten()
         .cloned()
         .collect::<BTreeSet<_>>();
@@ -75,8 +76,8 @@ pub async fn capability_snapshot_for_input(
     }
 
     let mut routes = BTreeMap::new();
-    for (target, requirements) in required_by_target {
-        let Some(required_engines) = requirements else {
+    for (target, lanes) in lanes_by_target {
+        let Some(lanes) = lanes else {
             routes.insert(
                 target.clone(),
                 RouteAvailability {
@@ -89,12 +90,18 @@ pub async fn capability_snapshot_for_input(
             );
             continue;
         };
-        let missing_engines = required_engines
-            .iter()
-            .filter(|engine| !available_engines.get(*engine).copied().unwrap_or(false))
-            .cloned()
-            .collect::<Vec<_>>();
-        let available = missing_engines.is_empty();
+        let lane_missing = |lane: &[String]| {
+            lane.iter()
+                .filter(|engine| !available_engines.get(*engine).copied().unwrap_or(false))
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        let preferred = lanes.first().cloned().unwrap_or_default();
+        let selected_lane = lanes.iter().find(|lane| lane_missing(lane).is_empty());
+        let (required_engines, missing_engines, available) = match selected_lane {
+            Some(lane) => (lane.clone(), Vec::new(), true),
+            None => (preferred.clone(), lane_missing(&preferred), false),
+        };
         let message = if available {
             if required_engines.is_empty() {
                 "Available through the built-in structured engine.".to_owned()
@@ -172,7 +179,7 @@ fn supported_targets(input: Option<&str>) -> BTreeSet<&'static str> {
     let values: &[&str] = match input.unwrap_or_default() {
         "csv" | "json" | "yaml" | "yml" | "xml" => &["csv", "json", "yaml", "xml"],
         "pdf" | "heic" | "heif" => &["jpg", "png"],
-        "docx" | "pptx" | "xlsx" => &["pdf"],
+        "docx" | "pptx" | "xlsx" | "svg" => &["pdf"],
         "md" | "markdown" | "html" | "htm" => &["pdf", "docx"],
         "png" | "jpg" | "jpeg" => &["webp", "avif"],
         "mov" | "mkv" | "avi" | "webm" | "mp4" => &["mp4", "gif", "mp3"],
@@ -180,6 +187,27 @@ fn supported_targets(input: Option<&str>) -> BTreeSet<&'static str> {
         _ => &[],
     };
     values.iter().copied().collect()
+}
+
+/// Returns the ordered engine lanes that can serve one route. The first fully
+/// available lane wins; later lanes are fallbacks.
+fn route_engine_lanes(input: Option<&str>, target: &str) -> Vec<Vec<String>> {
+    let target = normalize_target(target);
+    let input = input.unwrap_or_default();
+    if input == "svg" && target == "pdf" {
+        return vec![browser_print_lane()];
+    }
+    if matches!(input, "html" | "htm") && target == "pdf" {
+        return vec![
+            browser_print_lane(),
+            engine_names(&["pandoc", "soffice", "pdfinfo", "pdftoppm"]),
+        ];
+    }
+    vec![required_engines(Some(input), &target)]
+}
+
+fn browser_print_lane() -> Vec<String> {
+    engine_names(&["msedge", "pdfinfo", "pdftoppm", "pdftotext", "pdffonts"])
 }
 
 fn required_engines(input: Option<&str>, target: &str) -> Vec<String> {
@@ -199,7 +227,10 @@ fn required_engines(input: Option<&str>, target: &str) -> Vec<String> {
     if matches!(input, "md" | "markdown" | "html" | "htm") && target == "docx" {
         return engine_names(&["pandoc"]);
     }
-    if matches!(input, "md" | "markdown" | "html" | "htm") && target == "pdf" {
+    if matches!(input, "html" | "htm" | "svg") && target == "pdf" {
+        return browser_print_lane();
+    }
+    if matches!(input, "md" | "markdown") && target == "pdf" {
         return engine_names(&["pandoc", "soffice", "pdfinfo", "pdftoppm"]);
     }
     if matches!(input, "heic" | "heif") && matches!(target.as_str(), "jpg" | "png") {
@@ -238,7 +269,7 @@ mod tests {
 
     use super::{
         CapabilitySnapshot, RouteAvailability, ensure_route_available, required_engines,
-        supported_targets,
+        route_engine_lanes, supported_targets,
     };
     use crate::{EngineDiscoveryPolicy, ErrorCode};
 
@@ -258,6 +289,60 @@ mod tests {
     fn structured_routes_are_builtin() {
         assert!(required_engines(Some("json"), "yaml").is_empty());
         assert!(required_engines(Some("csv"), "xml").is_empty());
+    }
+
+    #[test]
+    fn html_pdf_prefers_the_browser_print_lane_with_a_pandoc_fallback() {
+        let lanes = route_engine_lanes(Some("html"), "pdf");
+        assert_eq!(
+            lanes[0],
+            ["msedge", "pdfinfo", "pdftoppm", "pdftotext", "pdffonts"]
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            lanes[1],
+            ["pandoc", "soffice", "pdfinfo", "pdftoppm"]
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+            "the Pandoc lane remains a fallback for HTML"
+        );
+        assert_eq!(
+            required_engines(Some("htm"), "pdf"),
+            lanes[0],
+            "required_engines reports the preferred lane"
+        );
+    }
+
+    #[test]
+    fn svg_pdf_requires_the_browser_print_lane() {
+        let lanes = route_engine_lanes(Some("svg"), "pdf");
+        assert_eq!(lanes.len(), 1, "SVG has no fallback lane");
+        assert_eq!(
+            lanes[0],
+            ["msedge", "pdfinfo", "pdftoppm", "pdftotext", "pdffonts"]
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        );
+        let targets = supported_targets(Some("svg"));
+        assert!(targets.contains("pdf"));
+        assert!(!targets.contains("docx"));
+    }
+
+    #[test]
+    fn markdown_pdf_keeps_the_pandoc_lane() {
+        let lanes = route_engine_lanes(Some("md"), "pdf");
+        assert_eq!(lanes.len(), 1);
+        assert_eq!(
+            lanes[0],
+            ["pandoc", "soffice", "pdfinfo", "pdftoppm"]
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]

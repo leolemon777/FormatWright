@@ -17,6 +17,7 @@ FormatWright keeps engines outside the Apache-2.0 application package unless a r
 | qpdf | Structural PDF inspect, repair, merge, split | Current qpdf is Apache-2.0; embedded zlib/JPEG and optional crypto providers have separate notices | Preferred default structural PDF candidate after dependency/SBOM review | qpdf NOTICE/LICENSE, crypto-provider selection, embedded dependency notices, signed upstream release verification, hashes |
 | PDFium | PDF rendering and visual validation | BSD-style core with a substantial third-party dependency notice set | Dedicated rendering pack only; pin a source revision and generate a complete third-party notice from the actual GN target | Source revision, GN args, generated third-party notice, sandbox evidence, binary/shared-library hashes, SBOM |
 | Ghostscript | Possible PDF/PostScript fallback | License choice requires a separate AGPL/commercial decision | Excluded from the default v0.1 pack | Explicit legal decision before any adapter or distribution work |
+| Microsoft Edge (`msedge`) | HTML/SVG → vector PDF print engine (GW-10 browser lane, ADR-0012) | Proprietary Microsoft software terms; redistribution not permitted | System discovery only (pack override / env / PATH / canonical install locations); never bundled; `unverified` identity, no version-probe subprocess | ADR-0012; a signed redistributable Chromium-family pack would be required before any release-build activation |
 
 Primary references:
 

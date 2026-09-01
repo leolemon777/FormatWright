@@ -66,6 +66,9 @@ pub async fn doctor_with_policy(policy: EngineDiscoveryPolicy) -> DoctorReport {
         "soffice",
         "pdftoppm",
         "pdfinfo",
+        "pdftotext",
+        "pdffonts",
+        "msedge",
         "qpdf",
     ] {
         let health = match inspect_engine_with_policy(executable, policy).await {
@@ -133,46 +136,51 @@ pub async fn inspect_engine_with_policy(
         )
     })?;
 
-    let version_argument = match executable {
-        "ffmpeg" | "ffprobe" => "-version",
-        "pdftoppm" | "pdfinfo" => "-v",
-        _ => "--version",
-    };
-    let output = Command::new(&path)
-        .arg(version_argument)
-        .output()
-        .await
-        .map_err(|error| {
-            FormatWrightError::new(
+    // Windows GUI-subsystem builds of Edge print nothing for `--version`, so the
+    // browser is never probed through a subprocess; its identity is derived from
+    // the installation layout instead.
+    let version = if executable == "msedge" {
+        installed_browser_version(&path).await?
+    } else {
+        let version_argument = match executable {
+            "ffmpeg" | "ffprobe" => "-version",
+            "pdftoppm" | "pdfinfo" | "pdftotext" | "pdffonts" => "-v",
+            _ => "--version",
+        };
+        let output = Command::new(&path)
+            .arg(version_argument)
+            .output()
+            .await
+            .map_err(|error| {
+                FormatWrightError::new(
+                    ErrorCode::EngineIncompatible,
+                    Stage::Doctor,
+                    format!("Unable to start engine: {}", path.display()),
+                    "Check that the executable matches this operating system and architecture.",
+                )
+                .with_diagnostic(error.to_string())
+            })?;
+        if !output.status.success() {
+            return Err(FormatWrightError::new(
                 ErrorCode::EngineIncompatible,
                 Stage::Doctor,
-                format!("Unable to start engine: {}", path.display()),
-                "Check that the executable matches this operating system and architecture.",
+                format!("Engine version check failed: {}", path.display()),
+                "Install a supported engine build.",
             )
-            .with_diagnostic(error.to_string())
-        })?;
-    if !output.status.success() {
-        return Err(FormatWrightError::new(
-            ErrorCode::EngineIncompatible,
-            Stage::Doctor,
-            format!("Engine version check failed: {}", path.display()),
-            "Install a supported engine build.",
-        )
-        .with_diagnostic(bounded_text(&output.stderr)));
-    }
-
-    let version_bytes = if output.stdout.is_empty() {
-        &output.stderr
-    } else {
-        &output.stdout
+            .with_diagnostic(bounded_text(&output.stderr)));
+        }
+        let version_bytes = if output.stdout.is_empty() {
+            &output.stderr
+        } else {
+            &output.stdout
+        };
+        String::from_utf8_lossy(version_bytes)
+            .lines()
+            .next()
+            .unwrap_or("unknown")
+            .trim()
+            .to_owned()
     };
-    let version_text = String::from_utf8_lossy(version_bytes);
-    let version = version_text
-        .lines()
-        .next()
-        .unwrap_or("unknown")
-        .trim()
-        .to_owned();
     let path_for_hash = path.clone();
     let binary_sha256 = tokio::task::spawn_blocking(move || sha256_file(&path_for_hash))
         .await
@@ -212,8 +220,99 @@ fn resolve_engine_path(
     choose_engine_path(
         registered_engine_path(executable),
         policy,
-        configured_engine_path(executable).or_else(|| find_executable(executable)),
+        configured_engine_path(executable)
+            .or_else(|| find_executable(executable))
+            .or_else(|| known_install_location(executable)),
     )
+}
+
+/// Returns the canonical install location of the system browser engine.
+///
+/// Only the engine names with a well-known vendor layout participate; every
+/// other executable keeps relying on packs, environment overrides, or PATH.
+fn known_install_location(executable: &str) -> Option<PathBuf> {
+    if executable != "msedge" {
+        return None;
+    }
+
+    #[cfg(windows)]
+    {
+        let mut candidates = Vec::new();
+        for variable in ["ProgramFiles(x86)", "ProgramFiles"] {
+            if let Some(directory) = env::var_os(variable) {
+                candidates
+                    .push(PathBuf::from(directory).join(r"Microsoft\Edge\Application\msedge.exe"));
+            }
+        }
+        candidates.into_iter().find(|path| is_executable_file(path))
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        ["/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"]
+            .iter()
+            .map(PathBuf::from)
+            .find(|path| is_executable_file(path))
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        [
+            "/usr/bin/microsoft-edge",
+            "/usr/bin/microsoft-edge-stable",
+            "/opt/microsoft/edge/microsoft-edge",
+        ]
+        .iter()
+        .map(PathBuf::from)
+        .find(|path| is_executable_file(path))
+    }
+}
+
+/// Derives the Edge version from the versioned directory the installer keeps
+/// beside the executable, without launching the browser.
+///
+/// # Errors
+///
+/// Returns an internal error when the version-directory worker fails.
+async fn installed_browser_version(path: &Path) -> Result<String> {
+    let owned = path.to_owned();
+    let version = tokio::task::spawn_blocking(move || {
+        let Some(parent) = owned.parent() else {
+            return Ok::<Option<String>, FormatWrightError>(None);
+        };
+        let best = std::fs::read_dir(parent)
+            .ok()
+            .into_iter()
+            .flatten()
+            .filter_map(std::result::Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter_map(|name| version_directory_key(&name).map(|key| (key, name)))
+            .max_by(|(left, _), (right, _)| left.cmp(right))
+            .map(|(_, name)| name);
+        Ok::<Option<String>, FormatWrightError>(best)
+    })
+    .await
+    .map_err(|error| {
+        FormatWrightError::new(
+            ErrorCode::Internal,
+            Stage::Doctor,
+            "Browser version worker failed",
+            "Retry doctor.",
+        )
+        .with_diagnostic(error.to_string())
+    })??;
+    Ok(version.unwrap_or_else(|| "unknown".to_owned()))
+}
+
+fn version_directory_key(name: &str) -> Option<(u64, u64, u64, u64)> {
+    let mut parts = name.split('.');
+    let quad = (
+        parts.next()?.parse().ok()?,
+        parts.next()?.parse().ok()?,
+        parts.next()?.parse().ok()?,
+        parts.next()?.parse().ok()?,
+    );
+    parts.next().is_none().then_some(quad)
 }
 
 fn choose_engine_path(
@@ -500,9 +599,26 @@ mod tests {
 
     use super::{
         EngineDiscoveryPolicy, RegisteredEnginePath, choose_engine_path, find_executable,
-        inspect_engine_with_policy, resolve_engine_path,
+        inspect_engine_with_policy, known_install_location, resolve_engine_path,
+        version_directory_key,
     };
     use formatwright_engine_sdk::SupplyChainReviewStatus;
+
+    #[test]
+    fn known_install_locations_cover_only_the_browser_engine() {
+        assert!(known_install_location("ffmpeg").is_none());
+        assert!(known_install_location("soffice").is_none());
+    }
+
+    #[test]
+    fn version_directory_keys_accept_only_four_numeric_segments() {
+        assert_eq!(
+            version_directory_key("138.0.3351.95"),
+            Some((138, 0, 3351, 95))
+        );
+        assert_eq!(version_directory_key("138.0.3351.95.beta"), None);
+        assert_eq!(version_directory_key("Application"), None);
+    }
 
     #[test]
     fn finds_current_test_executable_by_explicit_path() {

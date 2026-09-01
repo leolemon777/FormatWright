@@ -1,6 +1,39 @@
 # Implementation Notes
 
-## Current milestone — Chicago 95 desktop chrome (2026-08-18)
+## Current milestone — Browser print engine lane: HTML/SVG → vector PDF (2026-08-31)
+
+### Spec Interpretation
+- GW-10 names "Pandoc；PDF 引擎可选" for Markdown/HTML → PDF. This milestone fills that open PDF-engine slot with a system-discovered headless Edge print adapter and adds SVG as a new document input, per ADR-0012.
+- "可编辑矢量 PDF" is a *validated* product claim, not a marketing one: independent Poppler utilities must prove the text layer and font embedding before commit.
+
+### Decisions Made
+- Engine id `msedge`, resolved pack > `FORMATWRIGHT_ENGINE_MSEDGE` > PATH > canonical vendor install locations (`doctor.rs::known_install_location`), the latter three under `Development` policy only. Doctor never launches the browser: version comes from the versioned install directory on Windows, else `unknown`.
+- Routing gained a lane concept (`capabilities.rs::route_engine_lanes`): HTML→PDF prefers the browser lane `[msedge, pdfinfo, pdftoppm, pdftotext, pdffonts]` and falls back to the existing Pandoc lane; SVG→PDF is browser-lane only; Markdown→PDF is unchanged. Route availability is satisfied when *any* lane is fully available.
+- Plan (`edge_pdf.rs::plan_edge_print_to_pdf`): 5 steps — Edge vector print (`LossClass::None`), pdfinfo structural, pdftoppm render, pdftotext text-layer, pdffonts embedding — with `text_must_remain_extractable` as a plan constraint.
+- Execution (`runner.rs::execute_edge_print_plan`): staged workspace with isolated `--user-data-dir`, `--host-resolver-rules=MAP * ~NOTFOUND` as network-deny reinforcement, 180 s print timeout + process-tree termination, `office_staged_work_path` staging, no-clobber commit, scheduler treats `msedge` as `SerialEngine`.
+- Validation (`validate_edge_pdf_output`): required `EDGE_PDF_OPENS / PAGE_COUNT / PAGE_SIZES / ALL_PAGES_RENDER / TEXT_EXTRACTABLE / FONTS_EMBEDDED`; non-required Warning `EDGE_PDF_TEXT_FIDELITY` (extracted-vs-input character ratio; extraction loses hyphenation/ligatures so it never blocks).
+- SVG inspection: prefix/`<?xml`+`<svg` detection, `image/svg+xml`, any raster `<image>` denied under deny-all (breaks the vector promise), text extracted via the XML reader like HTML.
+- `pdffonts` embedding parsed from the right (fixed `emb sub uni object ID` tail); font name from the first token because variable-width `type` values make an exact left split unreliable.
+
+### Changes From Spec
+- No manifest template for Edge: `engines/manifests/templates` is for reviewable shipped packs, and Edge cannot be redistributed. Instead: `engines/README.md` inventory row + ADR-0012, mirroring the LibreOffice discovery posture.
+- Desktop UI/CLI surfaces unchanged: no new target id (`pdf` exists), capability snapshot picks up the lane automatically; no `PlanRequest` field added, so plan/JSON schemas are untouched.
+
+### Verification
+- `cargo check -p formatwright-core --locked` ✓; `cargo clippy -p formatwright-core --all-targets` zero warnings ✓; `cargo fmt --check` clean for every touched file ✓; `cargo test -p formatwright-core --lib` 181 passed (4 pre-existing failures: symlink-privilege `os error 1314` tests in `job_store`/`application`, reproduced independent of this branch) ✓; schema contract suite 9/9 ✓; `scripts/check_repository.py` reports only the pre-existing `capabilities/main.json` allowlist error (present on `main`).
+- **End-to-end sandbox evidence (2026-08-31, dev build, Windows)**: `formatwright convert carton.html --to pdf` — a real 291-line HTML/SVG carton-drawing fixture — routed to the browser lane (doctor resolved `msedge` 152.0.4191.53 via canonical install location, Poppler 26.02.0 via PATH), completed in ~10 s with `validation: Pass`. Independent re-inspection of the committed PDF: 1 page at 420×293 mm, 0 raster image objects, 5 embedded font subsets (Arial/Arial-Bold/MicrosoftYaHei±Bold/SimSun), 789 extractable characters including the watermark, barcode digits, and the Chinese company name. The plan hash and every required validator (`EDGE_PDF_OPENS/PAGE_COUNT/PAGE_SIZES/ALL_PAGES_RENDER/TEXT_EXTRACTABLE/FONTS_EMBEDDED`) passed before commit.
+- Build environment note: this machine's MSVC 14.51 install lacks the CRT headers; compilation required `LIB`/`INCLUDE` for onecore libs + SDK 10.0.22621.0 (plus the bundled vc15 headers from `SDK/ScopeCppSDK` for `libsqlite3-sys`'s C build — a machine-specific workaround, not a repo change).
+
+### Bug fixed en route (pre-existing, main)
+- `document.rs::html_text` ran quick-xml with default `check_end_names`, so any real-world HTML containing void elements (`<meta>`, `<br>`, `<img>`) failed inspection with "Malformed HTML", silently fell through to the ffprobe media branch, and reported "ffprobe could not recognize or open the input". Discovered when the carton fixture (contains `<meta charset="UTF-8">`) misrouted while minimal fixtures passed. Fixed by disabling `check_end_names` for the HTML extractor only (DOCX keeps strict XML matching); regression test `html_with_void_elements_is_still_inspectable` added. This also un-breaks GW-10's existing Pandoc lane for ordinary HTML.
+
+### Risks / Follow-up
+- Formal sandbox artifacts (`scripts/test_*_sandbox.ps1` + `docs/testing/*_SANDBOX.md` with a committed fixture and pinned engine identities) still owed before the matrix row drops its evidence caveat; the manual end-to-end run above is the interim evidence.
+- Edge print fidelity across browser versions is environment-dependent by design (plan hash embeds engine identity); golden fixtures must pin a browser version or tolerate substitution warnings.
+- `--headless=new` requires Edge ≥ 108 (2022); older LTS images may need the legacy `--headless` fallback — decide when a real corpus machine fails.
+- `known_install_location` currently special-cases only `msedge`; generalize if another canonical-layout engine (e.g. Chrome, WebView2 runtime) joins the inventory.
+
+## Previous milestone — Chicago 95 desktop chrome (2026-08-18)
 
 ### Spec Interpretation
 - User asked to restyle the entire desktop UI from `plastic-fly-44-2a81bc35` (Chicago 95). Product behavior stays: Plan, queue, Explorer convert, no new formats.

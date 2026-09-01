@@ -57,6 +57,7 @@ pub async fn inspect_document(path: impl AsRef<Path>) -> Result<Probe> {
                 match format {
                     "markdown" => "text/markdown",
                     "html" => "text/html",
+                    "svg" => "image/svg+xml",
                     "docx" => {
                         "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                     }
@@ -409,6 +410,9 @@ fn document_format_hint(path: &Path) -> Result<&'static str> {
     if trimmed.starts_with("<!doctype html") || trimmed.starts_with("<html") {
         return Ok("html");
     }
+    if trimmed.starts_with("<svg") || (trimmed.starts_with("<?xml") && trimmed.contains("<svg")) {
+        return Ok("svg");
+    }
     match path
         .extension()
         .and_then(|value| value.to_str())
@@ -417,6 +421,7 @@ fn document_format_hint(path: &Path) -> Result<&'static str> {
     {
         Some("md" | "markdown") => Ok("markdown"),
         Some("html" | "htm") => Ok("html"),
+        Some("svg") => Ok("svg"),
         Some("docx") => Ok("docx"),
         _ => Err(unsupported("Document format is not recognized")),
     }
@@ -440,7 +445,7 @@ fn inspect_document_properties(path: &Path, format: &str) -> Result<BTreeMap<Str
     let text = std::fs::read_to_string(path)
         .map_err(|error| input_error("Markup must be valid UTF-8", error))?;
     let has_external_resource = detects_external_resource(&text, format);
-    let visible = if format == "html" {
+    let visible = if matches!(format, "html" | "svg") {
         html_text(&text)?
     } else {
         text
@@ -503,6 +508,9 @@ fn inspect_docx_properties(path: &Path) -> Result<BTreeMap<String, Value>> {
 fn html_text(source: &str) -> Result<String> {
     let mut reader = Reader::from_str(source);
     reader.config_mut().trim_text(false);
+    // HTML void elements (`<meta>`, `<br>`, `<img>`) never close, so XML-style
+    // end-name matching would reject every real-world HTML head as malformed.
+    reader.config_mut().check_end_names = false;
     let mut output = String::new();
     loop {
         match reader.read_event() {
@@ -563,7 +571,7 @@ fn properties_for_text(text: &str, docx: bool) -> BTreeMap<String, Value> {
     ])
 }
 
-fn normalized_tokens(text: &str) -> String {
+pub(crate) fn normalized_tokens(text: &str) -> String {
     let mut normalized = String::new();
     let mut pending_space = false;
     for character in text.chars() {
@@ -584,6 +592,11 @@ fn detects_external_resource(source: &str, format: &str) -> bool {
     let lowered = source.to_ascii_lowercase();
     if format == "markdown" {
         return lowered.contains("![") && lowered.contains("](");
+    }
+    if format == "svg" {
+        // Any raster `<image>` placement breaks the vector-output promise, so it
+        // is denied together with external links under the deny-all policy.
+        return lowered.contains("<image");
     }
     lowered.contains("<img") && lowered.contains("src=")
 }
@@ -661,4 +674,73 @@ fn worker_error(error: tokio::task::JoinError) -> FormatWrightError {
         "Retry the operation.",
     )
     .with_diagnostic(error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use tempfile::tempdir;
+
+    use super::{detects_external_resource, inspect_document};
+
+    #[tokio::test]
+    async fn svg_documents_are_detected_by_prefix_and_extension() {
+        let directory = tempdir().expect("temporary directory");
+        let inline = directory.path().join("drawing.svg");
+        fs::write(&inline, "<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>")
+            .expect("write inline SVG");
+        let probe = inspect_document(&inline)
+            .await
+            .expect("inline SVG inspection");
+        assert_eq!(probe.format.id, "svg");
+        assert_eq!(probe.format.mime_type.as_deref(), Some("image/svg+xml"));
+
+        let declared = directory.path().join("declared.svg");
+        fs::write(
+            &declared,
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<svg xmlns=\"http://www.w3.org/2000/svg\">\
+             <text>Hello 123</text></svg>",
+        )
+        .expect("write XML-declared SVG");
+        let probe = inspect_document(&declared)
+            .await
+            .expect("XML-declared SVG inspection");
+        assert_eq!(probe.format.id, "svg");
+        assert!(
+            probe.streams[0].properties.contains_key("text_characters"),
+            "SVG text content is inspected"
+        );
+    }
+
+    #[test]
+    fn svg_raster_images_are_denied_but_plain_svg_text_is_not() {
+        assert!(detects_external_resource(
+            "<svg xmlns=\"a\"><image href=\"photo.png\"/></svg>",
+            "svg"
+        ));
+        assert!(!detects_external_resource(
+            "<svg xmlns=\"a\"><rect width=\"4\" height=\"4\"/><text>ELECTRIC</text></svg>",
+            "svg"
+        ));
+    }
+
+    #[tokio::test]
+    async fn html_with_void_elements_is_still_inspectable() {
+        // Real-world HTML heads carry void elements (`<meta>`) that never
+        // close; the text extractor must tolerate them.
+        let directory = tempdir().expect("temporary directory");
+        let input = directory.path().join("page.html");
+        fs::write(
+            &input,
+            "<!DOCTYPE html>\n<html lang=\"zh-CN\">\n<head>\n<meta charset=\"UTF-8\">\n\
+             <title>Carton 440</title>\n</head>\n<body><p>ELECTRIC 440010147700</p></body>\n</html>\n",
+        )
+        .expect("write HTML fixture");
+        let probe = inspect_document(&input)
+            .await
+            .expect("HTML with a void <meta> must inspect");
+        assert_eq!(probe.format.id, "html");
+        assert!(probe.streams[0].properties.contains_key("text_characters"));
+    }
 }
