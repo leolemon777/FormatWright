@@ -48,7 +48,29 @@ pub fn pdf_format_hint(path: impl AsRef<Path>) -> Result<bool> {
 /// Returns a typed input, policy, resource, or engine error for malformed,
 /// encrypted, oversized-page-count, or uninspectable PDFs.
 pub async fn inspect_pdf(path: impl AsRef<Path>, pdfinfo: &EngineIdentity) -> Result<Probe> {
-    let path = path.as_ref();
+    inspect_pdf_inner(path.as_ref(), pdfinfo, None).await
+}
+
+/// Inspects a password-protected PDF by passing `-upw` to pdfinfo. Used by
+/// `pdf-decrypt` planning, where the encrypted container is the operation
+/// input; a wrong password surfaces as a pdfinfo failure.
+///
+/// # Errors
+///
+/// Same as [`inspect_pdf`], plus an input error for a wrong password.
+pub async fn inspect_pdf_unlocked(
+    path: impl AsRef<Path>,
+    pdfinfo: &EngineIdentity,
+    password: &str,
+) -> Result<Probe> {
+    inspect_pdf_inner(path.as_ref(), pdfinfo, Some(password)).await
+}
+
+async fn inspect_pdf_inner(
+    path: &Path,
+    pdfinfo: &EngineIdentity,
+    password: Option<&str>,
+) -> Result<Probe> {
     if pdfinfo.engine_id != "pdfinfo" {
         return Err(FormatWrightError::new(
             ErrorCode::EngineIncompatible,
@@ -66,7 +88,11 @@ pub async fn inspect_pdf(path: impl AsRef<Path>, pdfinfo: &EngineIdentity) -> Re
         ));
     }
     let artifact = identify_artifact(path).await?;
-    let summary = run_pdfinfo(pdfinfo, &["-enc", "UTF-8"], &artifact.canonical_path).await?;
+    let unlocked_summary_args: Vec<&str> = match password {
+        Some(password) => vec!["-upw", password, "-enc", "UTF-8"],
+        None => vec!["-enc", "UTF-8"],
+    };
+    let summary = run_pdfinfo(pdfinfo, &unlocked_summary_args, &artifact.canonical_path).await?;
     let page_count = parse_u32_field(&summary, "Pages").ok_or_else(|| {
         incompatible_pdfinfo("pdfinfo did not report a valid page count", &summary)
     })?;
@@ -81,8 +107,9 @@ pub async fn inspect_pdf(path: impl AsRef<Path>, pdfinfo: &EngineIdentity) -> Re
             "Split the PDF into smaller documents and retry.",
         ));
     }
-    if parse_field(&summary, "Encrypted")
-        .is_some_and(|value| value.to_ascii_lowercase().starts_with("yes"))
+    if password.is_none()
+        && parse_field(&summary, "Encrypted")
+            .is_some_and(|value| value.to_ascii_lowercase().starts_with("yes"))
     {
         return Err(FormatWrightError::new(
             ErrorCode::PolicyBlocked,
@@ -92,21 +119,33 @@ pub async fn inspect_pdf(path: impl AsRef<Path>, pdfinfo: &EngineIdentity) -> Re
         ));
     }
 
-    let details = run_pdfinfo(
-        pdfinfo,
-        &[
-            "-box",
-            "-f",
-            "1",
-            "-l",
-            &page_count.to_string(),
-            "-enc",
-            "UTF-8",
-        ],
-        &artifact.canonical_path,
-    )
-    .await?;
-    let pages = parse_page_details(&details, page_count)?;
+    let page_count_argument = page_count.to_string();
+    let mut unlocked_details_args: Vec<&str> = match password {
+        Some(password) => vec!["-upw", password],
+        None => Vec::new(),
+    };
+    unlocked_details_args.extend_from_slice(&[
+        "-box",
+        "-f",
+        "1",
+        "-l",
+        page_count_argument.as_str(),
+        "-enc",
+        "UTF-8",
+    ]);
+    let details = run_pdfinfo(pdfinfo, &unlocked_details_args, &artifact.canonical_path).await?;
+    pdf_probe_from_details(artifact, &details, page_count, &summary, pdfinfo)
+}
+
+/// Assembles the pdfinfo Probe from the measured summary and page details.
+fn pdf_probe_from_details(
+    artifact: crate::domain::ArtifactIdentity,
+    details: &str,
+    page_count: u32,
+    summary: &str,
+    pdfinfo: &EngineIdentity,
+) -> Result<Probe> {
+    let pages = parse_page_details(details, page_count)?;
     let extension = artifact
         .canonical_path
         .extension()
@@ -122,7 +161,7 @@ pub async fn inspect_pdf(path: impl AsRef<Path>, pdfinfo: &EngineIdentity) -> Re
             message: "File content is PDF but the extension is not .pdf".to_owned(),
         }]
     };
-    let version = parse_field(&summary, "PDF version").unwrap_or("unknown");
+    let version = parse_field(summary, "PDF version").unwrap_or("unknown");
     Ok(Probe {
         schema_version: SCHEMA_VERSION,
         artifact,
@@ -1156,7 +1195,7 @@ pub(crate) fn validate_pdf_ops_output(
     expected_pages: u32,
 ) -> ValidationReport {
     let observed_pages = output.streams.len();
-    let checks = vec![
+    let mut checks = vec![
         ValidationCheck {
             code: "PDF_OPS_OPENS".to_owned(),
             status: ValidationStatus::Pass,
@@ -1180,6 +1219,29 @@ pub(crate) fn validate_pdf_ops_output(
             message: "Measured output page count equals the planned conservation.".to_owned(),
         },
     ];
+    if let Some(step) = plan.steps.first()
+        && step.arguments.get("operation").map(String::as_str) == Some("pdf-compress")
+    {
+        // Report-only: structural recompression can legitimately grow tiny or
+        // already-optimal documents, so a ratio above 1.0 warns but never fails.
+        let input_bytes = input.artifact.size_bytes.max(1);
+        let milliratio: u32 =
+            u32::try_from(output.artifact.size_bytes.saturating_mul(1000) / input_bytes)
+                .unwrap_or(u32::MAX);
+        checks.push(ValidationCheck {
+            code: "PDF_COMPRESSION_RATIO".to_owned(),
+            status: if milliratio <= 1000 {
+                ValidationStatus::Pass
+            } else {
+                ValidationStatus::Warning
+            },
+            required: false,
+            expected: json!("<= 1.0"),
+            observed: json!(f64::from(milliratio) / 1000.0),
+            evidence: "input/output byte sizes".to_owned(),
+            message: "Compressed output bytes divided by input bytes (report-only).".to_owned(),
+        });
+    }
     let report_status = checks.iter().fold(ValidationStatus::Pass, |state, check| {
         state.worst(check.status)
     });
@@ -1213,6 +1275,362 @@ pub(crate) fn validate_pdf_ops_output(
     }
 }
 
+/// Execution-only password hand-off for encrypt/decrypt plans.
+///
+/// The serialized Plan (which the job store persists as `plan_json`) carries a
+/// `[redacted]` placeholder in its step arguments, so the cleartext password
+/// never reaches disk. Instead, the planning process registers the real
+/// password against the freshly generated `plan_id` here, and the runner takes
+/// (and removes) it when the step executes. Consequence: a durably queued
+/// encrypt/decrypt plan replayed after a process restart fails with a clear
+/// "password unavailable" error instead of leaking or stalling; immediate CLI
+/// execution always succeeds because planner and runner share the process.
+fn pdf_secret_store() -> &'static std::sync::Mutex<std::collections::HashMap<Uuid, String>> {
+    static STORE: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<Uuid, String>>> =
+        std::sync::OnceLock::new();
+    STORE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+fn register_pdf_secret(plan_id: Uuid, password: &str) {
+    if let Ok(mut store) = pdf_secret_store().lock() {
+        store.insert(plan_id, password.to_owned());
+    }
+}
+
+/// Removes and returns the execution-only password for a plan, if registered.
+pub(crate) fn take_pdf_secret(plan_id: Uuid) -> Option<String> {
+    pdf_secret_store().lock().ok()?.remove(&plan_id)
+}
+
+fn pdf_operation_plan(
+    capability_id: &str,
+    arguments: BTreeMap<String, String>,
+    probe: &Probe,
+    output_path: PathBuf,
+    qpdf: &EngineIdentity,
+    changes: ChangeSet,
+    validators: Vec<String>,
+) -> Result<Plan> {
+    let step = PlanStep {
+        step_id: "step-1".to_owned(),
+        capability_id: capability_id.to_owned(),
+        engine: qpdf.clone(),
+        operation: Operation::Transform,
+        loss_class: LossClass::None,
+        arguments,
+        estimated_temporary_bytes: Some(probe.artifact.size_bytes.saturating_mul(2)),
+    };
+    let mut plan = Plan {
+        schema_version: SCHEMA_VERSION,
+        plan_id: Uuid::new_v4(),
+        plan_hash: String::new(),
+        input_fingerprint: probe.artifact.fast_fingerprint.clone(),
+        target_format: "pdf".to_owned(),
+        constraints: BTreeMap::from([
+            ("network".to_owned(), json!("deny")),
+            ("external_resources".to_owned(), json!("deny")),
+        ]),
+        steps: vec![step],
+        changes,
+        validators,
+        network_policy: NetworkPolicy::Deny,
+        output_path: Some(output_path),
+        estimated_output_bytes: None,
+    };
+    plan.plan_hash = deterministic_plan_hash(&plan)?;
+    Ok(plan)
+}
+
+fn ensure_pdf_probe(probe: &Probe, operation: &str) -> Result<()> {
+    if probe.format.id != "pdf" {
+        return Err(FormatWrightError::new(
+            ErrorCode::Unsupported,
+            Stage::Plan,
+            format!("PDF {operation} needs a PDF input"),
+            "Retry with a PDF file.",
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_qpdf(qpdf: &EngineIdentity, operation: &str) -> Result<()> {
+    if qpdf.engine_id != "qpdf" {
+        return Err(FormatWrightError::new(
+            ErrorCode::EngineIncompatible,
+            Stage::Plan,
+            format!("The {operation} Plan was given the wrong engine"),
+            "Run doctor and use qpdf.",
+        ));
+    }
+    Ok(())
+}
+
+/// Plans a qpdf page rotation (ADR-0013, G-20). An empty page spec rotates
+/// every page; rotation is lossless and conserves the page count.
+///
+/// # Errors
+///
+/// Returns `InputInvalid` for angles outside 90/180/270 or bad page specs.
+pub fn plan_pdf_rotate(
+    probe: &Probe,
+    angle: u16,
+    page_spec: Option<&str>,
+    output_path: PathBuf,
+    qpdf: &EngineIdentity,
+) -> Result<Plan> {
+    ensure_pdf_probe(probe, "rotation")?;
+    ensure_qpdf(qpdf, "rotation")?;
+    if !matches!(angle, 90 | 180 | 270) {
+        return Err(FormatWrightError::new(
+            ErrorCode::InputInvalid,
+            Stage::Plan,
+            format!("Rotation angle must be 90, 180, or 270; got {angle}"),
+            "Pass --angle with 90, 180, or 270.",
+        ));
+    }
+    let page_count = u32::try_from(probe.streams.len()).unwrap_or(u32::MAX);
+    if let Some(spec) = page_spec {
+        parse_page_range(spec, page_count)?;
+    }
+    let normalized_pages = page_spec.map(normalize_page_range_for_qpdf).transpose()?;
+    let arguments = BTreeMap::from([
+        ("operation".to_owned(), "pdf-rotate".to_owned()),
+        ("angle".to_owned(), angle.to_string()),
+        (
+            "pages".to_owned(),
+            normalized_pages.unwrap_or_default(), // empty means all pages
+        ),
+        ("expected_pages".to_owned(), page_count.to_string()),
+    ]);
+    pdf_operation_plan(
+        "qpdf.pdf-rotate",
+        arguments,
+        probe,
+        output_path,
+        qpdf,
+        ChangeSet {
+            preserved: vec![
+                "every page in document order".to_owned(),
+                "page content streams".to_owned(),
+            ],
+            changed: vec![format!("selected pages rotate by {angle} degrees")],
+            dropped: vec![],
+            unknown: vec!["viewer-dependent rendering of rotated pages".to_owned()],
+        },
+        vec!["pdf-ops.rotate-page-count".to_owned()],
+    )
+}
+
+/// Plans a qpdf structural recompression (ADR-0013, G-21). Page count is
+/// conserved; the acceptance additionally reports the byte ratio as a
+/// non-blocking Warning when the output grows.
+///
+/// # Errors
+///
+/// Returns `Unsupported`/`EngineIncompatible` for non-PDF inputs or engines.
+pub fn plan_pdf_compress(
+    probe: &Probe,
+    output_path: PathBuf,
+    qpdf: &EngineIdentity,
+) -> Result<Plan> {
+    ensure_pdf_probe(probe, "compression")?;
+    ensure_qpdf(qpdf, "compression")?;
+    let page_count = u32::try_from(probe.streams.len()).unwrap_or(u32::MAX);
+    let arguments = BTreeMap::from([
+        ("operation".to_owned(), "pdf-compress".to_owned()),
+        ("expected_pages".to_owned(), page_count.to_string()),
+    ]);
+    pdf_operation_plan(
+        "qpdf.pdf-compress",
+        arguments,
+        probe,
+        output_path,
+        qpdf,
+        ChangeSet {
+            preserved: vec![
+                "every page in document order".to_owned(),
+                "page content".to_owned(),
+            ],
+            changed: vec![
+                "streams are recompressed with maximum Flate".to_owned(),
+                "objects are packed into object streams".to_owned(),
+            ],
+            dropped: vec![],
+            unknown: vec!["exact byte-level reproduction is not certified".to_owned()],
+        },
+        vec![
+            "pdf-ops.compress-page-count".to_owned(),
+            "pdf-ops.compress-ratio".to_owned(),
+        ],
+    )
+}
+
+fn plan_pdf_secret_operation(
+    probe: &Probe,
+    operation: &str,
+    password: Option<&str>,
+    output_path: PathBuf,
+    qpdf: &EngineIdentity,
+    changed: Vec<String>,
+    validator: &str,
+) -> Result<Plan> {
+    ensure_pdf_probe(probe, operation)?;
+    ensure_qpdf(qpdf, operation)?;
+    let password = password.unwrap_or("").trim();
+    if password.is_empty() {
+        return Err(FormatWrightError::new(
+            ErrorCode::InputInvalid,
+            Stage::Plan,
+            format!("PDF {operation} needs a non-empty password"),
+            "Pass --password with the document password.",
+        ));
+    }
+    let page_count = u32::try_from(probe.streams.len()).unwrap_or(u32::MAX);
+    let arguments = BTreeMap::from([
+        ("operation".to_owned(), operation.to_owned()),
+        // Never the cleartext password: Plans serialize into the durable job
+        // store. The real secret travels via the execution-only store keyed by
+        // plan_id; see `pdf_secret_store`.
+        ("password".to_owned(), "[redacted]".to_owned()),
+        ("expected_pages".to_owned(), page_count.to_string()),
+    ]);
+    let plan = pdf_operation_plan(
+        &format!("qpdf.{operation}"),
+        arguments,
+        probe,
+        output_path,
+        qpdf,
+        ChangeSet {
+            preserved: vec!["every page in document order".to_owned()],
+            changed,
+            dropped: vec![],
+            unknown: vec!["document-level metadata is not certified".to_owned()],
+        },
+        vec![validator.to_owned()],
+    )?;
+    register_pdf_secret(plan.plan_id, password);
+    Ok(plan)
+}
+
+/// Plans a qpdf AES-256 encryption (ADR-0013, G-22). The user and owner
+/// passwords are both set to the supplied password with printing allowed and
+/// modification denied.
+///
+/// # Errors
+///
+/// Returns `InputInvalid` for empty passwords, `Unsupported` otherwise.
+pub fn plan_pdf_encrypt(
+    probe: &Probe,
+    password: Option<&str>,
+    output_path: PathBuf,
+    qpdf: &EngineIdentity,
+) -> Result<Plan> {
+    plan_pdf_secret_operation(
+        probe,
+        "pdf-encrypt",
+        password,
+        output_path,
+        qpdf,
+        vec![
+            "the document is encrypted with AES-256".to_owned(),
+            "printing stays allowed; modification is denied".to_owned(),
+        ],
+        "pdf-ops.encrypt-locked",
+    )
+}
+
+/// Plans a qpdf decryption of a password-protected input (ADR-0013, G-22).
+///
+/// # Errors
+///
+/// Returns `InputInvalid` for empty passwords, `Unsupported` otherwise.
+pub fn plan_pdf_decrypt(
+    probe: &Probe,
+    password: Option<&str>,
+    output_path: PathBuf,
+    qpdf: &EngineIdentity,
+) -> Result<Plan> {
+    plan_pdf_secret_operation(
+        probe,
+        "pdf-decrypt",
+        password,
+        output_path,
+        qpdf,
+        vec!["encryption is removed from the document".to_owned()],
+        "pdf-ops.decrypt-page-count",
+    )
+}
+
+/// Validates an encryption output (ADR-0013, G-22). Page-count conservation
+/// cannot be probed: pdfinfo refuses to open the AES-256 output without the
+/// password. That refusal is itself the acceptance evidence — the caller runs
+/// pdfinfo and passes `encrypted = true` when the inspect failed, which proves
+/// the output is password-protected. File existence and qpdf's success exit
+/// were already enforced by the runner before validation.
+pub(crate) fn validate_pdf_encrypt_output(
+    input: &Probe,
+    output_identity: &crate::domain::ArtifactIdentity,
+    plan: &Plan,
+    job_id: Uuid,
+    encrypted: bool,
+) -> ValidationReport {
+    let checks = vec![
+        ValidationCheck {
+            code: "PDF_ENCRYPTED".to_owned(),
+            status: if encrypted {
+                ValidationStatus::Pass
+            } else {
+                ValidationStatus::Fail
+            },
+            required: true,
+            expected: json!(true),
+            observed: json!(encrypted),
+            evidence: "Poppler pdfinfo rejected the output without a password".to_owned(),
+            message: "pdfinfo must fail to open the encrypted output.".to_owned(),
+        },
+        ValidationCheck {
+            code: "PDF_OPS_OUTPUT_EXISTS".to_owned(),
+            status: ValidationStatus::Pass,
+            required: true,
+            expected: json!(true),
+            observed: json!(true),
+            evidence: "post-execution file check".to_owned(),
+            message: "qpdf exited successfully and wrote the output file.".to_owned(),
+        },
+    ];
+    let report_status = checks.iter().fold(ValidationStatus::Pass, |state, check| {
+        state.worst(check.status)
+    });
+    ValidationReport {
+        schema_version: SCHEMA_VERSION,
+        report_id: Uuid::new_v4(),
+        job_id,
+        plan_hash: plan.plan_hash.clone(),
+        status: report_status,
+        input: ArtifactSummary {
+            display_path: Some(input.artifact.display_path.clone()),
+            format_id: input.format.id.clone(),
+            size_bytes: input.artifact.size_bytes,
+            fast_fingerprint: input.artifact.fast_fingerprint.clone(),
+            full_blake3: input.artifact.full_blake3.clone(),
+        },
+        output: ArtifactSummary {
+            display_path: Some(output_identity.display_path.clone()),
+            format_id: "pdf".to_owned(),
+            size_bytes: output_identity.size_bytes,
+            fast_fingerprint: output_identity.fast_fingerprint.clone(),
+            full_blake3: output_identity.full_blake3.clone(),
+        },
+        engines: plan.steps.iter().map(|step| step.engine.clone()).collect(),
+        checks,
+        intentional_changes: plan.changes.changed.clone(),
+        redaction: ReportRedaction {
+            paths_redacted: false,
+            metadata_values_redacted: true,
+        },
+    }
+}
+
 fn normalize_page_range_for_qpdf(range: &str) -> Result<String> {
     let parts: Vec<String> = range
         .split(',')
@@ -1234,7 +1652,8 @@ mod tests {
     use formatwright_engine_sdk::{Certification, EngineIdentity};
 
     use super::{
-        parse_page_details, parse_page_range, plan_pdf_extract, plan_pdf_merge, plan_pdf_render,
+        parse_page_details, parse_page_range, plan_pdf_compress, plan_pdf_decrypt,
+        plan_pdf_encrypt, plan_pdf_extract, plan_pdf_merge, plan_pdf_render, plan_pdf_rotate,
         poppler_raster_dimension,
     };
     use crate::domain::{
@@ -1411,6 +1830,144 @@ mod tests {
         assert!(
             overshoot.is_err(),
             "extraction beyond the last page is rejected"
+        );
+    }
+
+    #[test]
+    fn rotate_plans_conserve_the_page_count() {
+        let plan = plan_pdf_rotate(
+            &probe(),
+            90,
+            Some("1,2"),
+            PathBuf::from("rotated.pdf"),
+            &qpdf_engine(),
+        )
+        .expect("rotate plan");
+        assert_eq!(plan.steps[0].arguments["operation"], "pdf-rotate");
+        assert_eq!(plan.steps[0].arguments["angle"], "90");
+        assert_eq!(plan.steps[0].arguments["pages"], "1,2");
+        assert_eq!(plan.steps[0].arguments["expected_pages"], "2");
+        assert!(
+            plan.validators
+                .iter()
+                .any(|validator| validator == "pdf-ops.rotate-page-count")
+        );
+
+        let all_pages = plan_pdf_rotate(
+            &probe(),
+            180,
+            None,
+            PathBuf::from("rotated.pdf"),
+            &qpdf_engine(),
+        )
+        .expect("rotate-all plan");
+        assert_eq!(all_pages.steps[0].arguments["pages"], "");
+
+        assert!(
+            plan_pdf_rotate(&probe(), 45, None, PathBuf::from("x.pdf"), &qpdf_engine()).is_err(),
+            "non-right angles are rejected"
+        );
+        assert!(
+            plan_pdf_rotate(
+                &probe(),
+                90,
+                Some("1-9"),
+                PathBuf::from("x.pdf"),
+                &qpdf_engine()
+            )
+            .is_err(),
+            "rotation beyond the last page is rejected"
+        );
+        assert!(
+            plan_pdf_rotate(&probe(), 90, None, PathBuf::from("x.pdf"), &engine()).is_err(),
+            "the rotate plan rejects non-qpdf engines"
+        );
+    }
+
+    #[test]
+    fn compress_plans_keep_every_page_and_declare_the_ratio_check() {
+        let plan = plan_pdf_compress(&probe(), PathBuf::from("small.pdf"), &qpdf_engine())
+            .expect("compress plan");
+        assert_eq!(plan.steps[0].arguments["operation"], "pdf-compress");
+        assert_eq!(plan.steps[0].arguments["expected_pages"], "2");
+        assert!(
+            plan.validators
+                .iter()
+                .any(|validator| validator == "pdf-ops.compress-ratio")
+        );
+        assert!(
+            plan_pdf_compress(&probe(), PathBuf::from("x.pdf"), &engine()).is_err(),
+            "the compress plan rejects non-qpdf engines"
+        );
+    }
+
+    #[test]
+    fn encrypt_plans_redact_the_password_and_register_the_secret() {
+        let plan = plan_pdf_encrypt(
+            &probe(),
+            Some("s3cret"),
+            PathBuf::from("locked.pdf"),
+            &qpdf_engine(),
+        )
+        .expect("encrypt plan");
+        assert_eq!(plan.steps[0].arguments["operation"], "pdf-encrypt");
+        assert_eq!(plan.steps[0].arguments["password"], "[redacted]");
+        assert_eq!(plan.steps[0].arguments["expected_pages"], "2");
+        assert!(
+            plan.validators
+                .iter()
+                .any(|validator| validator == "pdf-ops.encrypt-locked")
+        );
+        let serialized = serde_json::to_string(&plan).expect("serialized Plan");
+        assert!(
+            !serialized.contains("s3cret"),
+            "the cleartext password never serializes"
+        );
+        assert_eq!(
+            super::take_pdf_secret(plan.plan_id).as_deref(),
+            Some("s3cret"),
+            "the runner can take the execution-only secret"
+        );
+        assert!(
+            super::take_pdf_secret(plan.plan_id).is_none(),
+            "taking the secret is one-shot"
+        );
+
+        assert!(
+            plan_pdf_encrypt(&probe(), None, PathBuf::from("x.pdf"), &qpdf_engine()).is_err(),
+            "encryption without a password is rejected"
+        );
+        assert!(
+            plan_pdf_encrypt(&probe(), Some("  "), PathBuf::from("x.pdf"), &qpdf_engine()).is_err(),
+            "blank passwords are rejected"
+        );
+    }
+
+    #[test]
+    fn decrypt_plans_redact_the_password_and_conserve_pages() {
+        let plan = plan_pdf_decrypt(
+            &probe(),
+            Some("pw"),
+            PathBuf::from("open.pdf"),
+            &qpdf_engine(),
+        )
+        .expect("decrypt plan");
+        assert_eq!(plan.steps[0].arguments["operation"], "pdf-decrypt");
+        assert_eq!(plan.steps[0].arguments["password"], "[redacted]");
+        assert_eq!(plan.steps[0].arguments["expected_pages"], "2");
+        assert!(
+            plan.validators
+                .iter()
+                .any(|validator| validator == "pdf-ops.decrypt-page-count")
+        );
+        assert_eq!(
+            super::take_pdf_secret(plan.plan_id).as_deref(),
+            Some("pw"),
+            "the decrypt secret is registered for the runner"
+        );
+        assert!(
+            plan_pdf_decrypt(&probe(), None, PathBuf::from("x.pdf"), &qpdf_engine()).is_err(),
+            "decryption without a password is rejected"
         );
     }
 }

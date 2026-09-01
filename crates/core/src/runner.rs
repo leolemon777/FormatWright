@@ -1924,79 +1924,153 @@ where
 }
 
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
-async fn execute_pdf_ops_plan<F>(
+/// Builds the qpdf command line for one ADR-0013 PDF operation step. The
+/// input path goes through `external_process_path` because qpdf rejects
+/// Windows verbatim (`\\?\`) paths.
+fn pdf_ops_command(
+    step: &crate::domain::PlanStep,
     input: &Probe,
+    operation: &str,
+    plan_id: Uuid,
+) -> Result<Command> {
+    let mut command = Command::new(&step.engine.binary_path);
+    match operation {
+        "pdf-merge" => {
+            command.arg("--empty").arg("--pages");
+            let inputs = step
+                .arguments
+                .get("inputs")
+                .ok_or_else(|| invalid_plan_argument("inputs"))?
+                .split(';')
+                .map(PathBuf::from)
+                .collect::<Vec<_>>();
+            if inputs.len() < 2 {
+                return Err(invalid_plan_argument("inputs"));
+            }
+            for input_path in &inputs {
+                command.arg(external_process_path(input_path)).arg("1-z");
+            }
+        }
+        "pdf-extract" => {
+            let range = step
+                .arguments
+                .get("page_range")
+                .ok_or_else(|| invalid_plan_argument("page_range"))?;
+            command
+                .arg("--empty")
+                .arg("--pages")
+                .arg(external_process_path(&input.artifact.canonical_path))
+                .arg(range);
+        }
+        "pdf-rotate" => {
+            let angle = checked_argument(step, "angle", &["90", "180", "270"])?;
+            let pages = step
+                .arguments
+                .get("pages")
+                .map(String::as_str)
+                .unwrap_or_default();
+            let rotation = if pages.is_empty() {
+                format!("--rotate=+{angle}")
+            } else {
+                format!("--rotate=+{angle}:{pages}")
+            };
+            command
+                .arg(external_process_path(&input.artifact.canonical_path))
+                .arg(rotation);
+        }
+        "pdf-compress" => {
+            command
+                .arg(external_process_path(&input.artifact.canonical_path))
+                .arg("--compress-streams=y")
+                .arg("--object-streams=generate")
+                .arg("--recompress-flate")
+                .arg("--compression-level=9");
+        }
+        "pdf-encrypt" | "pdf-decrypt" => {
+            // The Plan stores a `[redacted]` placeholder; the cleartext
+            // password travels through the execution-only in-process store
+            // keyed by plan_id (see pdf::take_pdf_secret), so a serialized
+            // Plan never carries the secret.
+            let password = crate::pdf::take_pdf_secret(plan_id)
+                .ok_or_else(|| invalid_plan_argument("password (unavailable after a restart)"))?;
+            if operation == "pdf-encrypt" {
+                command
+                    .arg(external_process_path(&input.artifact.canonical_path))
+                    .arg("--encrypt")
+                    .arg(&password)
+                    .arg(&password)
+                    .arg("256")
+                    .arg("--print=full")
+                    .arg("--modify=none");
+            } else {
+                command
+                    .arg(format!("--password={password}"))
+                    .arg("--decrypt")
+                    .arg(external_process_path(&input.artifact.canonical_path));
+            }
+        }
+        _ => return Err(invalid_plan_argument("operation")),
+    }
+    Ok(command)
+}
+
+/// Builds the acceptance report for a PDF operation output. Encrypted outputs
+/// cannot be page-probed, so pdfinfo's refusal to open them is the evidence.
+async fn validate_pdf_operation_output(
+    input: &Probe,
+    partial_path: &Path,
     plan: &Plan,
     job_id: Uuid,
-    cancellation: CancellationToken,
-    output_path: &Path,
-    partial_path: &Path,
-    observer: &mut F,
-) -> Result<ExecutionResult>
-where
-    F: FnMut(ExecutionMilestone) -> Result<()>,
-{
-    let step = plan
-        .steps
-        .first()
-        .ok_or_else(|| invalid_plan_argument("PDF operation step"))?;
-    let operation = checked_argument(step, "operation", &["pdf-merge", "pdf-extract"])?;
-    let expected_pages: u32 = step
-        .arguments
-        .get("expected_pages")
-        .and_then(|value| value.parse().ok())
-        .ok_or_else(|| invalid_plan_argument("expected_pages"))?;
-    let mut command = Command::new(&step.engine.binary_path);
-    command.arg("--empty").arg("--pages");
-    if operation == "pdf-merge" {
-        let inputs = step
-            .arguments
-            .get("inputs")
-            .ok_or_else(|| invalid_plan_argument("inputs"))?
-            .split(';')
-            .map(PathBuf::from)
-            .collect::<Vec<_>>();
-        if inputs.len() < 2 {
-            return Err(invalid_plan_argument("inputs"));
-        }
-        for input_path in &inputs {
-            command.arg(external_process_path(input_path)).arg("1-z");
-        }
-    } else {
-        let range = step
-            .arguments
-            .get("page_range")
-            .ok_or_else(|| invalid_plan_argument("page_range"))?;
-        command
-            .arg(external_process_path(&input.artifact.canonical_path))
-            .arg(range);
+    operation: &str,
+    expected_pages: u32,
+    pdfinfo: &formatwright_engine_sdk::EngineIdentity,
+) -> Result<crate::domain::ValidationReport> {
+    if operation == "pdf-encrypt" {
+        // Page-count probing is impossible on an encrypted output: pdfinfo
+        // cannot open it without the password. That very failure is the
+        // acceptance evidence for encryption (see validate_pdf_encrypt_output).
+        let encrypted = crate::pdf::inspect_pdf(partial_path, pdfinfo)
+            .await
+            .is_err();
+        let output_identity = identify_artifact(partial_path).await?;
+        return Ok(crate::pdf::validate_pdf_encrypt_output(
+            input,
+            &output_identity,
+            plan,
+            job_id,
+            encrypted,
+        ));
     }
-    command.arg("--").arg(partial_path);
-    command
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
-    #[cfg(unix)]
-    command.process_group(0);
-    let mut child = command.spawn().map_err(|error| {
-        FormatWrightError::new(
-            ErrorCode::EngineIncompatible,
-            Stage::Execute,
-            "Unable to start qpdf",
-            "Run doctor and verify the qpdf engine.",
-        )
-        .with_diagnostic(error.to_string())
-    })?;
-    let stderr = child
-        .stderr
-        .take()
-        .ok_or_else(|| invalid_plan_argument("qpdf stderr"))?;
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| invalid_plan_argument("qpdf stdout"))?;
-    let stdout_task = tokio::spawn(drain_stream(stdout));
-    let stderr_task = tokio::spawn(read_bounded_tail(stderr, MAX_STDERR_BYTES));
+    let output_probe = crate::pdf::inspect_pdf(partial_path, pdfinfo).await?;
+    Ok(crate::pdf::validate_pdf_ops_output(
+        input,
+        &output_probe,
+        plan,
+        job_id,
+        expected_pages,
+    ))
+}
+
+/// Waits for the qpdf child, enforcing cancellation, stderr capture, and a
+/// successful exit status.
+async fn await_pdf_ops_child(
+    child: &mut tokio::process::Child,
+    cancellation: &CancellationToken,
+    partial_path: &Path,
+) -> Result<()> {
+    let stderr_task = tokio::spawn(read_bounded_tail(
+        child
+            .stderr
+            .take()
+            .ok_or_else(|| invalid_plan_argument("qpdf stderr"))?,
+        MAX_STDERR_BYTES,
+    ));
+    let stdout_task = tokio::spawn(drain_stream(
+        child
+            .stdout
+            .take()
+            .ok_or_else(|| invalid_plan_argument("qpdf stdout"))?,
+    ));
     let status = tokio::select! {
         status = child.wait() => status.map_err(|error| {
             FormatWrightError::new(
@@ -2008,7 +2082,7 @@ where
             .with_diagnostic(error.to_string())
         })?,
         () = cancellation.cancelled() => {
-            terminate_process_tree(&mut child).await;
+            terminate_process_tree(child).await;
             cleanup_partial(partial_path);
             return Err(FormatWrightError::new(
                 ErrorCode::Cancelled,
@@ -2032,6 +2106,60 @@ where
         )
         .with_diagnostic(stderr));
     }
+    Ok(())
+}
+
+async fn execute_pdf_ops_plan<F>(
+    input: &Probe,
+    plan: &Plan,
+    job_id: Uuid,
+    cancellation: CancellationToken,
+    output_path: &Path,
+    partial_path: &Path,
+    observer: &mut F,
+) -> Result<ExecutionResult>
+where
+    F: FnMut(ExecutionMilestone) -> Result<()>,
+{
+    let step = plan
+        .steps
+        .first()
+        .ok_or_else(|| invalid_plan_argument("PDF operation step"))?;
+    let operation = checked_argument(
+        step,
+        "operation",
+        &[
+            "pdf-merge",
+            "pdf-extract",
+            "pdf-rotate",
+            "pdf-compress",
+            "pdf-encrypt",
+            "pdf-decrypt",
+        ],
+    )?;
+    let expected_pages: u32 = step
+        .arguments
+        .get("expected_pages")
+        .and_then(|value| value.parse().ok())
+        .ok_or_else(|| invalid_plan_argument("expected_pages"))?;
+    let mut command = pdf_ops_command(step, input, operation, plan.plan_id)?;
+    command.arg("--").arg(partial_path);
+    command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    #[cfg(unix)]
+    command.process_group(0);
+    let mut child = command.spawn().map_err(|error| {
+        FormatWrightError::new(
+            ErrorCode::EngineIncompatible,
+            Stage::Execute,
+            "Unable to start qpdf",
+            "Run doctor and verify the qpdf engine.",
+        )
+        .with_diagnostic(error.to_string())
+    })?;
+    await_pdf_ops_child(&mut child, &cancellation, partial_path).await?;
     if !partial_path.is_file() {
         cleanup_partial(partial_path);
         return Err(FormatWrightError::new(
@@ -2050,15 +2178,23 @@ where
         return Err(error);
     }
     let pdfinfo = crate::doctor::inspect_engine("pdfinfo").await?;
-    let output_probe = match crate::pdf::inspect_pdf(partial_path, &pdfinfo).await {
-        Ok(probe) => probe,
+    let report = match validate_pdf_operation_output(
+        input,
+        partial_path,
+        plan,
+        job_id,
+        operation,
+        expected_pages,
+        &pdfinfo,
+    )
+    .await
+    {
+        Ok(report) => report,
         Err(error) => {
             cleanup_partial(partial_path);
             return Err(error);
         }
     };
-    let mut report =
-        crate::pdf::validate_pdf_ops_output(input, &output_probe, plan, job_id, expected_pages);
     if report.status == ValidationStatus::Fail {
         cleanup_partial(partial_path);
         return Err(FormatWrightError::new(
@@ -2069,6 +2205,16 @@ where
         )
         .with_diagnostic(serde_json::to_string(&report).unwrap_or_default()));
     }
+    commit_pdf_ops_result(partial_path, output_path, report)
+}
+
+/// Commits a validated PDF operation output without replacing an existing
+/// destination (ADR-0013 commit gate).
+fn commit_pdf_ops_result(
+    partial_path: &Path,
+    output_path: &Path,
+    mut report: crate::domain::ValidationReport,
+) -> Result<ExecutionResult> {
     if output_path.exists() {
         cleanup_partial(partial_path);
         return Err(FormatWrightError::new(

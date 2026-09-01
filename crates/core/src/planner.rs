@@ -1255,6 +1255,8 @@ mod tests {
             operation: None,
             inputs: Vec::new(),
             page_range: None,
+            rotate_angle: None,
+            password: None,
             video_crf: None,
             video_preset: None,
             audio_bitrate_kbps: None,

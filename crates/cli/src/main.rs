@@ -196,7 +196,7 @@ enum Command {
 
         #[arg(
             long,
-            value_name = "pdf-merge|pdf-extract",
+            value_name = "pdf-merge|pdf-extract|pdf-rotate|pdf-compress|pdf-encrypt|pdf-decrypt",
             help = "Run an operation-style PDF workflow (ADR-0013)"
         )]
         operation: Option<String>,
@@ -211,9 +211,23 @@ enum Command {
         #[arg(
             long,
             value_name = "RANGE",
-            help = "Page range for pdf-extract, e.g. 1-3,7"
+            help = "Page range for pdf-extract/pdf-rotate, e.g. 1-3,7"
         )]
         pages: Option<String>,
+
+        #[arg(
+            long,
+            value_name = "90|180|270",
+            help = "Rotation angle for pdf-rotate"
+        )]
+        angle: Option<u16>,
+
+        #[arg(
+            long,
+            value_name = "PW",
+            help = "Password for pdf-encrypt/pdf-decrypt"
+        )]
+        password: Option<String>,
 
         #[arg(long, help = "Print the Plan and do not execute")]
         dry_run: bool,
@@ -644,6 +658,8 @@ async fn run(cli: Cli) -> Result<(), FormatWrightError> {
                 inputs: Vec::new(),
                 page_range: None,
                 allow_lossy_data,
+                rotate_angle: None,
+                password: None,
             };
             let (_, plan, _) = prepare_conversion(&input, &request).await?;
             if cli.json {
@@ -674,6 +690,8 @@ async fn run(cli: Cli) -> Result<(), FormatWrightError> {
             operation,
             merge_input: extra_inputs,
             pages,
+            angle,
+            password,
             dry_run,
             queue_only,
             idempotency_key,
@@ -700,6 +718,8 @@ async fn run(cli: Cli) -> Result<(), FormatWrightError> {
                 inputs: extra_inputs,
                 page_range: pages,
                 allow_lossy_data,
+                rotate_angle: angle,
+                password,
             };
             let (probe, plan, validation_engine) = prepare_conversion(&input, &request).await?;
             if dry_run && queue_only {

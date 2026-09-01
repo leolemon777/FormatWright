@@ -148,6 +148,14 @@ pub struct PlanRequest {
     pub page_range: Option<String>,
     #[serde(default)]
     pub allow_lossy_data: bool,
+    /// Rotation angle in degrees for the `pdf-rotate` operation (90/180/270).
+    #[serde(default)]
+    pub rotate_angle: Option<u16>,
+    /// Password for the `pdf-encrypt`/`pdf-decrypt` operations. The value is
+    /// execution-only: plans carry a `[redacted]` placeholder instead, so this
+    /// field never reaches a serialized Plan or report.
+    #[serde(default)]
+    pub password: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]

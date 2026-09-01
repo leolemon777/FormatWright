@@ -11,7 +11,7 @@ use crate::edge_pdf::plan_edge_print_to_pdf;
 use crate::error::{ErrorCode, FormatWrightError, Result, Stage};
 use crate::inspect::inspect_media;
 use crate::office::{inspect_office, office_format_hint, plan_office_to_pdf};
-use crate::pdf::{inspect_pdf, pdf_format_hint, plan_pdf_render};
+use crate::pdf::{inspect_pdf, inspect_pdf_unlocked, pdf_format_hint, plan_pdf_render};
 use crate::planner::{plan_conversion, plan_heic_conversion};
 use crate::structured::{inspect_structured, plan_structured_conversion};
 
@@ -233,11 +233,61 @@ async fn prepare_pdf_operation(
             let plan = crate::pdf::plan_pdf_extract(&probe, page_range, output, &qpdf)?;
             Ok((probe, plan, qpdf))
         }
+        "pdf-rotate" => {
+            let probe = inspect_pdf(input, &pdfinfo).await?;
+            let angle = request.rotate_angle.ok_or_else(|| {
+                FormatWrightError::new(
+                    ErrorCode::InputInvalid,
+                    Stage::Plan,
+                    "PDF rotation needs an angle",
+                    "Pass --angle with 90, 180, or 270.",
+                )
+            })?;
+            let output = required_output(request, "PDF rotate")?;
+            let plan = crate::pdf::plan_pdf_rotate(
+                &probe,
+                angle,
+                request.page_range.as_deref(),
+                output,
+                &qpdf,
+            )?;
+            Ok((probe, plan, qpdf))
+        }
+        "pdf-compress" => {
+            let probe = inspect_pdf(input, &pdfinfo).await?;
+            let output = required_output(request, "PDF compress")?;
+            let plan = crate::pdf::plan_pdf_compress(&probe, output, &qpdf)?;
+            Ok((probe, plan, qpdf))
+        }
+        "pdf-encrypt" | "pdf-decrypt" => {
+            // An encrypted decrypt-input only opens with `-upw`, so the probe
+            // needs the password; encryption inputs are probed normally.
+            let password = request.password.as_deref().ok_or_else(|| {
+                FormatWrightError::new(
+                    ErrorCode::InputInvalid,
+                    Stage::Plan,
+                    format!("PDF {operation} needs a password"),
+                    "Pass --password with the document password.",
+                )
+            })?;
+            let probe = if operation == "pdf-encrypt" {
+                inspect_pdf(input, &pdfinfo).await?
+            } else {
+                inspect_pdf_unlocked(input, &pdfinfo, password).await?
+            };
+            let output = required_output(request, operation)?;
+            let plan = if operation == "pdf-encrypt" {
+                crate::pdf::plan_pdf_encrypt(&probe, Some(password), output, &qpdf)?
+            } else {
+                crate::pdf::plan_pdf_decrypt(&probe, Some(password), output, &qpdf)?
+            };
+            Ok((probe, plan, qpdf))
+        }
         other => Err(FormatWrightError::new(
             ErrorCode::Unsupported,
             Stage::Plan,
             format!("Unknown operation: {other}"),
-            "Choose pdf-merge or pdf-extract.",
+            "Choose pdf-merge, pdf-extract, pdf-rotate, pdf-compress, pdf-encrypt, or pdf-decrypt.",
         )),
     }
 }
