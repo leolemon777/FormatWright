@@ -46,6 +46,7 @@ pub async fn inspect_document(path: impl AsRef<Path>) -> Result<Probe> {
         extension == format
             || (format == "markdown" && matches!(extension, "md" | "markdown"))
             || (format == "html" && matches!(extension, "html" | "htm"))
+            || (format == "plain" && matches!(extension, "txt" | "text"))
     });
     Ok(Probe {
         schema_version: SCHEMA_VERSION,
@@ -57,6 +58,7 @@ pub async fn inspect_document(path: impl AsRef<Path>) -> Result<Probe> {
                 match format {
                     "markdown" => "text/markdown",
                     "html" => "text/html",
+                    "plain" => "text/plain",
                     "svg" => "image/svg+xml",
                     "epub" => "application/epub+zip",
                     "docx" => {
@@ -121,8 +123,10 @@ pub fn plan_markup_to_docx(
     output_path: std::path::PathBuf,
     pandoc: &EngineIdentity,
 ) -> Result<Plan> {
-    if !matches!(probe.format.id.as_str(), "markdown" | "html") {
-        return Err(unsupported("Pandoc DOCX input must be Markdown or HTML"));
+    if !matches!(probe.format.id.as_str(), "markdown" | "html" | "plain") {
+        return Err(unsupported(
+            "Pandoc DOCX input must be Markdown, HTML, or plain text",
+        ));
     }
     if pandoc.engine_id != "pandoc" {
         return Err(FormatWrightError::new(
@@ -206,8 +210,10 @@ pub fn plan_markup_to_epub(
     output_path: std::path::PathBuf,
     pandoc: &EngineIdentity,
 ) -> Result<Plan> {
-    if !matches!(probe.format.id.as_str(), "markdown" | "html") {
-        return Err(unsupported("Pandoc EPUB input must be Markdown or HTML"));
+    if !matches!(probe.format.id.as_str(), "markdown" | "html" | "plain") {
+        return Err(unsupported(
+            "Pandoc EPUB input must be Markdown, HTML, or plain text",
+        ));
     }
     if pandoc.engine_id != "pandoc" {
         return Err(FormatWrightError::new(
@@ -293,8 +299,10 @@ pub fn plan_markup_to_pdf(
     pdfinfo: &EngineIdentity,
     pdftoppm: &EngineIdentity,
 ) -> Result<Plan> {
-    if !matches!(probe.format.id.as_str(), "markdown" | "html") {
-        return Err(unsupported("Pandoc PDF input must be Markdown or HTML"));
+    if !matches!(probe.format.id.as_str(), "markdown" | "html" | "plain") {
+        return Err(unsupported(
+            "Pandoc PDF input must be Markdown, HTML, or plain text",
+        ));
     }
     if property(probe, "has_external_resource") == json!(true) {
         return Err(FormatWrightError::new(
@@ -597,6 +605,7 @@ fn document_format_hint(path: &Path) -> Result<&'static str> {
         .as_deref()
     {
         Some("md" | "markdown") => Ok("markdown"),
+        Some("txt" | "text") => Ok("plain"),
         Some("html" | "htm") => Ok("html"),
         Some("svg") => Ok("svg"),
         Some("docx") => Ok("docx"),
@@ -992,6 +1001,27 @@ mod tests {
             .expect("HTML with a void <meta> must inspect");
         assert_eq!(probe.format.id, "html");
         assert!(probe.streams[0].properties.contains_key("text_characters"));
+    }
+
+    #[tokio::test]
+    async fn plain_text_files_are_inspected_as_plain_format() {
+        let directory = tempdir().expect("temporary directory");
+        let input = directory.path().join("notes.txt");
+        fs::write(&input, "ELECTRIC 440 notes\nsecond line 12345").expect("write txt fixture");
+        let probe = inspect_document(&input)
+            .await
+            .expect("plain text inspection");
+        assert_eq!(probe.format.id, "plain");
+        assert_eq!(probe.format.mime_type.as_deref(), Some("text/plain"));
+        assert_eq!(probe.format.extension_matches, Some(true));
+        assert!(probe.streams[0].properties.contains_key("text_characters"));
+
+        let uppercase = directory.path().join("NOTES.TEXT");
+        fs::write(&uppercase, "windows uppercase extension").expect("write .TEXT fixture");
+        let probe = inspect_document(&uppercase)
+            .await
+            .expect("uppercase extension inspection");
+        assert_eq!(probe.format.id, "plain");
     }
 
     fn write_minimal_epub(path: &std::path::Path) {

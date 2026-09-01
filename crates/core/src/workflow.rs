@@ -61,7 +61,10 @@ pub async fn prepare_conversion(
     }
     if target == "pdf"
         && let Ok(probe) = inspect_document(input).await
-        && matches!(probe.format.id.as_str(), "markdown" | "html" | "svg")
+        && matches!(
+            probe.format.id.as_str(),
+            "markdown" | "html" | "svg" | "plain"
+        )
     {
         if matches!(probe.format.id.as_str(), "html" | "svg") {
             // The browser lane prints vector PDFs; HTML falls back to the Pandoc

@@ -180,7 +180,7 @@ fn supported_targets(input: Option<&str>) -> BTreeSet<&'static str> {
         "csv" | "json" | "yaml" | "yml" | "xml" => &["csv", "json", "yaml", "xml"],
         "pdf" | "heic" | "heif" => &["jpg", "png"],
         "docx" | "pptx" | "xlsx" | "svg" => &["pdf"],
-        "md" | "markdown" | "html" | "htm" => &["pdf", "docx", "epub"],
+        "md" | "markdown" | "html" | "htm" | "txt" | "text" => &["pdf", "docx", "epub"],
         "png" | "jpg" | "jpeg" => &["webp", "avif"],
         "mov" | "mkv" | "avi" | "webm" | "mp4" => &["mp4", "gif", "mp3"],
         "wav" | "flac" | "aac" | "m4a" | "ogg" | "opus" | "mp3" => &["m4a", "mp3", "wav"],
@@ -224,7 +224,7 @@ fn required_engines(input: Option<&str>, target: &str) -> Vec<String> {
     if matches!(input, "docx" | "pptx" | "xlsx") && target == "pdf" {
         return engine_names(&["soffice", "pdfinfo", "pdftoppm"]);
     }
-    if matches!(input, "md" | "markdown" | "html" | "htm")
+    if matches!(input, "md" | "markdown" | "html" | "htm" | "txt" | "text")
         && matches!(target.as_str(), "docx" | "epub")
     {
         return engine_names(&["pandoc"]);
@@ -232,7 +232,7 @@ fn required_engines(input: Option<&str>, target: &str) -> Vec<String> {
     if matches!(input, "html" | "htm" | "svg") && target == "pdf" {
         return browser_print_lane();
     }
-    if matches!(input, "md" | "markdown") && target == "pdf" {
+    if matches!(input, "md" | "markdown" | "txt" | "text") && target == "pdf" {
         return engine_names(&["pandoc", "soffice", "pdfinfo", "pdftoppm"]);
     }
     if matches!(input, "heic" | "heif") && matches!(target.as_str(), "jpg" | "png") {

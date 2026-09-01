@@ -1720,7 +1720,7 @@ where
         .first()
         .filter(|step| step.engine.engine_id == "pandoc")
         .ok_or_else(|| invalid_plan_argument("markup PDF Pandoc step"))?;
-    let source = checked_argument(pandoc_step, "source_format", &["markdown", "html"])?;
+    let source = checked_argument(pandoc_step, "source_format", &["markdown", "html", "plain"])?;
     checked_argument(pandoc_step, "target_format", &["docx"])?;
     checked_argument(pandoc_step, "sandbox", &["true"])?;
     checked_argument(pandoc_step, "resource_policy", &["deny-all"])?;
@@ -1742,7 +1742,12 @@ where
         .with_diagnostic(error.to_string())
     })?;
     let intermediate_path = partial_path.join("intermediate.docx");
-    let reader = if source == "markdown" { "gfm" } else { "html" };
+    // Plain text has no dedicated Pandoc reader; every plain document is
+    // valid (subset) Markdown, so it rides the GFM reader unchanged.
+    let reader = match source {
+        "html" => "html",
+        _ => "gfm",
+    };
     let mut command = Command::new(&pandoc_step.engine.binary_path);
     command
         .current_dir(partial_path)
@@ -1906,11 +1911,12 @@ where
         .steps
         .first()
         .ok_or_else(|| invalid_plan_argument("Pandoc step"))?;
-    let source = checked_argument(step, "source_format", &["markdown", "html"])?;
+    let source = checked_argument(step, "source_format", &["markdown", "html", "plain"])?;
     let target = checked_argument(step, "target_format", &["docx", "epub"])?;
     checked_argument(step, "sandbox", &["true"])?;
     checked_argument(step, "resource_policy", &["deny-all"])?;
-    let reader = if source == "markdown" { "gfm" } else { "html" };
+    // Plain text has no dedicated Pandoc reader; it rides the GFM reader.
+    let reader = if source == "html" { "html" } else { "gfm" };
     let output_parent = output_path
         .parent()
         .ok_or_else(|| invalid_plan_argument("output parent"))?;
