@@ -62,6 +62,24 @@ docs/release         Platform matrix and release gates
 test-corpus          Licensed golden corpus manifests and generated fixtures
 ~~~
 
+## Engines
+
+FormatWright deliberately ships **without bundled conversion engines**. Third-party binaries carry their own license and supply-chain obligations (GPL/LGPL/MPL components, and Microsoft Edge may not be redistributed at all), so the application discovers engines on the host instead. See [the engine inventory](engines/README.md), [ADR-0011](docs/adr/0011-trusted-engine-signatures-and-release-keyring.md), and [ADR-0012](docs/adr/0012-system-discovered-edge-print-engine.md) for the full rationale.
+
+Discovery order per engine: an activated engine pack, then a `FORMATWRIGHT_ENGINE_<NAME>` environment variable (full path to the executable, e.g. `FORMATWRIGHT_ENGINE_PDFINFO`), then `PATH`, then known vendor install locations (`msedge` only). Discovered engines are reported as `unverified` by design; the doctor never downloads anything.
+
+| Engine | Unlocks | Where to get it |
+|---|---|---|
+| `msedge` | Browser print lane: HTML/SVG → vector PDF | Preinstalled on Windows 10/11; nothing to do |
+| Poppler (`pdfinfo`, `pdftoppm`, `pdftotext`, `pdffonts`) | PDF output validation for the browser and document lanes | [poppler-windows releases](https://github.com/oschwartz10612/poppler-windows/releases); verify the archive hash, extract, and add `Library\bin` to `PATH` |
+| `soffice` (LibreOffice) | Office → PDF (docx/xlsx/pptx) | [libreoffice.org](https://www.libreoffice.org/) or `winget install TheDocumentFoundation.LibreOffice` |
+| `pandoc` | Markdown/document conversion lane | [pandoc.org](https://pandoc.org/installing.html) |
+| `ffmpeg` / `ffprobe` | Media inspect, remux, transcode | [ffmpeg.org](https://www.ffmpeg.org/download.html) |
+
+`qpdf`, `vips`, and `heif-convert` appear in the doctor inventory but have no conversion route wired in v0.1; installing them is optional.
+
+Official release builds additionally carry a reviewed **starter engine pack** (Poppler + FFmpeg with manifests, hashes, license files, and signatures) built by `scripts/prepare_windows_starter_pack.ps1`, so end users get PDF validation and media conversion out of the box without the application redistributing unreviewed binaries. When an engine is missing, the doctor page shows exactly which one and why; install it through the upstream channel and rerun the check.
+
 ## Development
 
 Prerequisites:

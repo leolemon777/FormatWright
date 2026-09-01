@@ -1,6 +1,27 @@
 # Implementation Notes
 
-## Current milestone — Browser print engine lane: HTML/SVG → vector PDF (2026-08-31)
+## Current milestone — Desktop verification session: title-bar drag fix, local engine provisioning, engine guide (2026-09-01)
+
+### Spec Interpretation
+- User smoke-tested the merged browser-lane build and reported two gaps: the window could not be dragged after resizing, and the doctor page showed missing engines. Goal: fix the drag bug, provision this machine's engines, and document engine acquisition for the upcoming open-source release.
+
+### Decisions Made
+- Title-bar drag fix: Tauri's `data-tauri-drag-region` only fires when the event target is the attributed element itself (no ancestor/child walk). The old markup attributed only the content-width `.c95-window__title` span, so after enlarging the window most of the title bar (the `header` padding area and the SVG icon) was undraggable. A stray `-webkit-app-region: drag` (an Electron-ism, inert in WebView2) had masked the gap in review. Fix: attribute the whole `c95-window__titlebar` header, `pointer-events: none` on the title icon (both themes), `user-select: none` on the titlebar. Window control buttons remain unaffected (no attribute on them), and double-click maximize now works on the whole bar via Tauri's built-in behavior.
+- Local engine provisioning (machine config, not repo): Poppler 26.02.0 installed to `E:\DevCaches\poppler-26.02.0` from the same pinned poppler-windows archive as the starter-pack script (sha256 `993e4a…cda5` verified), user PATH extended, and per-engine `FORMATWRIGHT_ENGINE_PDFINFO/PDFTOPPM/PDFTOTEXT/PDFFONTS` overrides set. The overrides matter: Git for Windows ships an Xpdf 4.00 `pdftotext` whose `-v` exits 99, which doctor (correctly) rejects; env overrides outrank PATH so the real Poppler wins regardless of PATH order.
+- Debug desktop build: the Windows resource map requires `dist/engine-packs/windows-x86_64/starter/` to exist; an empty directory is a supported degraded state (`bundled_manifest_paths` returns an empty list without `bundle.json`), so no 100+ MB starter-pack download was needed for a system-discovery machine. Release builds must run `prepare/build_windows_starter_pack.ps1` instead.
+- README gained an `Engines` section: why nothing is bundled (license/supply-chain, links to engines/README + ADR-0011/0012), the discovery order (pack > `FORMATWRIGHT_ENGINE_*` > PATH > canonical locations), a per-engine acquisition table, and the starter-pack expectation for releases.
+
+### Verification
+- Desktop rebuild (`tsc -b` + `vite build` + `tauri build --debug --no-bundle`) green; app relaunched.
+- Doctor page re-read via UIA after restart: `msedge` 152.0.4191.53, `pdfinfo`/`pdftoppm`/`pdftotext`/`pdffonts` 26.02.0, `pandoc` 3.8, `ffmpeg`/`ffprobe` 8.1.1 all `✓ 可用`; remaining missing (`soffice`, `qpdf`, `vips`, `heif-convert`) are unwired or optional in v0.1. Browser lane is now fully available on this machine.
+- Title-bar drag: fix verified against Tauri's documented drag-region targeting rules; rebuild + relaunch handed to the user for tactile confirmation.
+
+### Risks / Follow-up
+- `qpdf`/`vips`/`heif-convert` remain doctor-only inventory entries with no route; keep them documented as optional to avoid "must turn everything green" pressure.
+- LibreOffice intentionally not installed yet (user decision pending; ~400 MB, E-drive constraint noted).
+- The starter-pack empty-directory workaround must not leak into release builds — release checklist should assert a non-empty `dist/engine-packs` tree.
+
+## Previous milestone — Browser print engine lane: HTML/SVG → vector PDF (2026-08-31)
 
 ### Spec Interpretation
 - GW-10 names "Pandoc；PDF 引擎可选" for Markdown/HTML → PDF. This milestone fills that open PDF-engine slot with a system-discovered headless Edge print adapter and adds SVG as a new document input, per ADR-0012.
