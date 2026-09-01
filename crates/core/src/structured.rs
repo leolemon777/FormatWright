@@ -49,6 +49,17 @@ pub fn structured_format_hint(path: &Path) -> Option<&'static str> {
         return Some("json");
     }
     if trimmed.starts_with('<') {
+        // Markup-shaped documents belong to the document inspector, which
+        // owns HTML/SVG detection (including XML-declared SVG); every other
+        // angle-bracket prefix is structured XML.
+        let lower = trimmed.to_ascii_lowercase();
+        if lower.starts_with("<!doctype html")
+            || lower.starts_with("<html")
+            || lower.starts_with("<svg")
+            || (lower.starts_with("<?xml") && lower.contains("<svg"))
+        {
+            return None;
+        }
         return Some("xml");
     }
     let extension = path.extension()?.to_str()?.to_ascii_lowercase();
@@ -1106,9 +1117,39 @@ mod tests {
 
     use super::{
         convert_structured_file, inspect_structured, plan_structured_conversion,
-        validate_structured_output,
+        structured_format_hint, validate_structured_output,
     };
     use crate::{ErrorCode, PlanRequest, ValidationStatus};
+
+    #[test]
+    fn markup_documents_are_not_routed_to_the_xml_inspector() {
+        let directory = tempdir().expect("tempdir");
+        for (name, content) in [
+            ("page.html", "<!DOCTYPE html>\n<html><body>x</body></html>"),
+            ("bare.html", "<html lang=\"en\"><body>y</body></html>"),
+            ("drawing.svg", "<svg xmlns=\"a\"></svg>"),
+            (
+                "declared.svg",
+                "<?xml version=\"1.0\"?><svg xmlns=\"a\"></svg>",
+            ),
+        ] {
+            let path = directory.path().join(name);
+            fs::write(&path, content).expect("write markup fixture");
+            assert_eq!(
+                structured_format_hint(&path),
+                None,
+                "{name} must route to the document inspector, not XML"
+            );
+        }
+
+        let pure_xml = directory.path().join("feed.xml");
+        fs::write(
+            &pure_xml,
+            "<?xml version=\"1.0\"?><feed><item>ELECTRIC 440</item></feed>",
+        )
+        .expect("write xml fixture");
+        assert_eq!(structured_format_hint(&pure_xml), Some("xml"));
+    }
 
     fn engine() -> EngineIdentity {
         EngineIdentity {

@@ -1765,7 +1765,7 @@ fn is_document_path(path: &Path) -> bool {
         .is_some_and(|value| {
             matches!(
                 value.to_ascii_lowercase().as_str(),
-                "md" | "markdown" | "html" | "htm" | "docx"
+                "md" | "markdown" | "html" | "htm" | "docx" | "svg" | "epub" | "txt" | "text"
             )
         })
 }

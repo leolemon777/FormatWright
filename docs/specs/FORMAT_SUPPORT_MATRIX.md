@@ -53,7 +53,7 @@ Minimum exact OS releases must be frozen in ADR-0005 after Tauri, WebView, code-
 | GW-07 | FLAC, WAV, MP3, AAC, M4A, OGG, Opus | Selected audio target | FFmpeg | Experimental on Windows |
 | GW-08 | DOCX, PPTX, XLSX | PDF | LibreOffice + Poppler validation | Experimental on Windows |
 | GW-09 | PDF | PNG, JPG | Poppler pdfinfo/pdftoppm | Experimental on Windows |
-| GW-10 | Markdown, HTML | PDF, DOCX | HTML/SVG→PDF: system-discovered Edge print + Poppler vector validation (preferred); Markdown keeps Pandoc + LibreOffice | Experimental on Windows (browser lane: real-fixture end-to-end Pass 2026-08-31; formal sandbox script owed) |
+| GW-10 | Markdown, HTML, plain text, SVG | PDF, DOCX, EPUB | HTML/SVG→PDF: system-discovered Edge print + Poppler vector validation (preferred); Markdown/plain text keeps Pandoc + LibreOffice | Experimental on Windows (browser lane: formal sandbox evidence 2026-09-01, `scripts/test_browser_print_sandbox.ps1`) |
 | GW-11 | CSV, JSON, YAML, XML | CSV, JSON, YAML, XML | Rust native | Experimental on Windows |
 | GW-12 | Supported media/document | Cleaned copy | Type-specific adapter | Experimental media slice on Windows |
 

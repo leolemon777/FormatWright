@@ -112,6 +112,7 @@ pwsh -File scripts/test_heic_sandbox.ps1
 pwsh -File scripts/test_metadata_sandbox.ps1
 pwsh -File scripts/test_batch_sandbox.ps1
 pwsh -File scripts/test_document_sandbox.ps1
+pwsh -File scripts/test_browser_print_sandbox.ps1
 pwsh -File scripts/test_pdf_sandbox.ps1
 pwsh -File scripts/test_office_sandbox.ps1
 pwsh -File scripts/test_multi_process_queue.ps1
