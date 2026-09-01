@@ -1,5 +1,23 @@
 # Implementation Notes
 
+## Current milestone — Parallel wave 2: PDF toolbox, REST API, ODF/RTF, release engineering, website (2026-09-01)
+
+### Landed (parallel subagents + main thread, all gated and committed)
+- **W3 PDF toolbox** (`88c6f94`): pdf-rotate/compress/encrypt/decrypt on the ADR-0013 machinery; one-shot in-process secret store keeps passwords out of serialized Plans; PDF_ENCRYPTED proven by pdfinfo failing on the output; compression ratio as Warning. E2E on qpdf 12.4.1 all Pass.
+- **G-33 REST API** (`c4cd38b`): crates/server (axum) reuses the CLI application pipeline; every convert response carries the ValidationReport; structured errors; 127.0.0.1-only; 11 tests + live e2e.
+- **G-30 complete** (`16e74dc`): ODT/ODS/ODP by ODF structure+flavor, RTF envelopes without a ZIP; Basic macro members blocked; office lane to PDF.
+- **W1** (`df159e9`, `updater slice`): starter-pack population assertion in the release workflow, updater plugin wired end-to-end with a dev keypair outside the repo (docs/release/UPDATER.md), release checklist gates.
+- **G-05 website** (committed with wave): offline single-file Meadowlark landing page, EN/中文, receipt-metaphor hero.
+
+### Verification
+- core 204 passed + 4 pre-existing symlink failures (baseline); fmt clean; clippy zero warnings; server 11/11; frontend 28/28; desktop rebuilt and running with the updater.
+
+### Risks / Follow-up
+- Updater uses a dev keypair - must rotate before any public signed release (UPDATER.md step 1).
+- Encrypt/decrypt in the durable queue cannot resume after restart (one-shot secret), reported with an explicit error.
+- Wrong-password decrypt reports the generic encrypted-PDF message (correct rejection, imprecise copy).
+- Remaining roadmap: G-04 real code signing, G-23/24/25 (watermark/OCR/metadata), G-31/32, G-34 cross-platform, G-35 web front.
+
 ## Current milestone — Gap-roadmap execution wave: G-10/30/13/11/12/01 landed (2026-09-01)
 
 ### Spec Interpretation
