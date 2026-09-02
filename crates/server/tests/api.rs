@@ -340,8 +340,10 @@ async fn responses_carry_cors_headers_for_the_local_demo_page() {
         .await
         .expect("preflight response");
     assert_eq!(preflight.status(), axum::http::StatusCode::OK);
-    assert!(preflight
-        .headers()
-        .get("Access-Control-Allow-Methods")
-        .is_some());
+    assert!(
+        preflight
+            .headers()
+            .get("Access-Control-Allow-Methods")
+            .is_some()
+    );
 }

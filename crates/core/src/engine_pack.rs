@@ -695,6 +695,9 @@ fn ensure_application_compatible(manifest: &EngineManifest) -> Result<()> {
     ))
 }
 
+// On non-Windows targets the guard body compiles away, leaving the path
+// parameter and the tail Ok(()) unused - both are Windows-only by design.
+#[cfg_attr(not(windows), allow(unused_variables, clippy::needless_return))]
 fn verify_native_executable(path: &Path) -> Result<()> {
     #[cfg(windows)]
     {

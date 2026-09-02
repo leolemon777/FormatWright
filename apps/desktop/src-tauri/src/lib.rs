@@ -25,11 +25,11 @@ use formatwright_core::{
     capability_snapshot_for_input, cleanup_staged_output, prepare_conversion,
 };
 use queue_bridge::{DEFAULT_BATCH_JOBS, DEFAULT_BENCHMARK_JOBS, QueueBatchIter};
+use serde::{Deserialize, Serialize};
 use shell_convert::{
     CONVERT_MERGE_QUIET, DesktopShellOpenBatch, ShellConvertCoordinator, plan_convert_outputs,
     should_run_immediately, surviving_convert_items,
 };
-use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager};
 use tempfile::TempPath;
 use tokio_util::sync::CancellationToken;
@@ -615,7 +615,11 @@ async fn queue_desktop_conversion(
     Ok(job)
 }
 
-fn empty_ingest_result(skipped_conflict: usize, skipped_disk: usize, rejected: usize) -> DesktopIngestResult {
+fn empty_ingest_result(
+    skipped_conflict: usize,
+    skipped_disk: usize,
+    rejected: usize,
+) -> DesktopIngestResult {
     DesktopIngestResult {
         ran_immediately: false,
         batch_id: None,
@@ -680,11 +684,13 @@ async fn ingest_shell_convert(
         requests = kept;
     }
     if requests.is_empty() {
-        return Ok(empty_ingest_result(skipped_conflict, skipped_disk, rejected));
+        return Ok(empty_ingest_result(
+            skipped_conflict,
+            skipped_disk,
+            rejected,
+        ));
     }
-    let queue_busy = queue_control
-        .lock()
-        .map_or(true, |guard| guard.is_some());
+    let queue_busy = queue_control.lock().map_or(true, |guard| guard.is_some());
     if should_run_immediately(paths.len(), queue_busy) && requests.len() == 1 {
         let request = requests.remove(0);
         let prepared = prepare_conversion(
@@ -2590,12 +2596,7 @@ fn setup_desktop(
         .read()
         .map_err(|error| Box::<dyn std::error::Error>::from(error.to_string()))?;
     if let Some(request) = validated_shell_request(std::env::args_os()) {
-        accept_desktop_shell_request(
-            app.handle(),
-            &shell_open_paths,
-            &convert_batches,
-            request,
-        );
+        accept_desktop_shell_request(app.handle(), &shell_open_paths, &convert_batches, request);
     }
     app.manage(DesktopState {
         store: Mutex::new(store),
@@ -2644,7 +2645,11 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(move |app| {
-            setup_desktop(app, Arc::clone(&shell_open_paths), Arc::clone(&convert_batches))
+            setup_desktop(
+                app,
+                Arc::clone(&shell_open_paths),
+                Arc::clone(&convert_batches),
+            )
         })
         .invoke_handler(tauri::generate_handler![
             run_queue_bridge_benchmark,
@@ -2723,10 +2728,10 @@ mod tests {
         acquire_queue_window, apply_pending_restore, backup_path, bundled_manifest_paths,
         classify_local_absolute_path, desktop_job_page_limit, enqueue_shell_open_path,
         ingest_shell_convert, load_preset_library, parse_shell_invocation, pending_restore_path,
-        persist_preset_library,
-        prepare_approved_desktop_conversion, recover_desktop_jobs, report_for_export, requeue_job,
-        run_queue_window_on_database, shell_open_path_from_args, stage_pending_restore,
-        validated_shell_open_path, validated_shell_request, write_desktop_export_noclobber,
+        persist_preset_library, prepare_approved_desktop_conversion, recover_desktop_jobs,
+        report_for_export, requeue_job, run_queue_window_on_database, shell_open_path_from_args,
+        stage_pending_restore, validated_shell_open_path, validated_shell_request,
+        write_desktop_export_noclobber,
     };
 
     fn plan(output_path: PathBuf) -> Plan {

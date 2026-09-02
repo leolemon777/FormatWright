@@ -205,8 +205,9 @@ pub fn surviving_convert_items(items: &[PlannedConvertItem]) -> Vec<&PlannedConv
 #[cfg(test)]
 mod tests {
     use super::{
-        CONVERT_PATHS_LIMIT, CONVERT_READY_FIFO_LIMIT, ShellConvertCoordinator, plan_convert_outputs,
-        should_run_immediately, suggested_converted_name, surviving_convert_items,
+        CONVERT_PATHS_LIMIT, CONVERT_READY_FIFO_LIMIT, ShellConvertCoordinator,
+        plan_convert_outputs, should_run_immediately, suggested_converted_name,
+        surviving_convert_items,
     };
     use std::collections::HashSet;
     use std::fs;
@@ -217,14 +218,18 @@ mod tests {
     fn same_target_paths_merge_until_quiet_flush() {
         let mut coordinator = ShellConvertCoordinator::new();
         for index in 0..10 {
-            let outcome = coordinator.push("webp".to_owned(), PathBuf::from(format!("p{index}.jpg")));
+            let outcome =
+                coordinator.push("webp".to_owned(), PathBuf::from(format!("p{index}.jpg")));
             assert!(!outcome.flushed_ready);
         }
         assert_eq!(coordinator.ready_len(), 0);
         let batch = coordinator.flush_quiet().expect("quiet flush");
         assert_eq!(batch.target, "webp");
         assert_eq!(batch.paths.len(), 10);
-        assert_eq!(coordinator.take_ready().expect("ready fifo").paths.len(), 10);
+        assert_eq!(
+            coordinator.take_ready().expect("ready fifo").paths.len(),
+            10
+        );
         assert!(coordinator.take_ready().is_none());
     }
 
@@ -247,10 +252,7 @@ mod tests {
         coordinator.push("yaml".to_owned(), PathBuf::from(r"C:\in\a.json"));
         coordinator.flush_quiet();
         assert_eq!(coordinator.ready_len(), 1);
-        assert_eq!(
-            coordinator.take_ready().expect("batch").target,
-            "yaml"
-        );
+        assert_eq!(coordinator.take_ready().expect("batch").target, "yaml");
     }
 
     #[test]
@@ -268,14 +270,32 @@ mod tests {
     #[test]
     fn suggested_converted_name_uses_converted_segment_and_from_disambiguator() {
         let mut reserved = HashSet::new();
-        let first = suggested_converted_name(PathBuf::from(r"C:\album\photo.jpg").as_path(), "webp", &reserved);
+        let first = suggested_converted_name(
+            PathBuf::from(r"C:\album\photo.jpg").as_path(),
+            "webp",
+            &reserved,
+        );
         assert_eq!(first, PathBuf::from(r"C:\album\photo.converted.webp"));
         reserved.insert(first);
-        let second = suggested_converted_name(PathBuf::from(r"C:\album\photo.png").as_path(), "webp", &reserved);
-        assert_eq!(second, PathBuf::from(r"C:\album\photo.from-png.converted.webp"));
+        let second = suggested_converted_name(
+            PathBuf::from(r"C:\album\photo.png").as_path(),
+            "webp",
+            &reserved,
+        );
+        assert_eq!(
+            second,
+            PathBuf::from(r"C:\album\photo.from-png.converted.webp")
+        );
         reserved.insert(second);
-        let third = suggested_converted_name(PathBuf::from(r"C:\album\photo.gif").as_path(), "webp", &reserved);
-        assert_eq!(third, PathBuf::from(r"C:\album\photo.from-gif.converted.webp"));
+        let third = suggested_converted_name(
+            PathBuf::from(r"C:\album\photo.gif").as_path(),
+            "webp",
+            &reserved,
+        );
+        assert_eq!(
+            third,
+            PathBuf::from(r"C:\album\photo.from-gif.converted.webp")
+        );
     }
 
     #[test]

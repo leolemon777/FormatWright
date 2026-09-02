@@ -3,8 +3,8 @@
 use std::path::{Path, PathBuf};
 
 use axum::Json;
-use axum::extract::{FromRequest, Query, Request, State};
 use axum::extract::rejection::JsonRejection;
+use axum::extract::{FromRequest, Query, Request, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use formatwright_core::domain::PlanRequest;
