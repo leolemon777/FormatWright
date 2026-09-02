@@ -802,8 +802,7 @@ fn desktop_queue_window_busy(state: tauri::State<'_, DesktopState>) -> bool {
     state
         .queue_control
         .lock()
-        .ok()
-        .is_some_and(|guard| guard.is_some())
+        .is_ok_and(|guard| guard.is_some())
 }
 
 #[tauri::command]
@@ -1843,9 +1842,9 @@ fn schedule_convert_quiet_flush(
 ) {
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(CONVERT_MERGE_QUIET).await;
-        let flushed = coordinator.lock().ok().is_some_and(|mut guard| {
-            guard.generation == generation && guard.flush_quiet().is_some()
-        });
+        let flushed = coordinator
+            .lock()
+            .is_ok_and(|mut guard| guard.generation == generation && guard.flush_quiet().is_some());
         if flushed {
             let _ = app.emit("formatwright://shell-convert-batch", ());
         }
