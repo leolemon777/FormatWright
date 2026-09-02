@@ -307,7 +307,7 @@ pub fn plan_office_to_pdf(
     Ok(plan)
 }
 
-/// Plans an image -> PDF page composition through LibreOffice Draw (`draw_pdf_Export`).
+/// Plans an image -> PDF page composition through `LibreOffice` Draw (`draw_pdf_Export`).
 ///
 /// # Errors
 ///
