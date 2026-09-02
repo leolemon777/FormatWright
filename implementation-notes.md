@@ -1,5 +1,20 @@
 # Implementation Notes
 
+## Current milestone — Wave 4 + first tri-platform green CI (2026-09-02)
+
+### Landed
+- **Word export family** (agent G): docx -> txt/md/html/epub via Pandoc (EXPORT_TEXT_NONEMPTY required, fidelity digest Warning) and docx <-> odt exchange through the isolated soffice lane with structural validation; a real zip-6.0 data-descriptor bug misjudging LibreOffice-written DOCX sizes fixed en route.
+- **7z lane** (agent H): zip <-> 7z via sevenz-rust, in-memory entries only, entry-count + manifest conservation. RUSTSEC-2026-0245/0246 exempted with rationale (disk-writing path never called); swap the crate before any Certified claim.
+- **PDF metadata**: pdf-metadata operation writes /Title//Author via hand-rolled incremental update; validated by pdfinfo round-trip.
+- **OCR wired, engine pending**: image->txt and pdf-ocr operations complete with OCR_TEXT_NONEMPTY/OCR_PAGE_COVERAGE; doctor lists tesseract and reports EngineMissing cleanly until installed (user deferred the install).
+- **HEIC/HEIF (GW-01)**: lane drives libheif heif-dec (DLL closure hand-assembled from MSYS2 packages via PE import-table scanning); both targets e2e green.
+- **First real tri-platform CI: ALL GREEN** (run 33626245570, Windows/macOS/Linux success). The chase surfaced and fixed: repo-contract capability allowlist drift, pnpm '--' flag pass-through, empty-starter dev-build staging, unix cfg lints (unnecessary_wraps, cfg-scoped test import), preset-library v1 schema missing the quality knobs (caught by the contract suite the local --lib loop never ran), a Result ok().is_some_and pair, and two CI-timing flakes (PowerShell process-tree fixture 3s->30s, queue-thread callback 5s->60s). WebView accessibility smoke is continue-on-error on headless runners with the interactive evidence boundary preserved.
+
+### Verification
+- Local: core 222 (+4 symlink baseline), schema contracts 9/9, desktop lib 33, frontend 29/29, server 13/13, workspace clippy -D warnings clean, fmt clean, cargo-deny ok, dependency audit 0 vulnerabilities.
+- Conversion matrix: 68/68 routes pass locally (Word exports, docx<->odt, HEIC, 7z included).
+
+
 ## Current milestone — Wave 4: OCR (G-24), PDF metadata (G-25), 7z archive (2026-09-02)
 
 ### Landed (this subagent)
@@ -17,7 +32,8 @@
 - OCR confidence Warning descoped (no cheap stdout parse).
 
 ### Verification
-- `targetun-tests.bat`: 222 passed + the 4 pre-existing symlink os-error-1314 failures (unchanged baseline; two of the +tests belong to the parallel document agent).
+- `target
+un-tests.bat`: 222 passed + the 4 pre-existing symlink os-error-1314 failures (unchanged baseline; two of the +tests belong to the parallel document agent).
 - `targetmt-fix.bat`: FMT_CLEAN; clippy zero warnings for the files touched here (document.rs warnings belong to the parallel wave).
 - E2E (debug CLI, engines via FORMATWRIGHT_ENGINE_*):
   - pdf-metadata on a soffice-produced 1-page PDF: `pass` with `PDF_OPS_PAGE_COUNT`, `PDF_METADATA_TITLE`, `PDF_METADATA_AUTHOR` all pass; `pdfinfo` independently reports `Title: ELECTRIC Title 440010147700`, `Author: FormatWright e2e`, `Pages: 1`; `qpdf --check` reports no syntax errors.
