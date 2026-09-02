@@ -307,8 +307,7 @@ pub fn plan_office_to_pdf(
     Ok(plan)
 }
 
-#[allow(clippy::too_many_lines)]
-/// Plans an image -> PDF page composition through LibreOffice Draw.
+/// Plans an image -> PDF page composition through LibreOffice Draw (`draw_pdf_Export`).
 ///
 /// # Errors
 ///
@@ -403,6 +402,7 @@ pub fn plan_image_to_pdf(
     Ok(plan)
 }
 
+#[allow(clippy::too_many_lines)]
 pub(crate) fn validate_office_pdf_output(
     input: &Probe,
     output: &Probe,
