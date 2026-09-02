@@ -4420,9 +4420,11 @@ mod tests {
     #[cfg(unix)]
     use super::terminate_process_tree;
     #[cfg(windows)]
-    use super::{cleanup_partial, terminate_process_tree, wait_for_regular_file};
     use super::{
-        cleanup_staged_output, enforce_network_policy, mp4_target_size_bytes, resolve_output_path,
+        cleanup_partial, resolve_output_path, terminate_process_tree, wait_for_regular_file,
+    };
+    use super::{
+        cleanup_staged_output, enforce_network_policy, mp4_target_size_bytes,
         staged_output_candidates, staged_output_path, target_size_crf_ladder,
     };
     use crate::ErrorCode;
@@ -4712,7 +4714,9 @@ Start-Sleep -Seconds 30
             wait_for_regular_file(
                 &ready_marker,
                 &CancellationToken::new(),
-                std::time::Duration::from_secs(3),
+                // CI runners start PowerShell cold; three seconds was not
+                // enough on GitHub-hosted machines.
+                std::time::Duration::from_secs(30),
             )
             .await,
             "descendant did not start"
