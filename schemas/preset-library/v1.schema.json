@@ -22,6 +22,9 @@
           "width",
           "dpi",
           "color_mode",
+          "video_crf",
+          "video_preset",
+          "audio_bitrate_kbps",
           "preserve_all_streams"
         ],
         "properties": {
@@ -58,6 +61,36 @@
           "color_mode": {
             "anyOf": [
               { "enum": ["rgb", "gray"] },
+              { "type": "null" }
+            ]
+          },
+          "video_crf": {
+            "anyOf": [
+              { "type": "integer", "minimum": 0, "maximum": 51 },
+              { "type": "null" }
+            ]
+          },
+          "video_preset": {
+            "anyOf": [
+              {
+                "enum": [
+                  "ultrafast",
+                  "superfast",
+                  "veryfast",
+                  "faster",
+                  "fast",
+                  "medium",
+                  "slow",
+                  "slower",
+                  "veryslow"
+                ]
+              },
+              { "type": "null" }
+            ]
+          },
+          "audio_bitrate_kbps": {
+            "anyOf": [
+              { "type": "integer", "minimum": 8, "maximum": 320 },
               { "type": "null" }
             ]
           },
