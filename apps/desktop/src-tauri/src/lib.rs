@@ -3562,8 +3562,10 @@ mod tests {
                 |_| {},
             ))
         });
+        // Linux CI runners schedule the queue thread slowly; five seconds
+        // flaked there while passing everywhere else.
         callback_entered_rx
-            .recv_timeout(Duration::from_secs(5))
+            .recv_timeout(Duration::from_secs(60))
             .expect("queue reached report callback");
 
         let visible = ui_store.list_jobs(100).expect("live job list");
