@@ -313,6 +313,7 @@ pub fn plan_office_to_pdf(
 /// # Errors
 ///
 /// Returns `Unsupported` for anything but PNG/JPEG input.
+#[allow(clippy::too_many_lines)]
 pub fn plan_image_to_pdf(
     probe: &Probe,
     output_path: std::path::PathBuf,
