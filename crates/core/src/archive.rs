@@ -626,7 +626,7 @@ pub(crate) fn repack_zip_to_7z(input: &Path, output: &Path) -> Result<()> {
             .by_index(index)
             .map_err(|error| input_error(input, error))?;
         let mut record = sevenz_rust::SevenZArchiveEntry::new();
-        record.name = entry.name().to_owned();
+        entry.name().clone_into(&mut record.name);
         if entry.is_dir() {
             writer
                 .push_archive_entry::<std::io::Empty>(record, None)

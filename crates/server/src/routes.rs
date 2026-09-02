@@ -237,7 +237,7 @@ async fn cors_local_demo(
     if request.method() == axum::http::Method::OPTIONS {
         let mut response = axum::http::Response::new(axum::body::Body::empty());
         apply_cors_headers(response.headers_mut());
-        return response.into();
+        return response;
     }
     let mut response = next.run(request).await;
     apply_cors_headers(response.headers_mut());

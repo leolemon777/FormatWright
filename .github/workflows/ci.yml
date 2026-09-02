@@ -99,6 +99,12 @@ jobs:
           pnpm check
           pnpm test
           pnpm build
+      - name: Stage empty starter pack for the dev build
+        shell: pwsh
+        run: |
+          # Dev builds degrade to system engine discovery when no bundle.json
+          # ships; the resource map only requires the directory to exist.
+          New-Item -ItemType Directory -Force -Path 'dist/engine-packs/windows-x86_64/starter' | Out-Null
       - name: Build accessibility-instrumented desktop
         run: pnpm --filter @formatwright/desktop exec tauri build --debug --no-bundle --config src-tauri/tauri.accessibility.conf.json
       - name: Native WebView accessibility smoke

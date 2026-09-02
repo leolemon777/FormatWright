@@ -48,6 +48,7 @@ struct Cli {
 }
 
 #[derive(Debug, Subcommand)]
+#[allow(clippy::large_enum_variant)]
 enum Command {
     /// Detect conversion engines and report their provenance.
     Doctor,

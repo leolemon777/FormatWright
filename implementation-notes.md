@@ -1,5 +1,39 @@
 # Implementation Notes
 
+## Current milestone — Wave 4: OCR (G-24), PDF metadata (G-25), 7z archive (2026-09-02)
+
+### Landed (this subagent)
+- **G-24 OCR**:
+  - Image -> txt operation-free route: png/jpg/jpeg -> txt via tesseract (`tesseract <in> stdout -l eng --psm 3`; stdout mode avoids tesseract's auto `.txt` suffix). New `ocr.rs` (`plan_image_ocr`, `plan_pdf_ocr`, `validate_ocr_output`). Step arguments use `ocr_mode` (not `operation`) so the image lane stays off the qpdf operation dispatch. Acceptance: `OCR_TEXT_NONEMPTY` (required; at least one alphanumeric token). `OCR_CONFIDENCE` was descoped (tesseract does not print per-word confidence to stdout by default).
+  - `pdf-ocr` operation: per page `pdftoppm -f N -l N -r 150 -png` into a staging tempdir, tesseract per page, concatenated txt. Acceptance: `OCR_PAGE_COVERAGE` (processed pages == pdfinfo page count, required) + `OCR_TEXT_NONEMPTY`.
+  - doctor discovery list + `FORMATWRIGHT_ENGINE_TESSERACT` env (generic env plumbing already existed). CLI: `--operation pdf-ocr`; images just use `--to txt`.
+- **G-25 pdf-metadata**: `apply_pdf_metadata(input_bytes, title, author)` performs a PDF incremental update in-process (zero new deps): parses the last `startxref`, locates the old trailer, copies `/Root`, appends a new `/Info` object + one-entry xref subsection + new trailer with `/Prev` and `/Info` pointing at the new object. Acceptance: `PDF_METADATA_TITLE`/`PDF_METADATA_AUTHOR` (required, pdfinfo-observed) + page-count conservation. CLI `--metadata-title/--metadata-author`. `PlanRequest` gained `metadata_title`/`metadata_author` (serde default; exhaustive literals in cli/main.rs and planner.rs tests updated).
+- **7z archive**: `sevenz-rust = "0.6"` (workspace + core). archive.rs: `.7z` magic `37 7A BC AF 27 1C` recognition, `read_7z_entries` (drains entries through a counting discard writer; directory names normalized to trailing `/` so ZIP manifests stay comparable), `repack_zip_to_7z` / `repack_7z_to_zip`. Planning/capabilities/workflow/runner extended; acceptance reuses `ARCHIVE_ENTRY_COUNT`/`ARCHIVE_ENTRY_MANIFEST`.
+
+### Tradeoffs
+- Metadata is set via incremental update, not a rewrite: unset fields keep old values, other `/Info` entries are inherited (documented as `unknown` in the ChangeSet); output keeps every original byte verbatim plus the appended revision.
+- `pdf-metadata`/`pdf-ocr` route through `prepare_pdf_operation`, so both inspect `qpdf`/`pdfinfo` up front; the metadata step engine identity is qpdf even though execution is in-process (kept for lane consistency).
+- 7z support is zip <-> 7z only (tar.gz <-> 7z deliberately out of scope).
+- OCR confidence Warning descoped (no cheap stdout parse).
+
+### Verification
+- `targetun-tests.bat`: 222 passed + the 4 pre-existing symlink os-error-1314 failures (unchanged baseline; two of the +tests belong to the parallel document agent).
+- `targetmt-fix.bat`: FMT_CLEAN; clippy zero warnings for the files touched here (document.rs warnings belong to the parallel wave).
+- E2E (debug CLI, engines via FORMATWRIGHT_ENGINE_*):
+  - pdf-metadata on a soffice-produced 1-page PDF: `pass` with `PDF_OPS_PAGE_COUNT`, `PDF_METADATA_TITLE`, `PDF_METADATA_AUTHOR` all pass; `pdfinfo` independently reports `Title: ELECTRIC Title 440010147700`, `Author: FormatWright e2e`, `Pages: 1`; `qpdf --check` reports no syntax errors.
+  - zip -> 7z -> zip round trip: both legs pass `ARCHIVE_ENTRY_COUNT`/`ARCHIVE_ENTRY_MANIFEST`; python zipfile confirms identical (name,size) inventory.
+- **OCR e2e pending tesseract install** (`E:\DevCaches\Tesseract-OCR	esseract.exe` not present). Rerun after install:
+  - `set FORMATWRIGHT_ENGINE_TESSERACT=E:\DevCaches\Tesseract-OCR	esseract.exe`
+  - image lane: `formatwright convert ocr.png --to txt --output ocr.txt` (PIL fixture: white 800x300 PNG containing `OCR TEST ELECTRIC 440010147700`).
+  - pdf lane: `formatwright convert scan.pdf --operation pdf-ocr --to txt --output scan.txt`.
+  - Expect `OCR_TEXT_NONEMPTY` pass; pdf lane additionally `OCR_PAGE_COVERAGE`.
+
+### Risks / Follow-up
+- Tesseract `-l eng` is fixed (no language option yet); DPI fixed at 150.
+- `apply_pdf_metadata` assumes a classic (non-xref-stream) trailer; xref-stream PDFs fall back to the first `trailer` search and would fail closed with an input error if `/Root` is absent.
+- 7z entries with anti-item or empty-stream file semantics rely on sevenz-rust behavior; round-trip covered by unit + e2e for the zip case.
+
+
 ## Current milestone — Parallel wave 3: watermark, target-size, track UI, CORS, cross-platform, LibreOffice (2026-09-01)
 
 ### Landed

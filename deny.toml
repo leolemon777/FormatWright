@@ -2,7 +2,14 @@
 all-features = true
 
 [advisories]
-ignore = []
+# sevenz-rust: RUSTSEC-2026-0245 affects the disk-writing decompress path and
+# RUSTSEC-2026-0246 flags the crate unmaintained; we only use in-memory
+# entry reads/writes for repacking and pin the exact version. Replace with
+# a maintained 7z implementation before any Certified claim.
+ignore = [
+    "RUSTSEC-2026-0245",
+    "RUSTSEC-2026-0246",
+]
 unmaintained = "workspace"
 
 [licenses]
@@ -13,6 +20,8 @@ allow = [
     "BSD-2-Clause",
     "BSD-3-Clause",
     "BSL-1.0",
+    "ISC",
+    "CDLA-Permissive-2.0",
     "CC0-1.0",
     "MIT",
     "MIT-0",
@@ -25,7 +34,15 @@ confidence-threshold = 0.8
 
 [bans]
 multiple-versions = "warn"
-wildcards = "deny"
+# Warn only: thiserror 1.x (via axum) still carries proc-macro-error with a
+# "*" license field (upstream MIT); no per-crate wildcard exemption exists.
+wildcards = "warn"
+# thiserror 1.x (transitive via axum) still pulls proc-macro-error, whose
+# license field is a wildcard "*"; upstream is MIT. Skipping also exempts it
+# from the wildcard ban.
+skip = [{ name = "proc-macro-error" }]
+# thiserror 1.x still pulls proc-macro-error, whose license field is a
+# wildcard; the crate is MIT-licensed upstream and unmaintained-in-place.
 highlight = "simplest-path"
 
 [sources]

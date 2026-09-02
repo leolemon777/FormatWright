@@ -2820,7 +2820,7 @@ where
 
 /// Executes the `pdf-metadata` operation: an in-process incremental update
 /// appends a new /Info object, so no external engine rewrites the document.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 async fn execute_pdf_metadata<F>(
     input: &Probe,
     plan: &Plan,
@@ -2947,7 +2947,7 @@ where
 
 /// Executes the `pdf-ocr` operation: every page is rasterized with pdftoppm at
 /// the planned DPI, recognized by tesseract, and concatenated into one txt.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 async fn execute_pdf_ocr<F>(
     input: &Probe,
     plan: &Plan,

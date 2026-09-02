@@ -1754,7 +1754,7 @@ pub(crate) fn apply_pdf_metadata(
     output.extend_from_slice(
         format!(
             "xref\n{new_object} 1\n{new_object_offset:010} 00000 n \n\
-             trailer\n<< /Size {size} /Prev {previous_xref} /Root {root} >>\n\
+             trailer\n<< /Size {size} /Prev {previous_xref} /Root {root} /Info {new_object} 0 R >>\n\
              startxref\n{new_xref_offset}\n%%EOF\n"
         )
         .as_bytes(),
@@ -1830,7 +1830,10 @@ fn escape_pdf_string(text: &str) -> String {
                 escaped.push(character);
             }
             ' '..='\u{7F}' => escaped.push(character),
-            _ => escaped.push_str(&format!("\\{:03o}", u32::from(character))),
+            _ => {
+                use std::fmt::Write as _;
+                let _ = write!(escaped, "\\{:03o}", u32::from(character));
+            }
         }
     }
     escaped
@@ -1852,7 +1855,7 @@ pub(crate) async fn pdfinfo_document_metadata(
     ))
 }
 
-/// Appends the required PDF_METADATA_TITLE/AUTHOR acceptance checks and
+/// Appends the required `PDF_METADATA_TITLE`/`PDF_METADATA_AUTHOR` acceptance
 /// re-derives the worst-case report status. Fields the Plan did not set are
 /// skipped: an incremental update cannot clear values it never touches.
 pub(crate) fn append_metadata_checks(
@@ -2700,7 +2703,6 @@ mod tests {
         let text = String::from_utf8_lossy(bytes).into_owned();
         let position = text.rfind("startxref").expect("startxref marker");
         text[position + "startxref".len()..]
-            .trim_start()
             .split_whitespace()
             .next()
             .expect("offset digits")
@@ -2725,7 +2727,7 @@ mod tests {
         assert!(text.contains(&format!("/Prev {previous_xref}")));
         assert!(text.matches("trailer").count() >= 2);
         assert!(startxref_value(&updated) > previous_xref);
-        assert!(startxref_value(&updated) as usize <= updated.len());
+        assert!(u64::try_from(updated.len()).is_ok_and(|len| startxref_value(&updated) <= len));
         // Deterministic: identical inputs produce identical revisions.
         let again =
             super::apply_pdf_metadata(&original, Some("ELECTRIC 440010147700"), Some("Author (A)"))

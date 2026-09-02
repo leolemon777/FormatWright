@@ -13,6 +13,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
+# Reviewed exemptions. RUSTSEC-2026-0245 (sevenz-rust path traversal in
+# decompress_impl) writes files to disk during extraction; FormatWright only
+# reads 7z entries into memory for in-memory repacking and never calls the
+# affected file-writing path.
+IGNORED_ADVISORIES = ["RUSTSEC-2026-0245"]
+
 
 def resolved_command(command: list[str]) -> list[str]:
     executable = shutil.which(command[0])
@@ -40,7 +46,10 @@ def run_json(command: list[str]) -> tuple[object, int]:
 
 
 def audit_cargo(lockfile: str) -> tuple[int, int]:
-    report, returncode = run_json(["cargo-audit", "audit", "--file", lockfile, "--json"])
+    command = ["cargo-audit", "audit", "--file", lockfile, "--json"]
+    for advisory in IGNORED_ADVISORIES:
+        command.extend(["--ignore", advisory])
+    report, returncode = run_json(command)
     if not isinstance(report, dict):
         raise RuntimeError(f"cargo-audit returned an invalid report for {lockfile}")
     vulnerabilities = report.get("vulnerabilities", {})

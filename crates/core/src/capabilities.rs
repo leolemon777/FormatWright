@@ -6,9 +6,9 @@ use serde::{Deserialize, Serialize};
 use crate::doctor::{EngineDiscoveryPolicy, inspect_engine_with_policy};
 use crate::error::{ErrorCode, FormatWrightError, Result, Stage};
 
-const KNOWN_TARGETS: [&str; 22] = [
+const KNOWN_TARGETS: [&str; 23] = [
     "jpg", "png", "webp", "avif", "mp4", "mp3", "m4a", "wav", "gif", "pdf", "docx", "epub", "json",
-    "csv", "yaml", "xml", "zip", "tar.gz", "md", "txt", "odt", "7z",
+    "csv", "yaml", "xml", "zip", "tar.gz", "md", "txt", "odt", "7z", "html",
 ];
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

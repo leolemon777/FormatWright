@@ -789,11 +789,25 @@ fn inspect_document_properties(path: &Path, format: &str) -> Result<BTreeMap<Str
     Ok(properties)
 }
 
+/// `LibreOffice` 等工具会在本地头置 data-descriptor 标志（flag bit 3），使
+/// `ZipArchive::decompressed_size()` 返回 `None`；此时回退为按中央目录逐项
+/// 求和，而不是把"未知"当成超限。
+fn bounded_expanded_bytes(archive: &mut ZipArchive<File>) -> u64 {
+    if let Some(total) = archive.decompressed_size()
+        && let Ok(total) = u64::try_from(total)
+    {
+        return total;
+    }
+    (0..archive.len())
+        .map(|index| archive.by_index(index).map_or(0, |entry| entry.size()))
+        .fold(0_u64, u64::saturating_add)
+}
+
 fn inspect_docx_properties(path: &Path) -> Result<BTreeMap<String, Value>> {
     let file = File::open(path).map_err(|error| input_error("Unable to open DOCX", error))?;
     let mut archive =
         ZipArchive::new(file).map_err(|error| input_error("Invalid DOCX ZIP package", error))?;
-    if archive.decompressed_size().unwrap_or(u128::MAX) > u128::from(MAX_DOCUMENT_XML_BYTES) * 4 {
+    if bounded_expanded_bytes(&mut archive) > MAX_DOCUMENT_XML_BYTES * 4 {
         return Err(FormatWrightError::new(
             ErrorCode::ResourceExhausted,
             Stage::Inspect,
@@ -840,7 +854,7 @@ fn inspect_epub_properties(path: &Path) -> Result<BTreeMap<String, Value>> {
     let file = File::open(path).map_err(|error| input_error("Unable to open EPUB", error))?;
     let mut archive =
         ZipArchive::new(file).map_err(|error| input_error("Invalid EPUB ZIP package", error))?;
-    if archive.decompressed_size().unwrap_or(u128::MAX) > u128::from(MAX_DOCUMENT_XML_BYTES) * 4 {
+    if bounded_expanded_bytes(&mut archive) > MAX_DOCUMENT_XML_BYTES * 4 {
         return Err(FormatWrightError::new(
             ErrorCode::ResourceExhausted,
             Stage::Inspect,
