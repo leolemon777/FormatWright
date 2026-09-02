@@ -147,6 +147,7 @@ export type PlanConstraintSnapshot = {
   videoCrf: number | null;
   videoPreset: string | null;
   audioBitrateKbps: number | null;
+  audioStreamIndex: number | null;
   preserveAllStreams: boolean;
 };
 
@@ -160,6 +161,16 @@ export function audioBitrateApplies(target: string): boolean {
   ].includes(target.toLowerCase());
 }
 
+// G-31: the audio-track picker only makes sense when a media container input
+// is converted to an audio target (or remuxed to mp4); track data itself only
+// exists after a plan preview has probed the input.
+export function audioTrackApplies(inputPath: string, target: string): boolean {
+  const mediaInput = [
+    "mp4", "webm", "mkv", "mov", "avi", "m4v", "flv", "wmv", "mpg", "mpeg",
+  ].includes(pathStemAndExt(inputPath).ext);
+  return mediaInput && ["mp3", "m4a", "wav", "mp4"].includes(target.toLowerCase());
+}
+
 // CLI `convert INPUT --to T` has no leftover GUI flags. Explorer convert and a
 // fresh selectInput must start from this snapshot, not a hot Convert form.
 export function defaultPlanConstraints(_target: string): PlanConstraintSnapshot {
@@ -171,6 +182,7 @@ export function defaultPlanConstraints(_target: string): PlanConstraintSnapshot 
     videoCrf: null,
     videoPreset: null,
     audioBitrateKbps: null,
+    audioStreamIndex: null,
     preserveAllStreams: true,
   };
 }

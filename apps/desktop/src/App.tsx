@@ -25,6 +25,7 @@ import {
   basicModeFailureCopy,
   presetFieldChangeInvalidatesPreview,
   audioBitrateApplies, qualityFieldApplies, videoKnobsApply,
+  audioTrackApplies,
   progressForJob,
   recommendedTargets,
   resolvePendingCapabilityTarget,
@@ -48,7 +49,15 @@ type JsonMap = Record<string, unknown>;
 type Probe = {
   format: { id: string; kind: string; confidence: number; extension_matches?: boolean };
   artifact: { display_path: string; size_bytes: number };
-  streams: Array<{ width?: number; height?: number; codec?: string; properties: JsonMap }>;
+  streams: Array<{
+    index: number;
+    kind: string;
+    width?: number;
+    height?: number;
+    codec?: string;
+    language?: string;
+    properties: JsonMap;
+  }>;
   warnings: Array<{ code: string; message: string }>;
 };
 
@@ -370,6 +379,7 @@ export default function App() {
   const [updateStatus, setUpdateStatus] = useState("");
   const [videoPreset, setVideoPreset] = useState("");
   const [audioBitrate, setAudioBitrate] = useState("");
+  const [audioStreamIndex, setAudioStreamIndex] = useState<number | null>(null);
   const [preserveAllStreams, setPreserveAllStreams] = useState(true);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [report, setReport] = useState<ValidationReport | null>(null);
@@ -639,6 +649,7 @@ export default function App() {
     setAudioBitrate(
       defaults.audioBitrateKbps == null ? "" : String(defaults.audioBitrateKbps),
     );
+    setAudioStreamIndex(defaults.audioStreamIndex);
     setPreserveAllStreams(defaults.preserveAllStreams);
   }
 
@@ -851,6 +862,7 @@ export default function App() {
       videoCrf: target === "mp4" && videoCrf ? Number(videoCrf) : null,
       videoPreset: target === "mp4" && videoPreset ? videoPreset : null,
       audioBitrateKbps: audioBitrate ? Number(audioBitrate) : null,
+      audioStreamIndex: audioTrackApplies(inputPath, target) ? audioStreamIndex : null,
       preserveAllStreams,
       approvedPlanHash,
       idempotencyKey,
@@ -1552,6 +1564,9 @@ export default function App() {
   const recommendations = recommendedTargets(inputPath);
   const normalizedTarget = target === "jpeg" ? "jpg" : target === "yml" ? "yaml" : target;
   const route = capabilities?.routes[normalizedTarget];
+  const audioStreamOptions = audioTrackApplies(inputPath, target)
+    ? (preview?.probe.streams ?? []).filter((stream) => stream.kind === "audio")
+    : [];
   const routeAvailable = !capabilities || route?.available === true;
   const unavailableLabels = { missing: copy.unavailable, unsupported: copy.unsupported };
   const targetOptions = targetOptionViews(recommendations, capabilities ? capabilities.routes : null, convertMode === "file" ? "convert-file" : "convert-folder", unavailableLabels);
@@ -1690,6 +1705,7 @@ export default function App() {
               {expert && <label>{copy.width}<input type="number" min="1" max="16384" value={width} onChange={(event) => { setWidth(event.target.value); setPreview(null); }} /></label>}
               {expert && <label>{copy.dpi}<input type="number" min="36" max="600" value={dpi} onChange={(event) => { setDpi(event.target.value); setPreview(null); }} /></label>}
               {expert && <label>{copy.colorMode}<select value={colorMode} onChange={(event) => { setColorMode(event.target.value); setPreview(null); }}><option value="rgb">RGB</option><option value="gray">Gray</option></select></label>}{expert && videoKnobsApply(target) && <label>{copy.videoCrf}<input type="number" min="0" max="51" value={videoCrf} onChange={(event) => { setVideoCrf(event.target.value); setPreview(null); }} /></label>}{expert && videoKnobsApply(target) && <label>{copy.videoPreset}<select value={videoPreset} onChange={(event) => { setVideoPreset(event.target.value); setPreview(null); }}><option value="">medium (default)</option><option value="ultrafast">ultrafast</option><option value="superfast">superfast</option><option value="veryfast">veryfast</option><option value="faster">faster</option><option value="fast">fast</option><option value="medium">medium</option><option value="slow">slow</option><option value="slower">slower</option><option value="veryslow">veryslow</option></select></label>}{expert && audioBitrateApplies(target) && <label>{copy.audioBitrate}<input type="number" min="8" max="320" value={audioBitrate} onChange={(event) => { setAudioBitrate(event.target.value); setPreview(null); }} /></label>}
+              {expert && audioStreamOptions.length > 0 && <label>{copy.audioTrack}<select value={audioStreamIndex == null ? "" : String(audioStreamIndex)} onChange={(event) => { setAudioStreamIndex(event.target.value === "" ? null : Number(event.target.value)); setPreview(null); }}><option value="">{copy.automatic}</option>{audioStreamOptions.map((stream) => <option key={stream.index} value={String(stream.index)}>{copy.audioTrackOption.replace("{index}", String(stream.index)).replace("{codec}", stream.codec ?? "").replace("{language}", stream.language ?? "")}</option>)}</select></label>}
               {expert && <label className="checkbox-control"><input type="checkbox" checked={preserveAllStreams} onChange={(event) => { setPreserveAllStreams(event.target.checked); setPreview(null); }} />{copy.preserveAllStreams}</label>}
             </div>
 

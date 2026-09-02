@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   JOB_PAGE_SIZE,
   SUPPORTED_TARGET_FORMATS,
+  audioTrackApplies,
   certificationLabel,
   defaultPlanConstraints,
   elapsedProgressSeconds,
@@ -161,9 +162,20 @@ describe("target option views", () => {
       videoCrf: null,
       videoPreset: null,
       audioBitrateKbps: null,
+      audioStreamIndex: null,
       preserveAllStreams: true,
     });
     expect(defaultPlanConstraints("jpg")).toEqual(defaultPlanConstraints("png"));
+  });
+
+  it("shows the audio-track picker only for media containers going to audio targets", () => {
+    expect(audioTrackApplies("C:\\video\\movie.mkv", "mp3")).toBe(true);
+    expect(audioTrackApplies("C:\\video\\movie.MOV", "m4a")).toBe(true);
+    expect(audioTrackApplies("C:\\clips\\clip.webm", "wav")).toBe(true);
+    expect(audioTrackApplies("C:\\clips\\clip.webm", "mp4")).toBe(true);
+    expect(audioTrackApplies("C:\\clips\\clip.webm", "png")).toBe(false);
+    expect(audioTrackApplies("C:\\docs\\manual.pdf", "mp3")).toBe(false);
+    expect(audioTrackApplies("C:\\music\\song.flac", "mp3")).toBe(false);
   });
 
   it("pins a pending shell-convert target and fails honestly when that route is missing", () => {

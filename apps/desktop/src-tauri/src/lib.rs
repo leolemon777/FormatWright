@@ -329,6 +329,7 @@ struct DesktopConversionRequest {
     video_crf: Option<u8>,
     video_preset: Option<String>,
     audio_bitrate_kbps: Option<u32>,
+    audio_stream_index: Option<u32>,
     preserve_all_streams: Option<bool>,
     approved_plan_hash: Option<String>,
     idempotency_key: Option<String>,
@@ -347,6 +348,7 @@ impl DesktopConversionRequest {
             video_crf: self.video_crf,
             video_preset: self.video_preset.clone(),
             audio_bitrate_kbps: self.audio_bitrate_kbps,
+            audio_stream_index: self.audio_stream_index,
             ..PlanRequest::default()
         }
     }
@@ -2843,6 +2845,10 @@ mod tests {
             width: None,
             dpi: None,
             color_mode: None,
+            video_crf: None,
+            video_preset: None,
+            audio_bitrate_kbps: None,
+            audio_stream_index: None,
             preserve_all_streams: Some(true),
             approved_plan_hash,
             idempotency_key: None,
@@ -3654,6 +3660,9 @@ mod tests {
                 width: None,
                 dpi: None,
                 color_mode: Some("rgb".to_owned()),
+                video_crf: None,
+                video_preset: None,
+                audio_bitrate_kbps: None,
                 preserve_all_streams: true,
             })
             .expect("valid preset");
