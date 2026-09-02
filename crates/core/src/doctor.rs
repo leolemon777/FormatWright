@@ -249,9 +249,8 @@ fn known_install_location(executable: &str) -> Option<PathBuf> {
 
     #[cfg(target_os = "macos")]
     {
-        ["/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"]
-            .iter()
-            .map(PathBuf::from)
+        macos_msedge_install_locations()
+            .into_iter()
             .find(|path| is_executable_file(path))
     }
 
@@ -266,6 +265,36 @@ fn known_install_location(executable: &str) -> Option<PathBuf> {
         .map(PathBuf::from)
         .find(|path| is_executable_file(path))
     }
+}
+
+/// Joins every macOS `Applications` root with the Edge bundle's executable
+/// path.
+///
+/// Edge keeps the Chromium application-bundle layout, so the binary always
+/// lives at `<root>/Microsoft Edge.app/Contents/MacOS/Microsoft Edge`. Kept as
+/// a pure path computation so the layout stays unit-testable on every host.
+#[cfg(any(target_os = "macos", test))]
+fn macos_browser_bundle_paths(applications_roots: &[PathBuf]) -> Vec<PathBuf> {
+    applications_roots
+        .iter()
+        .map(|root| {
+            root.join("Microsoft Edge.app")
+                .join("Contents")
+                .join("MacOS")
+                .join("Microsoft Edge")
+        })
+        .collect()
+}
+
+/// Standard macOS roots that may hold an Edge installation: the system-wide
+/// `/Applications` and the per-user `~/Applications`.
+#[cfg(target_os = "macos")]
+fn macos_msedge_install_locations() -> Vec<PathBuf> {
+    let mut roots = vec![PathBuf::from("/Applications")];
+    if let Some(home) = env::var_os("HOME") {
+        roots.push(PathBuf::from(home).join("Applications"));
+    }
+    macos_browser_bundle_paths(&roots)
 }
 
 /// Derives the Edge version from the versioned directory the installer keeps
@@ -599,8 +628,8 @@ mod tests {
 
     use super::{
         EngineDiscoveryPolicy, RegisteredEnginePath, choose_engine_path, find_executable,
-        inspect_engine_with_policy, known_install_location, resolve_engine_path,
-        version_directory_key,
+        inspect_engine_with_policy, known_install_location, macos_browser_bundle_paths,
+        resolve_engine_path, version_directory_key,
     };
     use formatwright_engine_sdk::SupplyChainReviewStatus;
 
@@ -608,6 +637,31 @@ mod tests {
     fn known_install_locations_cover_only_the_browser_engine() {
         assert!(known_install_location("ffmpeg").is_none());
         assert!(known_install_location("soffice").is_none());
+    }
+
+    #[test]
+    fn macos_browser_bundle_paths_follow_the_chromium_bundle_layout() {
+        let paths = macos_browser_bundle_paths(&[PathBuf::from("/Applications")]);
+        assert_eq!(
+            paths,
+            vec![PathBuf::from(
+                "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"
+            )]
+        );
+    }
+
+    #[test]
+    fn macos_browser_bundle_paths_cover_every_applications_root() {
+        let paths = macos_browser_bundle_paths(&[
+            PathBuf::from("/Applications"),
+            PathBuf::from("/Users/demo/Applications"),
+        ]);
+        assert_eq!(paths.len(), 2);
+        assert!(
+            paths
+                .iter()
+                .all(|path| { path.ends_with("Microsoft Edge.app/Contents/MacOS/Microsoft Edge") })
+        );
     }
 
     #[test]

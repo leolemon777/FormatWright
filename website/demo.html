@@ -1,0 +1,867 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FormatWright Demo — 本地 API 演示</title>
+  <meta name="description" content="FormatWright 本地 REST API 的纯静态演示页：Plan 预览、结构化格式转换、验收回执渲染。需要先在本机运行 formatwright-server。">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#f8f4ed">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%231f3a46'/%3E%3Ctext x='16' y='22' font-family='Georgia,serif' font-size='17' fill='%23f8f4ed' text-anchor='middle'%3EF%3C/text%3E%3C/svg%3E">
+  <style>
+    /* ============================================================
+       FormatWright API demo — Meadowlark tokens
+       (slimmed copy of website/index.html :root palette & type;
+       same paper/receipt metaphor, zero external dependencies)
+       ============================================================ */
+    :root {
+      --color-page: #f8f4ed;
+      --color-surface: #ffffff;
+      --color-surface-peach: #f4d9ce;
+      --color-ink: #1f3a46;
+      --color-ink-soft: #4a5c63;
+      --color-primary: #e8674a;
+      --color-primary-deep: #cf4f33;
+      --color-secondary: #2e6b76;
+      --color-secondary-deep: #1f545e;
+      --color-border: #e7dfd3;
+      --color-border-strong: #d7cbb8;
+
+      --font-display: "Marcellus", Georgia, "Times New Roman", "Songti SC", "SimSun", serif;
+      --font-text: "Urbanist", "Segoe UI", system-ui, -apple-system, "Microsoft YaHei", "PingFang SC", sans-serif;
+      --font-mono: "Cascadia Mono", "Consolas", ui-monospace, "SFMono-Regular", Menlo, monospace;
+
+      --shadow-md: 0 1px 2px rgba(31, 58, 70, 0.05), 0 12px 32px rgba(31, 58, 70, 0.09);
+      --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--color-page);
+      color: var(--color-ink);
+      font-family: var(--font-text);
+      font-size: 1rem;
+      line-height: 1.65;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* Paper grain over everything — same texture layer as the landing page. */
+    body::after {
+      content: "";
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      pointer-events: none;
+      opacity: 0.38;
+      mix-blend-mode: overlay;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='4'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)' opacity='.55'/%3E%3C/svg%3E");
+    }
+
+    ::selection { background: var(--color-surface-peach); color: var(--color-ink); }
+
+    h1, h2, h3 {
+      font-family: var(--font-display);
+      font-weight: 400;
+      line-height: 1.15;
+      margin: 0 0 0.6em;
+      text-wrap: balance;
+    }
+    p { margin: 0 0 1em; }
+    a { color: var(--color-secondary-deep); text-underline-offset: 3px; }
+    code { font-family: var(--font-mono); font-size: 0.88em; }
+
+    .container { max-width: 900px; margin: 0 auto; padding: 0 1.5rem; }
+
+    a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible {
+      outline: 3px solid var(--color-primary-deep);
+      outline-offset: 2px;
+      border-radius: 2px;
+    }
+
+    /* ---------- header ---------- */
+    .site-header {
+      border-bottom: 1px solid var(--color-border);
+      background: rgba(248, 244, 237, 0.92);
+    }
+    .header-inner {
+      display: flex;
+      align-items: center;
+      gap: 1.25rem;
+      flex-wrap: wrap;
+      padding-top: 1rem;
+      padding-bottom: 1rem;
+    }
+    .wordmark {
+      font-family: var(--font-display);
+      font-size: 1.35rem;
+      color: var(--color-ink);
+      text-decoration: none;
+      letter-spacing: 0.01em;
+      margin-right: auto;
+    }
+    .wordmark .dot { color: var(--color-primary); }
+    .site-nav { display: flex; gap: 1.25rem; align-items: center; }
+    .site-nav a, .site-nav span[aria-current="page"] {
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      text-decoration: none;
+      color: var(--color-ink-soft);
+      padding: 0.2rem 0;
+    }
+    .site-nav a:hover { color: var(--color-ink); text-decoration: underline; }
+    .site-nav span[aria-current="page"] { color: var(--color-ink); border-bottom: 2px solid var(--color-primary); }
+
+    /* ---------- intro ---------- */
+    .intro { padding: 3.2rem 0 1.4rem; }
+    .eyebrow {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      font-family: var(--font-mono);
+      font-size: 0.76rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--color-secondary-deep);
+      margin: 0 0 1.2rem;
+    }
+    .eyebrow::before {
+      content: "";
+      width: 9px; height: 9px;
+      background: var(--color-primary);
+      flex: none;
+    }
+    .intro h1 { font-size: clamp(1.9rem, 4vw, 2.6rem); }
+    .lede { font-size: 1.06rem; color: var(--color-ink-soft); max-width: 40em; }
+
+    .callout {
+      border: 1px solid var(--color-border-strong);
+      border-left: 3px solid var(--color-primary);
+      border-radius: 4px;
+      background: var(--color-surface);
+      padding: 0.9rem 1.1rem;
+      font-size: 0.92rem;
+      color: var(--color-ink-soft);
+      margin: 0 0 1.2rem;
+    }
+    .callout strong { color: var(--color-ink); }
+    .callout code {
+      display: block;
+      margin: 0.45rem 0 0.2rem;
+      padding: 0.5rem 0.7rem;
+      background: #fdfaf4;
+      border: 1px solid var(--color-border);
+      border-radius: 3px;
+      color: var(--color-ink);
+      overflow-x: auto;
+      white-space: nowrap;
+    }
+
+    /* ---------- health strip ---------- */
+    .health-strip {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      border: 1px solid var(--color-border);
+      border-radius: 4px;
+      background: var(--color-surface);
+      padding: 0.6rem 0.9rem;
+      margin: 0 0 2.2rem;
+    }
+    .health-dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: var(--color-ink-soft);
+      flex: none;
+    }
+    .health-strip[data-state="up"] .health-dot { background: var(--color-secondary); }
+    .health-strip[data-state="up"] .health-label { color: var(--color-secondary-deep); }
+    .health-strip[data-state="down"] .health-dot { background: var(--color-primary-deep); }
+    .health-strip[data-state="down"] .health-label { color: var(--color-primary-deep); }
+    .health-label { letter-spacing: 0.06em; }
+    .health-detail { color: var(--color-ink-soft); }
+    .health-retry {
+      appearance: none;
+      margin-left: auto;
+      border: 1px solid var(--color-border-strong);
+      background: #fdfaf4;
+      border-radius: 3px;
+      font-family: var(--font-mono);
+      font-size: 0.74rem;
+      letter-spacing: 0.08em;
+      padding: 0.3rem 0.7rem;
+      color: var(--color-ink-soft);
+      cursor: pointer;
+    }
+    .health-retry:hover { color: var(--color-ink); border-color: var(--color-ink-soft); }
+
+    /* ---------- form card ---------- */
+    section { padding: 0 0 2.4rem; }
+    .section-head h2 { font-size: clamp(1.4rem, 3vw, 1.8rem); margin: 0 0 1.4rem; }
+    .card {
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: 6px;
+      padding: 1.5rem 1.5rem 1.4rem;
+      box-shadow: var(--shadow-md);
+    }
+    .field { margin-bottom: 1.1rem; }
+    .field label {
+      display: block;
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--color-ink-soft);
+      margin-bottom: 0.4rem;
+    }
+    .field input, .field select {
+      width: 100%;
+      font-family: var(--font-mono);
+      font-size: 0.88rem;
+      color: var(--color-ink);
+      background: #fdfaf4;
+      border: 1px solid var(--color-border-strong);
+      border-radius: 3px;
+      padding: 0.55rem 0.7rem;
+    }
+    .field .hint { font-size: 0.8rem; color: var(--color-ink-soft); margin: 0.35rem 0 0; }
+    .btn-row { display: flex; gap: 0.9rem; flex-wrap: wrap; margin-top: 1.3rem; }
+    .btn {
+      display: inline-block;
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+      letter-spacing: 0.09em;
+      text-transform: uppercase;
+      padding: 0.75rem 1.4rem;
+      border-radius: 4px;
+      border: 1.5px solid var(--color-ink);
+      cursor: pointer;
+      transition: transform 140ms var(--ease), box-shadow 140ms var(--ease);
+    }
+    .btn:hover { transform: translateY(-1px); box-shadow: var(--shadow-md); }
+    .btn:disabled { opacity: 0.55; cursor: wait; transform: none; box-shadow: none; }
+    .btn-primary { background: var(--color-ink); color: #fff; }
+    .btn-ghost { background: transparent; color: var(--color-ink); }
+    .btn-ghost:hover { background: #fdfaf4; }
+    .form-error {
+      display: none;
+      margin: 0.9rem 0 0;
+      font-size: 0.86rem;
+      color: var(--color-primary-deep);
+    }
+    .form-error[data-visible="true"] { display: block; }
+
+    /* ---------- result blocks ---------- */
+    .result-block { display: none; margin-top: 1.6rem; }
+    .result-block[data-visible="true"] { display: block; }
+    .block-title {
+      font-family: var(--font-mono);
+      font-size: 0.74rem;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--color-secondary-deep);
+      margin: 0 0 0.7rem;
+    }
+    .plan-summary dl { margin: 0 0 1rem; }
+    .plan-summary .field-row {
+      display: flex;
+      gap: 0.9rem;
+      align-items: baseline;
+      border-bottom: 1px solid var(--color-border);
+      padding: 0.4rem 0;
+      font-size: 0.82rem;
+    }
+    .plan-summary dt {
+      min-width: 7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--color-ink-soft);
+      font-weight: 400;
+      flex: none;
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+    }
+    .plan-summary dd {
+      margin: 0;
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      overflow-wrap: anywhere;
+    }
+    .plan-steps { list-style: none; margin: 0; padding: 0; counter-reset: step; }
+    .plan-steps li {
+      counter-increment: step;
+      display: flex;
+      gap: 0.7rem;
+      align-items: baseline;
+      padding: 0.45rem 0;
+      border-bottom: 1px solid var(--color-border);
+      font-size: 0.84rem;
+    }
+    .plan-steps li::before {
+      content: counter(step, decimal-leading-zero);
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      color: var(--color-primary-deep);
+      font-weight: 700;
+      flex: none;
+    }
+    .plan-steps .step-id { font-family: var(--font-mono); font-size: 0.8rem; }
+    .plan-steps .step-meta { color: var(--color-ink-soft); font-size: 0.8rem; }
+    .plan-steps .loss { font-family: var(--font-mono); font-size: 0.72rem; color: var(--color-secondary-deep); margin-left: auto; flex: none; }
+
+    /* ---------- the acceptance receipt ---------- */
+    .receipt {
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-bottom: 2px dashed var(--color-border-strong);
+      border-radius: 3px 3px 0 0;
+      box-shadow: 0 18px 40px rgba(31, 58, 70, 0.14);
+      padding: 1.4rem 1.5rem 1.6rem;
+      font-family: var(--font-mono);
+    }
+    .receipt-band {
+      display: flex;
+      justify-content: space-between;
+      gap: 1rem;
+      font-size: 0.68rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--color-ink-soft);
+      border-bottom: 1px solid var(--color-border);
+      padding-bottom: 0.7rem;
+      margin-bottom: 0.9rem;
+      overflow-wrap: anywhere;
+    }
+    .receipt dl { margin: 0 0 0.9rem; }
+    .receipt .field-row {
+      display: flex;
+      gap: 0.9rem;
+      align-items: baseline;
+      border-bottom: 1px solid var(--color-border);
+      padding: 0.42rem 0;
+      font-size: 0.72rem;
+    }
+    .receipt dt {
+      min-width: 5.2rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--color-ink-soft);
+      font-weight: 400;
+      flex: none;
+    }
+    .receipt dd { margin: 0; color: var(--color-ink); overflow-wrap: anywhere; }
+
+    .checks-scroll { overflow-x: auto; border: 1px solid var(--color-border); border-radius: 3px; }
+    table { border-collapse: collapse; width: 100%; min-width: 34rem; font-family: var(--font-mono); }
+    th, td { text-align: left; padding: 0.55rem 0.8rem; vertical-align: top; font-size: 0.76rem; }
+    thead th {
+      font-size: 0.64rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      font-weight: 400;
+      color: var(--color-ink-soft);
+      border-bottom: 1px solid var(--color-border-strong);
+      background: #fdfaf4;
+      white-space: nowrap;
+    }
+    tbody tr + tr td { border-top: 1px solid var(--color-border); }
+    td .check-msg { display: block; font-family: var(--font-text); font-size: 0.78rem; color: var(--color-ink-soft); }
+    td.code-cell { white-space: nowrap; }
+    td .required-tag { color: var(--color-ink-soft); font-size: 0.62rem; letter-spacing: 0.1em; }
+    td.value-cell { overflow-wrap: anywhere; max-width: 14rem; color: var(--color-ink-soft); }
+    .chip {
+      display: inline-block;
+      border-radius: 2px;
+      font-size: 0.6rem;
+      letter-spacing: 0.14em;
+      padding: 0.08rem 0.4rem;
+      border: 1px solid;
+      white-space: nowrap;
+    }
+    .chip-pass { color: var(--color-secondary-deep); border-color: var(--color-secondary-deep); }
+    .chip-warning { color: #8a5a14; border-color: #b98a3a; }
+    .chip-fail { color: var(--color-primary-deep); border-color: var(--color-primary-deep); }
+    .chip-unknown { color: var(--color-ink-soft); border-color: var(--color-ink-soft); }
+
+    .receipt-verdict {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      font-size: 0.78rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--color-ink);
+      padding-top: 0.9rem;
+    }
+    .stamp {
+      display: inline-block;
+      border: 3px double var(--color-primary);
+      color: var(--color-primary);
+      font-size: 1.35rem;
+      font-weight: 700;
+      letter-spacing: 0.28em;
+      padding: 0.22rem 0.8rem 0.22rem 1.08rem;
+      transform: rotate(-6deg);
+      opacity: 0.78;
+      border-radius: 3px;
+    }
+    .stamp[data-status="fail"] { border-color: var(--color-ink); color: var(--color-ink); }
+    .stamp[data-status="warning"], .stamp[data-status="unknown"] { border-color: var(--color-ink-soft); color: var(--color-ink-soft); }
+    .receipt-foot {
+      margin-top: 1rem;
+      font-size: 0.62rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--color-ink-soft);
+      display: flex;
+      justify-content: space-between;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+      overflow-wrap: anywhere;
+    }
+
+    /* ---------- error card ---------- */
+    .error-card {
+      border: 1px solid var(--color-primary-deep);
+      border-left: 3px solid var(--color-primary-deep);
+      border-radius: 4px;
+      background: var(--color-surface-peach);
+      padding: 1rem 1.2rem;
+      font-size: 0.92rem;
+    }
+    .error-chips { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.6rem; }
+    .error-chip {
+      font-family: var(--font-mono);
+      font-size: 0.68rem;
+      letter-spacing: 0.1em;
+      border: 1px solid var(--color-ink);
+      border-radius: 2px;
+      padding: 0.1rem 0.5rem;
+      background: var(--color-surface);
+    }
+    .error-card .message { font-weight: 600; margin-bottom: 0.35rem; }
+    .error-card .action { color: var(--color-ink); }
+    .error-card .diagnostic {
+      font-family: var(--font-mono);
+      font-size: 0.76rem;
+      color: var(--color-ink-soft);
+      overflow-wrap: anywhere;
+      margin: 0.5rem 0 0;
+    }
+    .network-hint {
+      display: none;
+      margin-top: 0.8rem;
+      font-size: 0.82rem;
+      color: var(--color-ink-soft);
+      border-top: 1px dashed var(--color-border-strong);
+      padding-top: 0.7rem;
+    }
+    .network-hint[data-visible="true"] { display: block; }
+
+    /* ---------- footer ---------- */
+    .site-footer {
+      border-top: 3px double var(--color-border-strong);
+      padding: 2.2rem 0 2.6rem;
+      margin-top: 1rem;
+    }
+    .footer-grid { display: flex; flex-wrap: wrap; gap: 1rem 3rem; justify-content: space-between; }
+    .footer-brand { font-family: var(--font-display); font-size: 1.2rem; margin: 0 0 0.3rem; }
+    .footer-tag { font-family: var(--font-mono); font-size: 0.68rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--color-ink-soft); margin: 0; }
+
+    /* ---------- responsive & print ---------- */
+    @media (max-width: 560px) {
+      .receipt { padding: 1.05rem 0.95rem 1.2rem; }
+      .card { padding: 1.1rem 1rem; }
+      .plan-summary dt { min-width: 5.4rem; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { transition: none !important; animation: none !important; }
+    }
+    @media print {
+      body::after { display: none; }
+      .site-nav, .btn-row, .health-retry { display: none; }
+      body { background: #fff; }
+    }
+  </style>
+</head>
+<body>
+  <header class="site-header">
+    <div class="container header-inner">
+      <a class="wordmark" href="index.html">FormatWright<span class="dot" aria-hidden="true">.</span></a>
+      <nav class="site-nav" aria-label="主导航">
+        <a href="index.html">首页</a>
+        <span aria-current="page">Demo</span>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section class="intro container">
+      <p class="eyebrow">本地 API 演示 · Local REST API demo</p>
+      <h1>先把服务跑起来，再用这张页面调 API。</h1>
+      <p class="lede">
+        这是一个纯静态演示页（零依赖、零构建），直接调用本机 FormatWright REST API：
+        <code>POST /v1/plan</code> 做转换预案预览，<code>POST /v1/convert</code> 执行转换并渲染返回的验收回执（ValidationReport）。
+      </p>
+      <div class="callout">
+        <strong>前置条件：</strong>本页面不联网、不上传文件，API 必须由你自己在本机启动。在仓库根目录运行：
+        <code>cargo run -p formatwright-server --release</code>
+        服务默认监听 <code>http://127.0.0.1:8787</code>（可用 <code>--bind 127.0.0.1:8788</code> 换端口，本页固定按 8787 探测）。
+        下方的格式互转走内置结构化引擎，<strong>无需安装 ffmpeg 等外部引擎</strong>。
+      </div>
+      <div class="health-strip" id="health-strip" data-state="checking" role="status" aria-live="polite">
+        <span class="health-dot" aria-hidden="true"></span>
+        <span class="health-label" id="health-label">正在检测 API…</span>
+        <span class="health-detail" id="health-detail"></span>
+        <button type="button" class="health-retry" id="health-retry">重新检测</button>
+      </div>
+    </section>
+
+    <section class="container" aria-labelledby="form-title">
+      <div class="section-head">
+        <h2 id="form-title">发起一次转换</h2>
+      </div>
+      <form class="card" id="convert-form" novalidate>
+        <div class="field">
+          <label for="input-path">输入文件路径（本机绝对路径）</label>
+          <input id="input-path" name="input-path" type="text" autocomplete="off" spellcheck="false"
+                 placeholder="例如 C:\Users\you\sample.json（json / yaml / csv / xml 文件）" required>
+          <p class="hint">文件必须真实存在；json → csv 需要内容是「对象数组」才能对齐表格。</p>
+        </div>
+        <div class="field">
+          <label for="target-format">目标格式</label>
+          <select id="target-format" name="target-format">
+            <option value="yaml">json / csv / xml → yaml</option>
+            <option value="json">yaml / csv / xml → json</option>
+            <option value="csv">json / yaml / xml → csv</option>
+            <option value="xml">json / yaml / csv → xml</option>
+          </select>
+          <p class="hint">结构化互转使用内置引擎；请选择与输入文件不同的目标格式。</p>
+        </div>
+        <div class="field">
+          <label for="output-path">输出路径（可选）</label>
+          <input id="output-path" name="output-path" type="text" autocomplete="off" spellcheck="false"
+                 placeholder="留空则「转换」时按输入路径自动替换扩展名">
+          <p class="hint">「Plan 预览」可以不填；「转换」必须知道输出写到哪里，留空时会自动推导。</p>
+        </div>
+        <div class="field">
+          <input type="checkbox" id="allow-lossy" name="allow-lossy" style="width: auto; margin-right: 0.5rem;">
+          <label for="allow-lossy" style="display: inline; text-transform: none; letter-spacing: normal; font-family: var(--font-text); font-size: 0.88rem; color: var(--color-ink);">
+            允许有损数据（<code>allow_lossy_data</code>）
+          </label>
+          <p class="hint">目标为 csv 时必勾：csv 无法保留标量类型、null 与缺失字段的区别，未勾选会被 POLICY_BLOCKED 拦下。</p>
+        </div>
+        <div class="btn-row">
+          <button type="button" class="btn btn-ghost" id="btn-plan">Plan 预览</button>
+          <button type="button" class="btn btn-primary" id="btn-convert">转换</button>
+        </div>
+        <p class="form-error" id="form-error" role="alert"></p>
+      </form>
+
+      <div class="result-block" id="plan-block">
+        <p class="block-title">Plan 摘要 · /v1/plan</p>
+        <div class="card plan-summary">
+          <dl id="plan-fields"></dl>
+          <p class="block-title" style="margin-top: 1rem">执行步骤 steps</p>
+          <ol class="plan-steps" id="plan-steps"></ol>
+        </div>
+      </div>
+
+      <div class="result-block" id="receipt-block">
+        <p class="block-title">验收回执 · /v1/convert</p>
+        <div class="receipt" id="receipt"></div>
+      </div>
+
+      <div class="result-block" id="error-block">
+        <p class="block-title">API 返回了结构化错误</p>
+        <div class="error-card" id="error-card">
+          <div class="error-chips" id="error-chips"></div>
+          <p class="message" id="error-message"></p>
+          <p class="action" id="error-action"></p>
+          <pre class="diagnostic" id="error-diagnostic" style="display: none"></pre>
+          <div class="network-hint" id="network-hint" data-visible="false">
+            请求根本没能到达 API。请确认 <code>cargo run -p formatwright-server --release</code> 正在运行。
+            若服务已启动仍失败：本页从 file:// 或其他端口打开时，浏览器会按跨源策略拦截发往
+            <code>http://127.0.0.1:8787</code> 的请求（本地 API 按设计未启用 CORS）。
+            可先用 <code>curl http://127.0.0.1:8787/health</code> 确认 API 本身正常。
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-grid">
+      <div>
+        <p class="footer-brand">FormatWright</p>
+        <p class="footer-tag">可验证的文件转换 · 演示页零依赖、零遥测</p>
+      </div>
+      <p class="footer-tag">API 只绑定 127.0.0.1 · 文件永不离开本机</p>
+    </div>
+  </footer>
+
+  <script>
+    (function () {
+      "use strict";
+
+      var API = "http://127.0.0.1:8787";
+
+      var strip = document.getElementById("health-strip");
+      var healthLabel = document.getElementById("health-label");
+      var healthDetail = document.getElementById("health-detail");
+      var inputPath = document.getElementById("input-path");
+      var targetFormat = document.getElementById("target-format");
+      var outputPath = document.getElementById("output-path");
+      var allowLossy = document.getElementById("allow-lossy");
+      var formError = document.getElementById("form-error");
+      var btnPlan = document.getElementById("btn-plan");
+      var btnConvert = document.getElementById("btn-convert");
+
+      function show(block) {
+        ["plan-block", "receipt-block", "error-block"].forEach(function (id) {
+          document.getElementById(id).setAttribute("data-visible", String(id === block));
+        });
+      }
+
+      function text(node, value) {
+        node.textContent = value == null ? "" : String(value);
+      }
+
+      /* Escapes a value for safe interpolation into an innerHTML template. */
+      function esc(value) {
+        if (value == null) { return ""; }
+        return String(value).replace(/[&<>"']/g, function (ch) {
+          return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch];
+        });
+      }
+
+      /* Renders expected/observed values that may be strings, numbers, or JSON. */
+      function fmtValue(value) {
+        if (value == null) { return "—"; }
+        if (typeof value === "string") { return value; }
+        try { return JSON.stringify(value); } catch (e) { return String(value); }
+      }
+
+      function truncateMiddle(value, max) {
+        var text = String(value || "");
+        if (text.length <= max) { return text; }
+        var keep = max - 1;
+        var head = Math.ceil(keep / 2);
+        var tail = Math.floor(keep / 2);
+        return text.slice(0, head) + "…" + text.slice(text.length - tail);
+      }
+
+      /* ---------- health check ---------- */
+
+      function setHealth(state, label, detail) {
+        strip.setAttribute("data-state", state);
+        text(healthLabel, label);
+        text(healthDetail, detail || "");
+      }
+
+      function refreshHealth() {
+        setHealth("checking", "正在检测 API…");
+        fetch(API + "/health", { cache: "no-store" })
+          .then(function (response) {
+            if (!response.ok) { throw new Error("HTTP " + response.status); }
+            return response.json();
+          })
+          .then(function (body) {
+            setHealth("up", "API 运行中", "版本 " + (body && body.version ? body.version : "unknown") + " · " + API);
+          })
+          .catch(function () {
+            setHealth("down", "API 未运行",
+              "请先执行 cargo run -p formatwright-server --release（详见上方说明）");
+          });
+      }
+
+      document.getElementById("health-retry").addEventListener("click", refreshHealth);
+      refreshHealth();
+
+      /* ---------- request body ---------- */
+
+      function deriveOutputPath(input, target) {
+        var cut = Math.max(input.lastIndexOf("/"), input.lastIndexOf("\\"));
+        var dot = input.lastIndexOf(".");
+        if (dot > cut) { return input.slice(0, dot) + "." + target; }
+        return input + "." + target;
+      }
+
+      function validateForm() {
+        if (!inputPath.value.trim()) {
+          formError.textContent = "请填写输入文件的绝对路径（例如 C:\\Users\\you\\sample.json）。";
+          formError.setAttribute("data-visible", "true");
+          inputPath.focus();
+          return null;
+        }
+        formError.setAttribute("data-visible", "false");
+        return inputPath.value.trim();
+      }
+
+      /* ---------- plan rendering ---------- */
+
+      function renderPlan(body) {
+        var plan = (body && body.plan) || {};
+        var probe = (body && body.probe) || {};
+        var formatId = probe.format && probe.format.id;
+        var steps = Array.isArray(plan.steps) ? plan.steps : [];
+
+        var fields = [
+          ["输入格式", formatId ? formatId + (probe.format.display_name ? " · " + probe.format.display_name : "") : "未知"],
+          ["目标格式", plan.target_format || "—"],
+          ["网络策略", plan.network_policy || "deny"],
+          ["计划哈希", truncateMiddle(body.planHash || plan.plan_hash, 24)],
+          ["预计输出", typeof plan.estimated_output_bytes === "number" ? plan.estimated_output_bytes + " bytes" : "—"]
+        ];
+        document.getElementById("plan-fields").innerHTML = fields.map(function (row) {
+          return '<div class="field-row"><dt>' + esc(row[0]) + '</dt><dd title="' +
+            esc(row[1]) + '">' + esc(row[1]) + "</dd></div>";
+        }).join("");
+
+        document.getElementById("plan-steps").innerHTML = steps.length
+          ? steps.map(function (step) {
+              var engine = step.engine || {};
+              return '<li><span class="step-id">' + esc(step.step_id) + "</span>" +
+                '<span class="step-meta">engine ' + esc(engine.engine_id || "?") +
+                (engine.version ? " · " + esc(engine.version) : "") + "</span>" +
+                '<span class="loss">' + esc(step.loss_class || "") + "</span></li>";
+            }).join("")
+          : '<li><span class="step-meta">内置结构化引擎在进程内完成，无需外部引擎步骤。</span></li>';
+
+        show("plan-block");
+      }
+
+      /* ---------- receipt rendering ---------- */
+
+      function chip(status) {
+        var key = ["pass", "warning", "fail", "unknown"].indexOf(status) >= 0 ? status : "unknown";
+        return '<span class="chip chip-' + key + '">' + esc(key.toUpperCase()) + "</span>";
+      }
+
+      function renderReceipt(body) {
+        var report = (body && body.validation) || {};
+        var checks = Array.isArray(report.checks) ? report.checks : [];
+        var engines = Array.isArray(report.engines) ? report.engines : [];
+        var status = report.status || "unknown";
+        var verdict = document.getElementById("receipt");
+
+        var engineNames = engines.map(function (engine) {
+          return engine.engine_id + (engine.version ? " " + engine.version : "");
+        });
+
+        var rows = checks.map(function (check) {
+          return "<tr>" +
+            '<td class="code-cell">' + esc(check.code) +
+              ' <span class="required-tag">' + (check.required ? "必检" : "可选") + "</span>" +
+              (check.message ? '<span class="check-msg">' + esc(check.message) + "</span>" : "") +
+            "</td>" +
+            "<td>" + chip(check.status) + "</td>" +
+            '<td class="value-cell">' + esc(fmtValue(check.expected)) + "</td>" +
+            '<td class="value-cell">' + esc(fmtValue(check.observed)) + "</td>" +
+            "</tr>";
+        }).join("");
+
+        verdict.innerHTML =
+          '<div class="receipt-band"><span>FormatWright · Acceptance proof</span><span>Job ' +
+            esc(truncateMiddle(body.jobId, 20)) + "</span></div>" +
+          "<dl>" +
+            '<div class="field-row"><dt>输出</dt><dd>' + esc(body.outputPath || "—") + "</dd></div>" +
+            '<div class="field-row"><dt>引擎</dt><dd>' + esc(engineNames.length ? engineNames.join(" · ") : "内置（rust-native）") + "</dd></div>" +
+            '<div class="field-row"><dt>计划哈希</dt><dd>' + esc(truncateMiddle(report.plan_hash, 40)) + "</dd></div>" +
+          "</dl>" +
+          '<div class="checks-scroll"><table><thead><tr>' +
+            "<th>检查项</th><th>状态</th><th>expected</th><th>observed</th>" +
+            "</tr></thead><tbody>" + rows + "</tbody></table></div>" +
+          '<div class="receipt-verdict"><span>结论 · ' + esc(status) + "</span>" +
+            '<span class="stamp" data-status="' + esc(status) + '" aria-hidden="true">' +
+            esc(status === "pass" ? "PASS" : status.toUpperCase()) + "</span></div>" +
+          '<div class="receipt-foot"><span>回执 ' + esc(truncateMiddle(report.report_id, 18)) +
+            "</span><span>0 network calls</span></div>";
+
+        show("receipt-block");
+      }
+
+      /* ---------- error rendering ---------- */
+
+      function renderError(body, network) {
+        document.getElementById("error-chips").innerHTML =
+          '<span class="error-chip">' + esc(body && body.code ? body.code : "NETWORK") + "</span>" +
+          '<span class="error-chip">stage: ' + esc(body && body.stage ? body.stage : "—") + "</span>" +
+          (body && body.retryable ? '<span class="error-chip">retryable</span>' : "");
+        text(document.getElementById("error-message"),
+          (body && body.message) || "请求未到达 API（网络错误或浏览器跨源拦截）。");
+        text(document.getElementById("error-action"),
+          (body && body.action) || "确认 formatwright-server 已在本机运行，然后重试。");
+        var diagnostic = document.getElementById("error-diagnostic");
+        if (body && body.diagnostic) {
+          diagnostic.style.display = "block";
+          text(diagnostic, body.diagnostic);
+        } else {
+          diagnostic.style.display = "none";
+        }
+        document.getElementById("network-hint").setAttribute("data-visible", String(Boolean(network)));
+        show("error-block");
+      }
+
+      /* ---------- API calls ---------- */
+
+      function post(path, payload) {
+        return fetch(API + path, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(payload)
+        }).then(function (response) {
+          return response.json().catch(function () { return {}; }).then(function (body) {
+            if (!response.ok) { throw body; }
+            return body;
+          });
+        });
+      }
+
+      function run(action) {
+        var input = validateForm();
+        if (!input) { return; }
+        var target = targetFormat.value;
+        var payload = { inputPath: input, target_format: target };
+        if (allowLossy.checked) {
+          payload.allow_lossy_data = true;
+        }
+        if (action === "convert") {
+          payload.output_path = outputPath.value.trim() || deriveOutputPath(input, target);
+        } else if (outputPath.value.trim()) {
+          payload.output_path = outputPath.value.trim();
+        }
+
+        btnPlan.disabled = true;
+        btnConvert.disabled = true;
+        post(action === "convert" ? "/v1/convert" : "/v1/plan", payload)
+          .then(function (body) {
+            if (action === "convert") {
+              renderReceipt(body);
+            } else {
+              renderPlan(body);
+            }
+          })
+          .catch(function (body) {
+            renderError(body && body.code ? body : null, !(body && body.code));
+          })
+          .finally(function () {
+            btnPlan.disabled = false;
+            btnConvert.disabled = false;
+          });
+      }
+
+      btnPlan.addEventListener("click", function () { run("plan"); });
+      btnConvert.addEventListener("click", function () { run("convert"); });
+    })();
+  </script>
+</body>
+</html>
