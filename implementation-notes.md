@@ -1,5 +1,24 @@
 # Implementation Notes
 
+## Current milestone — Parallel wave 3: watermark, target-size, track UI, CORS, cross-platform, LibreOffice (2026-09-01)
+
+### Landed
+- **G-23 watermark** (subagent): pdf-watermark operation builds a hand-written single-page PDF stamp layer (Helvetica-Bold, rotation, alpha ExtGState) and applies it with qpdf --overlay --repeat; validation = page-count conservation + watermark text presence (order-insensitive match, since rotated text extracts scattered).
+- **G-32 target size** (subagent): --target-size-kb drives a bounded CRF ladder (20/26/32/38) on mp4 transcodes; VIDEO_TARGET_SIZE Warning reports observed vs target or the nearest reachable rung. E2E: VP9 2.6 MB -> 903 KB nearest-rung Warning (testsrc cannot reach 500 KB at acceptable rungs).
+- **G-31 track UI** (subagent): expert Convert form gains an audio-track selector fed by the plan probe's streams (auto = None), wired through DesktopConversionRequest.
+- **API polish** (subagent + main): malformed JSON bodies now answer the structured {code,stage,message,action} shape; CORS layer (incl. OPTIONS preflight) added so website/demo.html can drive the loopback API from file://.
+- **G-34** (subagent): CI fmt collapsed to the Linux job, macOS runs the SBOM script, and doctor's known_install_location generalized to macOS Chromium bundle layouts (+2 tests).
+- **G-35**: website/demo.html (receipt-style API demo, curl-verified contract).
+- **LibreOffice 26.2.4** installed to E:\DevCaches\LibreOffice (MSI administrative image, no admin rights) with FORMATWRIGHT_ENGINE_SOFFICE pointing at soffice.com (console shim - soffice.exe hangs GUI-substyle on --version). Runner office filter map extended for ODF/RTF flavors. ODT->PDF e2e: LibreOffice-generated ODT converts with validation Warning and a verified text layer. Note: an administrative-image soffice is fine for headless conversion, but a normal installation is still the supported posture for releases.
+- Updater release keypair rotated (strong random password stored beside the key, both git-ignored); website repo/download links now point at github.com/leolemon777/FormatWright.
+
+### Verification
+- core 211 passed + 4 symlink baseline; fmt clean; clippy zero warnings; server 13/13; frontend 29/29; desktop rebuilt and running. E2E evidence: watermark chars verified independently via pdftotext, target-size nearest-rung Warning, ODT->PDF text layer, demo contract curl-verified.
+
+### Risks / Follow-up
+- Wrong-password decrypt copy still generic; watermark text check is order-insensitive (documented); admin-image LibreOffice is a dev convenience, not the certified distribution form.
+- Remaining roadmap: G-24 OCR, G-25 metadata edit, G-34 real cross-platform CI runs (untested on actual runners), release signing account.
+
 ## Current milestone — Parallel wave 2: PDF toolbox, REST API, ODF/RTF, release engineering, website (2026-09-01)
 
 ### Landed (parallel subagents + main thread, all gated and committed)

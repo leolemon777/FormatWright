@@ -8,9 +8,13 @@
 - `apps/desktop/src-tauri/tauri.conf.json` enables `bundle.createUpdaterArtifacts`,
   pins the updater `pubkey`, and points `endpoints` at
   `https://github.com/leolemon777/FormatWright/releases/latest/download/latest.json`.
-- A **development keypair** lives at `target/updater-keys/formatwright-updater.key`
-  (private, empty password) and `.key.pub` (public, embedded in the config).
-  `target/` is git-ignored: the private key never enters the repository.
+- The **release keypair** (rotated 2026-09-01 from the dev pair, strong random
+  password) lives at `target/updater-keys/formatwright-release.key` (private)
+  and `.key.pub` (public, embedded in the config). The password is stored next
+  to it in `RELEASE_KEY_PASSWORD.txt`. `target/` is git-ignored: neither the
+  private key nor the password ever enters the repository. The superseded
+  dev pair (`formatwright-updater.key`, empty password) is retained only for
+  testing and must not sign any published channel.
 - The Settings page exposes a "Check for updates" action that reports available
   versions without auto-installing (alpha posture; the app stays zero-network
   except for this explicit user-initiated check, executed by the Rust side and
