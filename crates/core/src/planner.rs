@@ -757,7 +757,10 @@ fn plan_mp4_conversion(
 
     let video_copy = videos
         .iter()
-        .all(|stream| matches!(stream.codec.as_deref(), Some("h264" | "hevc")));
+        .all(|stream| matches!(stream.codec.as_deref(), Some("h264" | "hevc")))
+        // G-32: a size target cannot be chased through copy mode, so an
+        // already-H.264 input still transcodes when a target size is set.
+        && request.target_size_bytes.is_none();
     let audio_copy = audios
         .iter()
         .all(|stream| stream.codec.as_deref() == Some("aac"));
@@ -804,6 +807,14 @@ fn plan_mp4_conversion(
     }
     if let Some(bitrate) = request.audio_bitrate_kbps {
         arguments.insert("audio_bitrate_kbps".to_owned(), bitrate.to_string());
+    }
+    // G-32: the target output size travels in the Plan so the executor can
+    // iterate the CRF ladder against it during acceptance.
+    if let Some(target_size_bytes) = request.target_size_bytes {
+        arguments.insert(
+            "target_size_bytes".to_owned(),
+            target_size_bytes.to_string(),
+        );
     }
 
     let mut changes = ChangeSet {
@@ -870,12 +881,15 @@ fn plan_mp4_conversion(
                 .saturating_add(probe.artifact.size_bytes / 10),
         ),
     };
-    let validators = vec![
+    let mut validators = vec![
         "media.output-opens".to_owned(),
         "media.target-format".to_owned(),
         "media.duration".to_owned(),
         "media.streams".to_owned(),
     ];
+    if request.target_size_bytes.is_some() {
+        validators.push("media.target-size".to_owned());
+    }
     let mut plan = Plan {
         schema_version: SCHEMA_VERSION,
         plan_id: Uuid::new_v4(),
@@ -1260,6 +1274,9 @@ mod tests {
             video_crf: None,
             video_preset: None,
             audio_bitrate_kbps: None,
+            watermark_text: None,
+            watermark_angle: None,
+            target_size_bytes: None,
         }
     }
 
@@ -1320,6 +1337,30 @@ mod tests {
             !untuned.steps[0]
                 .arguments
                 .contains_key("audio_bitrate_kbps")
+        );
+    }
+
+    #[test]
+    fn target_size_flows_into_the_mp4_plan() {
+        let mut sized = request();
+        sized.target_size_bytes = Some(307_200);
+        let plan = plan_conversion(&probe("vp9", Some("opus")), &sized, &engine())
+            .expect("sized transcode plan");
+        assert_eq!(plan.steps[0].arguments["target_size_bytes"], "307200");
+        assert!(
+            plan.validators
+                .iter()
+                .any(|validator| validator == "media.target-size")
+        );
+
+        let untuned = plan_conversion(&probe("vp9", Some("opus")), &request(), &engine())
+            .expect("default transcode plan");
+        assert!(!untuned.steps[0].arguments.contains_key("target_size_bytes"));
+        assert!(
+            !untuned
+                .validators
+                .iter()
+                .any(|validator| validator == "media.target-size")
         );
     }
 

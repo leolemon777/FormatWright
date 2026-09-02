@@ -259,108 +259,42 @@ where
         )
         .await;
     }
-    let mut command = Command::new(&step.engine.binary_path);
-    command
-        .current_dir(output_parent)
-        .arg("-nostdin")
-        .arg("-hide_banner")
-        .arg("-v")
-        .arg("error")
-        .arg("-progress")
-        .arg("pipe:1")
-        .arg("-nostats")
-        .arg("-protocol_whitelist")
-        .arg("file,pipe")
-        .arg("-i")
-        .arg(&input.artifact.canonical_path);
-    configure_ffmpeg_output(&mut command, plan, &partial_path)?;
-    command
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
-
-    // A dedicated Unix process group lets cancellation reach descendants as
-    // well as the adapter process. PID 0 means the child becomes group leader.
-    #[cfg(unix)]
-    command.process_group(0);
-
-    tracing::info!(
-        job_id = %job_id,
-        input = %input.artifact.canonical_path.display(),
-        partial = %partial_path.display(),
-        "starting conversion engine"
-    );
-    let mut child = command.spawn().map_err(|error| {
-        FormatWrightError::new(
-            ErrorCode::EngineIncompatible,
-            Stage::Execute,
-            "Unable to start FFmpeg",
-            "Run doctor and verify the selected engine.",
-        )
-        .with_diagnostic(error.to_string())
-    })?;
-    let stdout = child.stdout.take().ok_or_else(|| {
-        FormatWrightError::new(
-            ErrorCode::Internal,
-            Stage::Execute,
-            "FFmpeg stdout pipe was not created",
-            "Report this internal error.",
-        )
-    })?;
-    let stderr = child.stderr.take().ok_or_else(|| {
-        FormatWrightError::new(
-            ErrorCode::Internal,
-            Stage::Execute,
-            "FFmpeg stderr pipe was not created",
-            "Report this internal error.",
-        )
-    })?;
-    let progress_task = tokio::spawn(drain_stream(stdout));
-    let stderr_task = tokio::spawn(read_bounded_tail(stderr, MAX_STDERR_BYTES));
-
-    let status = tokio::select! {
-        status = child.wait() => status.map_err(|error| {
-            FormatWrightError::new(
-                ErrorCode::ExecutionFailed,
-                Stage::Execute,
-                "Unable to wait for FFmpeg",
-                "Retry the conversion.",
-            )
-            .with_diagnostic(error.to_string())
-        })?,
-        () = cancellation.cancelled() => {
-            terminate_process_tree(&mut child).await;
-            cleanup_partial(&partial_path);
-            return Err(FormatWrightError::new(
-                ErrorCode::Cancelled,
-                Stage::Execute,
-                "Conversion was cancelled",
-                "Retry when ready.",
-            ));
-        }
+    // G-32: when an MP4 transcode carries a target output size, the runner
+    // iterates the CRF ladder (start, +6, +12, +18, capped at 51) and keeps
+    // the last attempt if the target stays out of reach; acceptance then
+    // reports a non-blocking VIDEO_TARGET_SIZE Warning instead of failing.
+    let target_size_bytes = mp4_target_size_bytes(plan);
+    let attempts: Vec<Option<u8>> = if target_size_bytes.is_some() {
+        let start_crf = video_crf_argument(step)?;
+        target_size_crf_ladder(start_crf)
+            .into_iter()
+            .map(Some)
+            .collect()
+    } else {
+        vec![None]
     };
-    let _ = progress_task.await;
-    let stderr = stderr_task
-        .await
-        .unwrap_or_else(|error| format!("stderr reader failed: {error}"));
-
-    if !status.success() {
-        cleanup_partial(&partial_path);
-        return Err(FormatWrightError::new(
-            ErrorCode::ExecutionFailed,
-            Stage::Execute,
-            format!("FFmpeg exited with status {status}"),
-            "Inspect the diagnostic, adjust the Plan, or try another engine.",
+    let mut final_crf: Option<u8> = None;
+    for (index, crf) in attempts.iter().copied().enumerate() {
+        if index > 0 {
+            // ffmpeg refuses to clobber an existing file without -y; drop the
+            // previous attempt's partial before re-encoding.
+            cleanup_partial(&partial_path);
+        }
+        run_ffmpeg_attempt(
+            input,
+            plan,
+            output_parent,
+            &partial_path,
+            cancellation.clone(),
+            crf,
         )
-        .with_diagnostic(stderr));
-    }
-    if !partial_path.is_file() {
-        return Err(FormatWrightError::new(
-            ErrorCode::ExecutionFailed,
-            Stage::Execute,
-            "FFmpeg reported success but produced no output",
-            "Retry with a different engine or report the input as a bug.",
-        ));
+        .await?;
+        final_crf = crf;
+        if let Some(target) = target_size_bytes
+            && std::fs::metadata(&partial_path).is_ok_and(|metadata| metadata.len() <= target)
+        {
+            break;
+        }
     }
 
     if cancellation.is_cancelled() {
@@ -390,6 +324,35 @@ where
         }
     };
     let mut report = validate_media_output(input, &output_probe, plan, job_id);
+    if let Some(target) = target_size_bytes {
+        // G-32 acceptance: a missed size target is a Warning, never a Fail —
+        // the ladder already exhausted the maximum CRF.
+        let measured_bytes = output_probe.artifact.size_bytes;
+        let met = measured_bytes <= target;
+        let check = crate::domain::ValidationCheck {
+            code: "VIDEO_TARGET_SIZE".to_owned(),
+            status: if met {
+                ValidationStatus::Pass
+            } else {
+                ValidationStatus::Warning
+            },
+            required: false,
+            expected: serde_json::json!(target),
+            observed: serde_json::json!(measured_bytes),
+            evidence: format!("final CRF attempt: crf={}", final_crf.unwrap_or_default()),
+            message: if met {
+                "Measured output bytes are within the requested target size.".to_owned()
+            } else {
+                format!(
+                    "Output exceeds the target size even at the final CRF ladder step (crf={}); \
+                     the highest-compression attempt was kept.",
+                    final_crf.unwrap_or_default()
+                )
+            },
+        };
+        report.status = report.status.worst(check.status);
+        report.checks.push(check);
+    }
     if report.status == ValidationStatus::Fail {
         cleanup_partial(&partial_path);
         return Err(FormatWrightError::new(
@@ -459,7 +422,11 @@ where
         .iter()
         .find(|value| value.engine.engine_id == "pdftoppm")
         .ok_or_else(|| invalid_plan_argument("Office PDF render-validation step"))?;
-    let source = checked_argument(step, "source_format", &["docx", "pptx", "xlsx"])?;
+    let source = checked_argument(
+        step,
+        "source_format",
+        &["docx", "pptx", "xlsx", "odt", "ods", "odp", "rtf"],
+    )?;
     checked_argument(step, "target_format", &["pdf"])?;
     checked_argument(step, "headless", &["true"])?;
     checked_argument(step, "isolated_profile", &["true"])?;
@@ -500,9 +467,9 @@ where
         }
     };
     let filter = match source {
-        "docx" => "pdf:writer_pdf_Export",
-        "pptx" => "pdf:impress_pdf_Export",
-        "xlsx" => "pdf:calc_pdf_Export",
+        "docx" | "odt" | "rtf" => "pdf:writer_pdf_Export",
+        "pptx" | "odp" => "pdf:impress_pdf_Export",
+        "xlsx" | "ods" => "pdf:calc_pdf_Export",
         _ => unreachable!("checked source format"),
     };
     let output_parent = output_path
@@ -1932,6 +1899,7 @@ fn pdf_ops_command(
     input: &Probe,
     operation: &str,
     plan_id: Uuid,
+    watermark_stamp: Option<&Path>,
 ) -> Result<Command> {
     let mut command = Command::new(&step.engine.binary_path);
     match operation {
@@ -1985,6 +1953,18 @@ fn pdf_ops_command(
                 .arg("--object-streams=generate")
                 .arg("--recompress-flate")
                 .arg("--compression-level=9");
+        }
+        "pdf-watermark" => {
+            // qpdf 12 stamps one overlay page per output page via
+            // `--overlay stamp.pdf --repeat=1-z`; the stamp layer is a
+            // dependency-free PDF built in-process from the input's first
+            // page dimensions (see pdf::build_watermark_pdf).
+            let stamp = watermark_stamp.ok_or_else(|| invalid_plan_argument("watermark stamp"))?;
+            command
+                .arg(external_process_path(&input.artifact.canonical_path))
+                .arg("--overlay")
+                .arg(external_process_path(stamp))
+                .arg("--repeat=1-z");
         }
         "pdf-encrypt" | "pdf-decrypt" => {
             // The Plan stores a `[redacted]` placeholder; the cleartext
@@ -2042,13 +2022,62 @@ async fn validate_pdf_operation_output(
         ));
     }
     let output_probe = crate::pdf::inspect_pdf(partial_path, pdfinfo).await?;
-    Ok(crate::pdf::validate_pdf_ops_output(
-        input,
-        &output_probe,
-        plan,
-        job_id,
-        expected_pages,
-    ))
+    let mut report =
+        crate::pdf::validate_pdf_ops_output(input, &output_probe, plan, job_id, expected_pages);
+    if operation == "pdf-watermark" {
+        // Required acceptance (G-23): the watermark text must survive into the
+        // output's extractable text layer, proving the overlay landed.
+        let expected_text = plan
+            .steps
+            .first()
+            .and_then(|step| step.arguments.get("watermark_text"))
+            .cloned()
+            .ok_or_else(|| invalid_plan_argument("watermark_text"))?;
+        let pdftotext = crate::doctor::inspect_engine("pdftotext").await?;
+        let extracted = extract_pdf_text_layer(partial_path, &pdftotext).await?;
+        crate::pdf::append_watermark_text_check(&mut report, &expected_text, &extracted);
+    }
+    Ok(report)
+}
+
+/// Extracts the concatenated text layer of a PDF with pdftotext (stdout mode).
+async fn extract_pdf_text_layer(path: &Path, pdftotext: &EngineIdentity) -> Result<String> {
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(60),
+        Command::new(&pdftotext.binary_path)
+            .arg(external_process_path(path))
+            .arg("-")
+            .output(),
+    )
+    .await
+    .map_err(|_| {
+        FormatWrightError::new(
+            ErrorCode::ExecutionFailed,
+            Stage::Validate,
+            "PDF text extraction timed out",
+            "Check whether the file or storage is responsive.",
+        )
+        .retryable(true)
+    })?
+    .map_err(|error| {
+        FormatWrightError::new(
+            ErrorCode::EngineIncompatible,
+            Stage::Validate,
+            "Unable to start pdftotext",
+            "Run doctor and verify the pdftotext installation.",
+        )
+        .with_diagnostic(error.to_string())
+    })?;
+    if !output.status.success() {
+        return Err(FormatWrightError::new(
+            ErrorCode::ValidationFailed,
+            Stage::Validate,
+            "pdftotext could not extract the output text",
+            "Inspect the output PDF and retry.",
+        )
+        .with_diagnostic(String::from_utf8_lossy(&output.stderr).into_owned()));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 /// Waits for the qpdf child, enforcing cancellation, stderr capture, and a
@@ -2109,6 +2138,7 @@ async fn await_pdf_ops_child(
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)]
 async fn execute_pdf_ops_plan<F>(
     input: &Probe,
     plan: &Plan,
@@ -2135,6 +2165,7 @@ where
             "pdf-compress",
             "pdf-encrypt",
             "pdf-decrypt",
+            "pdf-watermark",
         ],
     )?;
     let expected_pages: u32 = step
@@ -2142,7 +2173,78 @@ where
         .get("expected_pages")
         .and_then(|value| value.parse().ok())
         .ok_or_else(|| invalid_plan_argument("expected_pages"))?;
-    let mut command = pdf_ops_command(step, input, operation, plan.plan_id)?;
+    // G-23: the watermark overlay layer is generated in-process (zero engine
+    // dependency) from the input's first-page dimensions, then staged as a
+    // temporary PDF that qpdf overlays onto every page. The TempPath removes
+    // the layer on every exit path, including errors and cancellation, while
+    // releasing the write handle so qpdf can open the file on Windows.
+    let mut watermark_stamp: Option<tempfile::TempPath> = None;
+    if operation == "pdf-watermark" {
+        let text = step
+            .arguments
+            .get("watermark_text")
+            .ok_or_else(|| invalid_plan_argument("watermark_text"))?;
+        let angle: i16 = step
+            .arguments
+            .get("watermark_angle")
+            .and_then(|value| value.parse().ok())
+            .ok_or_else(|| invalid_plan_argument("watermark_angle"))?;
+        let first_page = input
+            .streams
+            .first()
+            .ok_or_else(|| invalid_plan_argument("watermark page dimensions"))?;
+        let width = first_page
+            .properties
+            .get("width_points")
+            .and_then(serde_json::Value::as_f64)
+            .ok_or_else(|| invalid_plan_argument("watermark page width"))?;
+        let height = first_page
+            .properties
+            .get("height_points")
+            .and_then(serde_json::Value::as_f64)
+            .ok_or_else(|| invalid_plan_argument("watermark page height"))?;
+        let layer = crate::pdf::build_watermark_pdf(width, height, text.as_str(), angle);
+        let mut stamp = tempfile::Builder::new()
+            .prefix("formatwright-watermark-")
+            .suffix(".pdf")
+            .tempfile()
+            .map_err(|error| {
+                FormatWrightError::new(
+                    ErrorCode::StorageFailed,
+                    Stage::Execute,
+                    "Unable to stage the watermark layer",
+                    "Check temporary-directory permissions and retry.",
+                )
+                .with_diagnostic(error.to_string())
+            })?;
+        std::io::Write::write_all(&mut stamp, &layer).map_err(|error| {
+            FormatWrightError::new(
+                ErrorCode::StorageFailed,
+                Stage::Execute,
+                "Unable to write the watermark layer",
+                "Check temporary-directory permissions and retry.",
+            )
+            .with_diagnostic(error.to_string())
+        })?;
+        stamp.as_file().sync_all().map_err(|error| {
+            FormatWrightError::new(
+                ErrorCode::StorageFailed,
+                Stage::Execute,
+                "Unable to flush the watermark layer",
+                "Check temporary-directory permissions and retry.",
+            )
+            .with_diagnostic(error.to_string())
+        })?;
+        // Drop the open handle; qpdf needs to open the layer itself.
+        watermark_stamp = Some(stamp.into_temp_path());
+    }
+    let mut command = pdf_ops_command(
+        step,
+        input,
+        operation,
+        plan.plan_id,
+        watermark_stamp.as_deref(),
+    )?;
     command.arg("--").arg(partial_path);
     command
         .stdout(Stdio::piped())
@@ -2608,8 +2710,167 @@ where
     })
 }
 
+/// Runs one `FFmpeg` attempt end to end: command assembly, spawn, cancellation,
+/// bounded stderr capture, exit-status, and output-file checks. `crf_override`
+/// replaces the planned CRF for target-size iteration (G-32).
 #[allow(clippy::too_many_lines)]
-fn configure_ffmpeg_output(command: &mut Command, plan: &Plan, partial_path: &Path) -> Result<()> {
+async fn run_ffmpeg_attempt(
+    input: &Probe,
+    plan: &Plan,
+    output_parent: &Path,
+    partial_path: &Path,
+    cancellation: CancellationToken,
+    crf_override: Option<u8>,
+) -> Result<()> {
+    let step = plan.steps.first().ok_or_else(|| {
+        FormatWrightError::new(
+            ErrorCode::Internal,
+            Stage::Execute,
+            "Plan has no FFmpeg step",
+            "Create a new Plan and retry.",
+        )
+    })?;
+    let mut command = Command::new(&step.engine.binary_path);
+    command
+        .current_dir(output_parent)
+        .arg("-nostdin")
+        .arg("-hide_banner")
+        .arg("-v")
+        .arg("error")
+        .arg("-progress")
+        .arg("pipe:1")
+        .arg("-nostats")
+        .arg("-protocol_whitelist")
+        .arg("file,pipe")
+        .arg("-i")
+        .arg(&input.artifact.canonical_path);
+    configure_ffmpeg_output(&mut command, plan, partial_path, crf_override)?;
+    command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+
+    // A dedicated Unix process group lets cancellation reach descendants as
+    // well as the adapter process. PID 0 means the child becomes group leader.
+    #[cfg(unix)]
+    command.process_group(0);
+
+    tracing::info!(
+        input = %input.artifact.canonical_path.display(),
+        partial = %partial_path.display(),
+        "starting conversion engine"
+    );
+    let mut child = command.spawn().map_err(|error| {
+        FormatWrightError::new(
+            ErrorCode::EngineIncompatible,
+            Stage::Execute,
+            "Unable to start FFmpeg",
+            "Run doctor and verify the selected engine.",
+        )
+        .with_diagnostic(error.to_string())
+    })?;
+    let stdout = child.stdout.take().ok_or_else(|| {
+        FormatWrightError::new(
+            ErrorCode::Internal,
+            Stage::Execute,
+            "FFmpeg stdout pipe was not created",
+            "Report this internal error.",
+        )
+    })?;
+    let stderr = child.stderr.take().ok_or_else(|| {
+        FormatWrightError::new(
+            ErrorCode::Internal,
+            Stage::Execute,
+            "FFmpeg stderr pipe was not created",
+            "Report this internal error.",
+        )
+    })?;
+    let progress_task = tokio::spawn(drain_stream(stdout));
+    let stderr_task = tokio::spawn(read_bounded_tail(stderr, MAX_STDERR_BYTES));
+
+    let status = tokio::select! {
+        status = child.wait() => status.map_err(|error| {
+            FormatWrightError::new(
+                ErrorCode::ExecutionFailed,
+                Stage::Execute,
+                "Unable to wait for FFmpeg",
+                "Retry the conversion.",
+            )
+            .with_diagnostic(error.to_string())
+        })?,
+        () = cancellation.cancelled() => {
+            terminate_process_tree(&mut child).await;
+            cleanup_partial(partial_path);
+            return Err(FormatWrightError::new(
+                ErrorCode::Cancelled,
+                Stage::Execute,
+                "Conversion was cancelled",
+                "Retry when ready.",
+            ));
+        }
+    };
+    let _ = progress_task.await;
+    let stderr = stderr_task
+        .await
+        .unwrap_or_else(|error| format!("stderr reader failed: {error}"));
+
+    if !status.success() {
+        cleanup_partial(partial_path);
+        return Err(FormatWrightError::new(
+            ErrorCode::ExecutionFailed,
+            Stage::Execute,
+            format!("FFmpeg exited with status {status}"),
+            "Inspect the diagnostic, adjust the Plan, or try another engine.",
+        )
+        .with_diagnostic(stderr));
+    }
+    if !partial_path.is_file() {
+        return Err(FormatWrightError::new(
+            ErrorCode::ExecutionFailed,
+            Stage::Execute,
+            "FFmpeg reported success but produced no output",
+            "Retry with a different engine or report the input as a bug.",
+        ));
+    }
+    Ok(())
+}
+
+/// Returns the planned MP4 target size (G-32) when a real transcode (not a
+/// copy-mode remux) can chase it via the CRF ladder.
+fn mp4_target_size_bytes(plan: &Plan) -> Option<u64> {
+    if plan.target_format != "mp4" {
+        return None;
+    }
+    let step = plan.steps.first()?;
+    if step.arguments.get("video_mode").map(String::as_str) == Some("copy") {
+        return None;
+    }
+    step.arguments
+        .get("target_size_bytes")
+        .and_then(|value| value.parse::<u64>().ok())
+}
+
+/// CRF ladder for target-size iteration (G-32): the planned starting CRF,
+/// then +6 per retry, capped at the x264 maximum of 51, at most four runs.
+fn target_size_crf_ladder(start_crf: u8) -> Vec<u8> {
+    let mut ladder = Vec::with_capacity(4);
+    for step in 0..4 {
+        let crf = (i16::from(start_crf) + 6 * step).min(51);
+        let crf = u8::try_from(crf).unwrap_or(51);
+        if ladder.last() != Some(&crf) {
+            ladder.push(crf);
+        }
+    }
+    ladder
+}
+
+#[allow(clippy::too_many_lines)]
+fn configure_ffmpeg_output(
+    command: &mut Command,
+    plan: &Plan,
+    partial_path: &Path,
+    crf_override: Option<u8>,
+) -> Result<()> {
     let step = plan.steps.first().ok_or_else(|| {
         FormatWrightError::new(
             ErrorCode::Internal,
@@ -2634,7 +2895,10 @@ fn configure_ffmpeg_output(command: &mut Command, plan: &Plan, partial_path: &Pa
             command.arg("-c:v").arg(video_mode);
             if video_mode != "copy" {
                 let preset = video_preset_argument(step)?;
-                let crf = video_crf_argument(step)?;
+                let crf = match crf_override {
+                    Some(value) => value,
+                    None => video_crf_argument(step)?,
+                };
                 command
                     .arg("-preset")
                     .arg(preset)
@@ -3358,8 +3622,8 @@ mod tests {
     #[cfg(windows)]
     use super::{cleanup_partial, terminate_process_tree, wait_for_regular_file};
     use super::{
-        cleanup_staged_output, enforce_network_policy, resolve_output_path,
-        staged_output_candidates, staged_output_path,
+        cleanup_staged_output, enforce_network_policy, mp4_target_size_bytes, resolve_output_path,
+        staged_output_candidates, staged_output_path, target_size_crf_ladder,
     };
     use crate::ErrorCode;
     use crate::domain::{ChangeSet, NetworkPolicy, Plan, PlanStep, SCHEMA_VERSION};
@@ -3420,6 +3684,47 @@ mod tests {
             audio_bitrate_argument(&knob_step(&[("audio_bitrate_kbps", "4")])).is_err(),
             "bitrates below 8 kbps are rejected"
         );
+    }
+
+    #[test]
+    fn target_size_ladder_and_extraction_follow_the_plan() {
+        assert_eq!(target_size_crf_ladder(20), vec![20, 26, 32, 38]);
+        assert_eq!(target_size_crf_ladder(23), vec![23, 29, 35, 41]);
+        // High starting CRFs cap at the x264 maximum without duplicates.
+        assert_eq!(target_size_crf_ladder(48), vec![48, 51]);
+        assert_eq!(target_size_crf_ladder(51), vec![51]);
+
+        let mut plan = Plan {
+            schema_version: SCHEMA_VERSION,
+            plan_id: Uuid::new_v4(),
+            plan_hash: "blake3:test".to_owned(),
+            input_fingerprint: "fwfp-v1:test".to_owned(),
+            target_format: "mp4".to_owned(),
+            constraints: BTreeMap::new(),
+            steps: vec![knob_step(&[
+                ("video_mode", "libx264"),
+                ("target_size_bytes", "307200"),
+            ])],
+            changes: ChangeSet::default(),
+            validators: Vec::new(),
+            network_policy: NetworkPolicy::Deny,
+            output_path: None,
+            estimated_output_bytes: None,
+        };
+        assert_eq!(mp4_target_size_bytes(&plan), Some(307_200));
+
+        // Copy-mode (remux) plans cannot chase a target via CRF.
+        plan.steps[0]
+            .arguments
+            .insert("video_mode".to_owned(), "copy".to_owned());
+        assert_eq!(mp4_target_size_bytes(&plan), None);
+
+        // Non-MP4 targets never apply.
+        plan.target_format = "webm".to_owned();
+        plan.steps[0]
+            .arguments
+            .insert("video_mode".to_owned(), "libx264".to_owned());
+        assert_eq!(mp4_target_size_bytes(&plan), None);
     }
 
     #[test]

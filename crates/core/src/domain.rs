@@ -156,6 +156,18 @@ pub struct PlanRequest {
     /// field never reaches a serialized Plan or report.
     #[serde(default)]
     pub password: Option<String>,
+    /// Watermark text for the `pdf-watermark` operation. Unlike passwords,
+    /// watermark text is not confidential and travels inside the Plan.
+    #[serde(default)]
+    pub watermark_text: Option<String>,
+    /// Watermark angle in degrees (-180..=180) for `pdf-watermark`; the
+    /// planner defaults to -45.
+    #[serde(default)]
+    pub watermark_angle: Option<i16>,
+    /// Target output size in bytes for MP4 transcoding (G-32). The runner
+    /// iterates the CRF ladder when the first attempt exceeds the target.
+    #[serde(default)]
+    pub target_size_bytes: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]

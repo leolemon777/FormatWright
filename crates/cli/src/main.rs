@@ -116,11 +116,7 @@ enum Command {
         #[arg(long, value_name = "0-51", help = "Video encode CRF (lower is better)")]
         video_crf: Option<u8>,
 
-        #[arg(
-            long,
-            value_name = "ultrafast..veryslow",
-            help = "Video encode preset"
-        )]
+        #[arg(long, value_name = "ultrafast..veryslow", help = "Video encode preset")]
         video_preset: Option<String>,
 
         #[arg(long, value_name = "8-320", help = "Audio bitrate in kbps")]
@@ -181,11 +177,7 @@ enum Command {
         #[arg(long, value_name = "0-51", help = "Video encode CRF (lower is better)")]
         video_crf: Option<u8>,
 
-        #[arg(
-            long,
-            value_name = "ultrafast..veryslow",
-            help = "Video encode preset"
-        )]
+        #[arg(long, value_name = "ultrafast..veryslow", help = "Video encode preset")]
         video_preset: Option<String>,
 
         #[arg(long, value_name = "8-320", help = "Audio bitrate in kbps")]
@@ -222,12 +214,25 @@ enum Command {
         )]
         angle: Option<u16>,
 
+        #[arg(long, value_name = "PW", help = "Password for pdf-encrypt/pdf-decrypt")]
+        password: Option<String>,
+
+        #[arg(long, value_name = "TEXT", help = "Watermark text for pdf-watermark")]
+        watermark_text: Option<String>,
+
         #[arg(
             long,
-            value_name = "PW",
-            help = "Password for pdf-encrypt/pdf-decrypt"
+            value_name = "-180..180",
+            help = "Watermark angle in degrees for pdf-watermark (default -45)"
         )]
-        password: Option<String>,
+        watermark_angle: Option<i16>,
+
+        #[arg(
+            long,
+            value_name = "KB",
+            help = "Target MP4 output size in KB (transcode iterates CRF)"
+        )]
+        target_size_kb: Option<u64>,
 
         #[arg(long, help = "Print the Plan and do not execute")]
         dry_run: bool,
@@ -660,6 +665,9 @@ async fn run(cli: Cli) -> Result<(), FormatWrightError> {
                 allow_lossy_data,
                 rotate_angle: None,
                 password: None,
+                watermark_text: None,
+                watermark_angle: None,
+                target_size_bytes: None,
             };
             let (_, plan, _) = prepare_conversion(&input, &request).await?;
             if cli.json {
@@ -692,6 +700,9 @@ async fn run(cli: Cli) -> Result<(), FormatWrightError> {
             pages,
             angle,
             password,
+            watermark_text,
+            watermark_angle,
+            target_size_kb,
             dry_run,
             queue_only,
             idempotency_key,
@@ -720,6 +731,9 @@ async fn run(cli: Cli) -> Result<(), FormatWrightError> {
                 allow_lossy_data,
                 rotate_angle: angle,
                 password,
+                watermark_text,
+                watermark_angle,
+                target_size_bytes: target_size_kb.map(|kb| kb.saturating_mul(1024)),
             };
             let (probe, plan, validation_engine) = prepare_conversion(&input, &request).await?;
             if dry_run && queue_only {

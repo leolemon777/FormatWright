@@ -198,6 +198,7 @@ fn is_archive_target(target: &str) -> bool {
 
 /// Dispatches operation-style requests (ADR-0013): the operation name, not
 /// the (input, target) pair, routes the workflow.
+#[allow(clippy::too_many_lines)]
 async fn prepare_pdf_operation(
     input: &Path,
     request: &PlanRequest,
@@ -283,11 +284,31 @@ async fn prepare_pdf_operation(
             };
             Ok((probe, plan, qpdf))
         }
+        "pdf-watermark" => {
+            let probe = inspect_pdf(input, &pdfinfo).await?;
+            let text = request.watermark_text.as_deref().ok_or_else(|| {
+                FormatWrightError::new(
+                    ErrorCode::InputInvalid,
+                    Stage::Plan,
+                    "PDF watermark needs text",
+                    "Pass --watermark-text with the stamp text.",
+                )
+            })?;
+            let output = required_output(request, "PDF watermark")?;
+            let plan = crate::pdf::plan_pdf_watermark(
+                &probe,
+                text,
+                request.watermark_angle,
+                output,
+                &qpdf,
+            )?;
+            Ok((probe, plan, qpdf))
+        }
         other => Err(FormatWrightError::new(
             ErrorCode::Unsupported,
             Stage::Plan,
             format!("Unknown operation: {other}"),
-            "Choose pdf-merge, pdf-extract, pdf-rotate, pdf-compress, pdf-encrypt, or pdf-decrypt.",
+            "Choose pdf-merge, pdf-extract, pdf-rotate, pdf-compress, pdf-encrypt, pdf-decrypt, or pdf-watermark.",
         )),
     }
 }

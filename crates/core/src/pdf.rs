@@ -92,7 +92,13 @@ async fn inspect_pdf_inner(
         Some(password) => vec!["-upw", password, "-enc", "UTF-8"],
         None => vec!["-enc", "UTF-8"],
     };
-    let summary = run_pdfinfo(pdfinfo, &unlocked_summary_args, &artifact.canonical_path).await?;
+    let summary = run_pdfinfo(
+        pdfinfo,
+        &unlocked_summary_args,
+        &artifact.canonical_path,
+        password.is_some(),
+    )
+    .await?;
     let page_count = parse_u32_field(&summary, "Pages").ok_or_else(|| {
         incompatible_pdfinfo("pdfinfo did not report a valid page count", &summary)
     })?;
@@ -133,7 +139,13 @@ async fn inspect_pdf_inner(
         "-enc",
         "UTF-8",
     ]);
-    let details = run_pdfinfo(pdfinfo, &unlocked_details_args, &artifact.canonical_path).await?;
+    let details = run_pdfinfo(
+        pdfinfo,
+        &unlocked_details_args,
+        &artifact.canonical_path,
+        password.is_some(),
+    )
+    .await?;
     pdf_probe_from_details(artifact, &details, page_count, &summary, pdfinfo)
 }
 
@@ -548,7 +560,12 @@ pub(crate) async fn validate_pdf_render(
     })
 }
 
-async fn run_pdfinfo(engine: &EngineIdentity, arguments: &[&str], path: &Path) -> Result<String> {
+async fn run_pdfinfo(
+    engine: &EngineIdentity,
+    arguments: &[&str],
+    path: &Path,
+    password_attempt: bool,
+) -> Result<String> {
     let mut command = Command::new(&engine.binary_path);
     command.args(arguments).arg(path);
     let output = tokio::time::timeout(PDFINFO_TIMEOUT, command.output())
@@ -576,6 +593,16 @@ async fn run_pdfinfo(engine: &EngineIdentity, arguments: &[&str], path: &Path) -
     if !output.status.success() {
         let combined = format!("{stdout}\n{stderr}");
         if combined.to_ascii_lowercase().contains("incorrect password") {
+            if password_attempt {
+                // The caller supplied `-upw`: the password is simply wrong for
+                // this document (pdf-decrypt planning path).
+                return Err(FormatWrightError::new(
+                    ErrorCode::InputInvalid,
+                    Stage::Inspect,
+                    "The password did not unlock the document",
+                    "Check the password and retry.",
+                ));
+            }
             return Err(FormatWrightError::new(
                 ErrorCode::PolicyBlocked,
                 Stage::Inspect,
@@ -1561,6 +1588,224 @@ pub fn plan_pdf_decrypt(
     )
 }
 
+/// Upper bound for watermark text length; longer banners degrade readability
+/// on typical pages.
+const MAX_WATERMARK_TEXT_BYTES: usize = 80;
+const WATERMARK_FONT_SIZE_PT: f64 = 36.0;
+const WATERMARK_FILL_ALPHA: &str = "0.18";
+
+/// Plans a qpdf text watermark stamped on every page (ADR-0013, G-23). The
+/// watermark text itself is not confidential, so it travels inside the Plan
+/// (unlike passwords); page count is conserved.
+///
+/// # Errors
+///
+/// Returns `InputInvalid` for empty, overlong, or non-printable-ASCII text and
+/// for angles outside -180..=180, `Unsupported`/`EngineIncompatible` otherwise.
+pub fn plan_pdf_watermark(
+    probe: &Probe,
+    text: &str,
+    angle: Option<i16>,
+    output_path: PathBuf,
+    qpdf: &EngineIdentity,
+) -> Result<Plan> {
+    ensure_pdf_probe(probe, "watermark")?;
+    ensure_qpdf(qpdf, "watermark")?;
+    let text = text.trim();
+    if text.is_empty() {
+        return Err(FormatWrightError::new(
+            ErrorCode::InputInvalid,
+            Stage::Plan,
+            "PDF watermark needs non-empty text",
+            "Pass --watermark-text with the stamp text.",
+        ));
+    }
+    if text.len() > MAX_WATERMARK_TEXT_BYTES
+        || !text.bytes().all(|byte| (0x20..=0x7E).contains(&byte))
+    {
+        return Err(FormatWrightError::new(
+            ErrorCode::InputInvalid,
+            Stage::Plan,
+            format!(
+                "Watermark text must be printable ASCII of at most {MAX_WATERMARK_TEXT_BYTES} bytes"
+            ),
+            "Use plain ASCII letters, digits, spaces, and punctuation.",
+        ));
+    }
+    let angle = angle.unwrap_or(-45);
+    if !(-180..=180).contains(&angle) {
+        return Err(FormatWrightError::new(
+            ErrorCode::InputInvalid,
+            Stage::Plan,
+            format!("Watermark angle must be within -180..=180 degrees; got {angle}"),
+            "Pass --watermark-angle between -180 and 180.",
+        ));
+    }
+    let page_count = u32::try_from(probe.streams.len()).unwrap_or(u32::MAX);
+    let arguments = BTreeMap::from([
+        ("operation".to_owned(), "pdf-watermark".to_owned()),
+        ("watermark_text".to_owned(), text.to_owned()),
+        ("watermark_angle".to_owned(), angle.to_string()),
+        ("expected_pages".to_owned(), page_count.to_string()),
+    ]);
+    pdf_operation_plan(
+        "qpdf.pdf-watermark",
+        arguments,
+        probe,
+        output_path,
+        qpdf,
+        ChangeSet {
+            preserved: vec![
+                "every page in document order".to_owned(),
+                "existing page content".to_owned(),
+            ],
+            changed: vec![format!(
+                "a translucent '{text}' watermark at {angle} degrees is stamped on every page"
+            )],
+            dropped: vec![],
+            unknown: vec!["z-order of the watermark over interactive forms".to_owned()],
+        },
+        vec![
+            "pdf-ops.watermark-page-count".to_owned(),
+            "pdf-ops.watermark-text-present".to_owned(),
+        ],
+    )
+}
+
+/// Builds a minimal one-page watermark-overlay PDF (G-23): Helvetica-Bold
+/// text, centered, rotated, 0.18 alpha via `ExtGState`, mid-gray fill. The
+/// is uncompressed PDF 1.4 with a hand-built xref table — zero dependencies,
+/// fully deterministic for identical inputs.
+pub(crate) fn build_watermark_pdf(
+    page_width_pt: f64,
+    page_height_pt: f64,
+    text: &str,
+    angle_degrees: i16,
+) -> Vec<u8> {
+    let radians = f64::from(angle_degrees).to_radians();
+    let (sin, cos) = radians.sin_cos();
+    let neg_sin = -sin;
+    let center_x = page_width_pt / 2.0;
+    let center_y = page_height_pt / 2.0;
+    // Helvetica-Bold average glyph width (~0.58 em) approximates the string
+    // width well enough to center the baseline.
+    let character_count = u16::try_from(text.chars().count()).unwrap_or(u16::MAX);
+    let text_width = WATERMARK_FONT_SIZE_PT * 0.58 * f64::from(character_count);
+    let escaped = escape_pdf_text(text);
+    let content = format!(
+        "q\n{cos:.5} {sin:.5} {neg_sin:.5} {cos:.5} {center_x:.2} {center_y:.2} cm\n\
+         /Gs0 gs\n0.5 g\nBT\n/F1 {WATERMARK_FONT_SIZE_PT:.0} Tf\n\
+         1 0 0 1 {:.2} {:.2} Td\n({escaped}) Tj\nET\nQ\n",
+        -text_width / 2.0,
+        -WATERMARK_FONT_SIZE_PT * 0.35,
+    );
+    let mut objects: Vec<String> = Vec::with_capacity(6);
+    objects.push("<< /Type /Catalog /Pages 2 0 R >>".to_owned());
+    objects.push("<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_owned());
+    objects.push(format!(
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {page_width_pt:.2} {page_height_pt:.2}] \
+         /Resources << /Font << /F1 5 0 R >> /ExtGState << /Gs0 6 0 R >> >> /Contents 4 0 R >>"
+    ));
+    objects.push(format!(
+        "<< /Length {} >>\nstream\n{content}endstream",
+        content.len()
+    ));
+    objects.push("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>".to_owned());
+    objects.push(format!(
+        "<< /Type /ExtGState /ca {WATERMARK_FILL_ALPHA} /CA {WATERMARK_FILL_ALPHA} >>"
+    ));
+
+    let mut pdf = Vec::with_capacity(2048);
+    pdf.extend_from_slice(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n");
+    let mut offsets = Vec::with_capacity(objects.len());
+    for (index, object) in objects.iter().enumerate() {
+        offsets.push(pdf.len() as u64);
+        pdf.extend_from_slice(format!("{} 0 obj\n{object}\nendobj\n", index + 1).as_bytes());
+    }
+    let xref_offset = pdf.len() as u64;
+    pdf.extend_from_slice(format!("xref\n0 {}\n", objects.len() + 1).as_bytes());
+    pdf.extend_from_slice(b"0000000000 65535 f \n");
+    for offset in offsets {
+        pdf.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+    }
+    pdf.extend_from_slice(
+        format!(
+            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref_offset}\n%%EOF\n",
+            objects.len() + 1
+        )
+        .as_bytes(),
+    );
+    pdf
+}
+
+fn escape_pdf_text(text: &str) -> String {
+    let mut escaped = String::with_capacity(text.len());
+    for character in text.chars() {
+        match character {
+            '(' | ')' | '\\' => {
+                escaped.push('\\');
+                escaped.push(character);
+            }
+            _ => escaped.push(character),
+        }
+    }
+    escaped
+}
+
+/// Lowercases and strips all whitespace so `pdftotext` output can be matched
+/// against the planned watermark text without layout sensitivity.
+pub(crate) fn normalized_watermark_text(text: &str) -> String {
+    text.chars()
+        .filter(|character| !character.is_whitespace())
+        .map(|character| character.to_ascii_lowercase())
+        .collect()
+}
+
+/// Multi-set (character-histogram) containment of the expected watermark
+/// text inside the extracted text. Poppler reorders the glyphs of rotated
+/// text into visual line fragments, so an exact substring match is not
+/// reliable even though every character is present.
+pub(crate) fn watermark_chars_present(expected_text: &str, extracted_text: &str) -> bool {
+    let mut remaining: Vec<char> = normalized_watermark_text(expected_text).chars().collect();
+    for character in normalized_watermark_text(extracted_text).chars() {
+        if let Some(position) = remaining.iter().position(|value| *value == character) {
+            remaining.remove(position);
+        }
+        if remaining.is_empty() {
+            return true;
+        }
+    }
+    remaining.is_empty()
+}
+
+/// Appends the machine-readable watermark-text acceptance check (G-23) to an
+/// operation report and re-derives the worst-case report status.
+pub(crate) fn append_watermark_text_check(
+    report: &mut crate::domain::ValidationReport,
+    expected_text: &str,
+    extracted_text: &str,
+) {
+    let normalized_extracted = normalized_watermark_text(extracted_text);
+    let normalized_expected = normalized_watermark_text(expected_text);
+    let present = normalized_extracted.contains(&normalized_expected)
+        || watermark_chars_present(&normalized_expected, &normalized_extracted);
+    let check = ValidationCheck {
+        code: "PDF_OPS_WATERMARK_TEXT".to_owned(),
+        status: if present {
+            ValidationStatus::Pass
+        } else {
+            ValidationStatus::Fail
+        },
+        required: true,
+        expected: json!(expected_text),
+        observed: json!(present),
+        evidence: "Poppler pdftotext".to_owned(),
+        message: "Every-page text extraction must contain the watermark text.".to_owned(),
+    };
+    report.status = report.status.worst(check.status);
+    report.checks.push(check);
+}
+
 /// Validates an encryption output (ADR-0013, G-22). Page-count conservation
 /// cannot be probed: pdfinfo refuses to open the AES-256 output without the
 /// password. That refusal is itself the acceptance evidence — the caller runs
@@ -1652,9 +1897,10 @@ mod tests {
     use formatwright_engine_sdk::{Certification, EngineIdentity};
 
     use super::{
+        append_watermark_text_check, build_watermark_pdf, normalized_watermark_text,
         parse_page_details, parse_page_range, plan_pdf_compress, plan_pdf_decrypt,
         plan_pdf_encrypt, plan_pdf_extract, plan_pdf_merge, plan_pdf_render, plan_pdf_rotate,
-        poppler_raster_dimension,
+        plan_pdf_watermark, poppler_raster_dimension,
     };
     use crate::domain::{
         ArtifactIdentity, FormatDescriptor, FormatKind, PlanRequest, Probe, ProbeEvidence,
@@ -1969,5 +2215,184 @@ mod tests {
             plan_pdf_decrypt(&probe(), None, PathBuf::from("x.pdf"), &qpdf_engine()).is_err(),
             "decryption without a password is rejected"
         );
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn watermark_plans_carry_the_text_and_default_angle() {
+        let plan = plan_pdf_watermark(
+            &probe(),
+            "CONFIDENTIAL 440",
+            None,
+            PathBuf::from("stamped.pdf"),
+            &qpdf_engine(),
+        )
+        .expect("watermark plan");
+        assert_eq!(plan.steps[0].arguments["operation"], "pdf-watermark");
+        assert_eq!(
+            plan.steps[0].arguments["watermark_text"],
+            "CONFIDENTIAL 440"
+        );
+        assert_eq!(plan.steps[0].arguments["watermark_angle"], "-45");
+        assert_eq!(plan.steps[0].arguments["expected_pages"], "2");
+        for validator in [
+            "pdf-ops.watermark-page-count",
+            "pdf-ops.watermark-text-present",
+        ] {
+            assert!(
+                plan.validators.iter().any(|value| value == validator),
+                "missing validator {validator}"
+            );
+        }
+        let serialized = serde_json::to_string(&plan).expect("serialized Plan");
+        assert!(
+            serialized.contains("CONFIDENTIAL 440"),
+            "watermark text is not confidential and must serialize into the Plan"
+        );
+
+        let angled = plan_pdf_watermark(
+            &probe(),
+            "draft",
+            Some(30),
+            PathBuf::from("stamped.pdf"),
+            &qpdf_engine(),
+        )
+        .expect("angled watermark plan");
+        assert_eq!(angled.steps[0].arguments["watermark_angle"], "30");
+
+        assert!(
+            plan_pdf_watermark(
+                &probe(),
+                "   ",
+                None,
+                PathBuf::from("x.pdf"),
+                &qpdf_engine()
+            )
+            .is_err(),
+            "blank watermark text is rejected"
+        );
+        assert!(
+            plan_pdf_watermark(
+                &probe(),
+                " Confidential ",
+                None,
+                PathBuf::from("x.pdf"),
+                &qpdf_engine()
+            )
+            .is_ok(),
+            "surrounding whitespace is trimmed, not fatal"
+        );
+        assert!(
+            plan_pdf_watermark(
+                &probe(),
+                &"x".repeat(81),
+                None,
+                PathBuf::from("x.pdf"),
+                &qpdf_engine()
+            )
+            .is_err(),
+            "overlong watermark text is rejected"
+        );
+        assert!(
+            plan_pdf_watermark(
+                &probe(),
+                "mérkit",
+                None,
+                PathBuf::from("x.pdf"),
+                &qpdf_engine()
+            )
+            .is_err(),
+            "non-ASCII watermark text is rejected"
+        );
+        assert!(
+            plan_pdf_watermark(
+                &probe(),
+                "ok",
+                Some(181),
+                PathBuf::from("x.pdf"),
+                &qpdf_engine()
+            )
+            .is_err(),
+            "angles beyond 180 are rejected"
+        );
+        assert!(
+            plan_pdf_watermark(
+                &probe(),
+                "ok",
+                Some(-181),
+                PathBuf::from("x.pdf"),
+                &qpdf_engine()
+            )
+            .is_err(),
+            "angles below -180 are rejected"
+        );
+        assert!(
+            plan_pdf_watermark(&probe(), "ok", None, PathBuf::from("x.pdf"), &engine()).is_err(),
+            "the watermark plan rejects non-qpdf engines"
+        );
+    }
+
+    #[test]
+    fn watermark_layer_pdf_has_a_valid_shape() {
+        let pdf = build_watermark_pdf(612.0, 792.0, "CONFIDENTIAL 440", -45);
+        assert!(
+            pdf.starts_with(b"%PDF-"),
+            "watermark layer starts with %PDF"
+        );
+        assert!(pdf.ends_with(b"%%EOF\n"), "watermark layer ends with %%EOF");
+        let text = String::from_utf8_lossy(&pdf);
+        assert!(text.contains("/Helvetica-Bold"), "font is embedded by name");
+        assert!(text.contains("xref"), "xref table present");
+        assert!(text.contains("/ExtGState"), "alpha state present");
+        assert!(text.contains("(CONFIDENTIAL 440) Tj"), "text is drawn");
+        // Escaping: parentheses and backslashes must not break the string.
+        let escaped = build_watermark_pdf(612.0, 792.0, "a(b)c\\d", 0);
+        assert!(String::from_utf8_lossy(&escaped).contains(r"(a\(b\)c\\d) Tj"));
+        // Determinism: identical inputs produce byte-identical output.
+        assert_eq!(
+            build_watermark_pdf(612.0, 792.0, "same", -45),
+            build_watermark_pdf(612.0, 792.0, "same", -45)
+        );
+    }
+
+    #[test]
+    fn watermark_text_matching_ignores_case_and_whitespace() {
+        use uuid::Uuid;
+
+        assert_eq!(
+            normalized_watermark_text("  Con fidential\t440\n"),
+            "confidential440"
+        );
+        assert_eq!(normalized_watermark_text("DRAFT"), "draft");
+
+        let mut report = crate::domain::ValidationReport {
+            schema_version: SCHEMA_VERSION,
+            report_id: Uuid::new_v4(),
+            job_id: Uuid::new_v4(),
+            plan_hash: "hash".to_owned(),
+            status: crate::domain::ValidationStatus::Pass,
+            input: super::artifact_summary(&probe()),
+            output: super::artifact_summary(&probe()),
+            engines: Vec::new(),
+            checks: Vec::new(),
+            intentional_changes: Vec::new(),
+            redaction: crate::domain::ReportRedaction {
+                paths_redacted: false,
+                metadata_values_redacted: true,
+            },
+        };
+        append_watermark_text_check(
+            &mut report,
+            "Confidential 440",
+            "page text … CONFIDENTIAL\n440",
+        );
+        assert_eq!(report.status, crate::domain::ValidationStatus::Pass);
+        assert_eq!(report.checks[0].code, "PDF_OPS_WATERMARK_TEXT");
+        // Poppler reorders rotated glyphs into visual fragments; the fallback
+        // multi-set match still accepts a complete but scrambled extraction.
+        append_watermark_text_check(&mut report, "Confidential 440", "L A TI EN D FI N O C 0 44");
+        assert_eq!(report.status, crate::domain::ValidationStatus::Pass);
+        append_watermark_text_check(&mut report, "Secret", "nothing here");
+        assert_eq!(report.status, crate::domain::ValidationStatus::Fail);
     }
 }
