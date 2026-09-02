@@ -308,6 +308,100 @@ pub fn plan_office_to_pdf(
 }
 
 #[allow(clippy::too_many_lines)]
+/// Plans an image -> PDF page composition through LibreOffice Draw.
+///
+/// # Errors
+///
+/// Returns `Unsupported` for anything but PNG/JPEG input.
+pub fn plan_image_to_pdf(
+    probe: &Probe,
+    output_path: std::path::PathBuf,
+    soffice: &EngineIdentity,
+    pdfinfo: &EngineIdentity,
+    pdftoppm: &EngineIdentity,
+) -> Result<Plan> {
+    if !matches!(probe.format.id.as_str(), "png" | "jpeg") {
+        return Err(unsupported("Image-to-PDF accepts PNG or JPEG input"));
+    }
+    if soffice.engine_id != "soffice"
+        || pdfinfo.engine_id != "pdfinfo"
+        || pdftoppm.engine_id != "pdftoppm"
+    {
+        return Err(FormatWrightError::new(
+            ErrorCode::EngineIncompatible,
+            Stage::Plan,
+            "Image-to-PDF Plan was given an incorrect engine",
+            "Run doctor and use soffice, pdfinfo, and pdftoppm.",
+        ));
+    }
+    let conversion = PlanStep {
+        step_id: "step-1".to_owned(),
+        capability_id: format!("libreoffice.{}-to-pdf.headless", probe.format.id),
+        engine: soffice.clone(),
+        operation: Operation::Render,
+        loss_class: LossClass::None,
+        arguments: BTreeMap::from([
+            ("source_format".to_owned(), probe.format.id.clone()),
+            ("target_format".to_owned(), "pdf".to_owned()),
+            ("headless".to_owned(), "true".to_owned()),
+            ("isolated_profile".to_owned(), "true".to_owned()),
+            ("macros".to_owned(), "disabled".to_owned()),
+            ("external_resources".to_owned(), "deny".to_owned()),
+        ]),
+        estimated_temporary_bytes: Some(probe.artifact.size_bytes.saturating_mul(4)),
+    };
+    let structural_validation = PlanStep {
+        step_id: "step-2".to_owned(),
+        capability_id: "poppler.pdf-structural-validation.all-pages".to_owned(),
+        engine: pdfinfo.clone(),
+        operation: Operation::Inspect,
+        loss_class: LossClass::None,
+        arguments: BTreeMap::from([
+            ("page_sizes".to_owned(), "required".to_owned()),
+            ("target_format".to_owned(), "pdf".to_owned()),
+            ("purpose".to_owned(), "validation-only".to_owned()),
+        ]),
+        estimated_temporary_bytes: None,
+    };
+    let render_validation = PlanStep {
+        step_id: "step-3".to_owned(),
+        capability_id: "poppler.pdf-render-validation.all-pages".to_owned(),
+        engine: pdftoppm.clone(),
+        operation: Operation::Inspect,
+        loss_class: LossClass::None,
+        arguments: BTreeMap::from([
+            ("dpi".to_owned(), "72".to_owned()),
+            ("target_format".to_owned(), "png".to_owned()),
+            ("purpose".to_owned(), "validation-only".to_owned()),
+        ]),
+        estimated_temporary_bytes: None,
+    };
+    let mut plan = Plan {
+        schema_version: SCHEMA_VERSION,
+        plan_id: Uuid::new_v4(),
+        plan_hash: String::new(),
+        input_fingerprint: probe.artifact.fast_fingerprint.clone(),
+        target_format: "pdf".to_owned(),
+        constraints: BTreeMap::from([
+            ("network".to_owned(), json!("deny")),
+            ("external_resources".to_owned(), json!("deny")),
+        ]),
+        steps: vec![conversion, structural_validation, render_validation],
+        changes: ChangeSet {
+            preserved: vec!["image pixel data".to_owned()],
+            changed: vec!["the image is placed on a PDF page".to_owned()],
+            dropped: vec![],
+            unknown: vec!["embedded image is not text-searchable without OCR".to_owned()],
+        },
+        validators: vec!["office.page-render".to_owned()],
+        network_policy: NetworkPolicy::Deny,
+        output_path: Some(output_path),
+        estimated_output_bytes: None,
+    };
+    plan.plan_hash = deterministic_plan_hash(&plan)?;
+    Ok(plan)
+}
+
 pub(crate) fn validate_office_pdf_output(
     input: &Probe,
     output: &Probe,

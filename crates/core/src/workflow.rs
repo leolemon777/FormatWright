@@ -68,6 +68,16 @@ pub async fn prepare_conversion(
         let plan = plan_office_to_pdf(&probe, output, &soffice, &pdfinfo, &pdftoppm)?;
         return Ok((probe, plan, pdfinfo));
     }
+    if target == "pdf" && is_raster_image_path(input) {
+        let ffprobe = inspect_engine("ffprobe").await?;
+        let probe = inspect_media(input, &ffprobe).await?;
+        let soffice = inspect_engine("soffice").await?;
+        let pdftoppm = inspect_engine("pdftoppm").await?;
+        let pdfinfo = inspect_engine("pdfinfo").await?;
+        let output = required_output(request, "Image-to-PDF conversion")?;
+        let plan = crate::office::plan_image_to_pdf(&probe, output, &soffice, &pdfinfo, &pdftoppm)?;
+        return Ok((probe, plan, pdfinfo));
+    }
     if target == "pdf"
         && let Ok(probe) = inspect_document(input).await
         && matches!(
@@ -176,6 +186,12 @@ fn required_output(request: &PlanRequest, operation: &str) -> Result<std::path::
 
 fn normalized_target(target: &str) -> String {
     target.trim().trim_start_matches('.').to_ascii_lowercase()
+}
+
+fn is_raster_image_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| matches!(value.to_ascii_lowercase().as_str(), "png" | "jpg" | "jpeg"))
 }
 
 fn is_structured_target(target: &str) -> bool {

@@ -425,7 +425,9 @@ where
     let source = checked_argument(
         step,
         "source_format",
-        &["docx", "pptx", "xlsx", "odt", "ods", "odp", "rtf"],
+        &[
+            "docx", "pptx", "xlsx", "odt", "ods", "odp", "rtf", "png", "jpeg",
+        ],
     )?;
     checked_argument(step, "target_format", &["pdf"])?;
     checked_argument(step, "headless", &["true"])?;
@@ -470,6 +472,7 @@ where
         "docx" | "odt" | "rtf" => "pdf:writer_pdf_Export",
         "pptx" | "odp" => "pdf:impress_pdf_Export",
         "xlsx" | "ods" => "pdf:calc_pdf_Export",
+        "png" | "jpeg" => "pdf:draw_pdf_Export",
         _ => unreachable!("checked source format"),
     };
     let output_parent = output_path

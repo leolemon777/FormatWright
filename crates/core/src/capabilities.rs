@@ -183,7 +183,7 @@ fn supported_targets(input: Option<&str>) -> BTreeSet<&'static str> {
         "md" | "markdown" | "html" | "htm" | "txt" | "text" => &["pdf", "docx", "epub"],
         "zip" => &["tar.gz"],
         "tar.gz" => &["zip"],
-        "png" | "jpg" | "jpeg" => &["webp", "avif"],
+        "png" | "jpg" | "jpeg" => &["webp", "avif", "pdf"],
         "mov" | "mkv" | "avi" | "webm" | "mp4" => &["mp4", "gif", "mp3"],
         "wav" | "flac" | "aac" | "m4a" | "ogg" | "opus" | "mp3" => &["m4a", "mp3", "wav"],
         _ => &[],
@@ -243,6 +243,9 @@ fn required_engines(input: Option<&str>, target: &str) -> Vec<String> {
     }
     if matches!(input, "md" | "markdown" | "txt" | "text") && target == "pdf" {
         return engine_names(&["pandoc", "soffice", "pdfinfo", "pdftoppm"]);
+    }
+    if matches!(input, "png" | "jpg" | "jpeg") && target == "pdf" {
+        return engine_names(&["soffice", "pdfinfo", "pdftoppm"]);
     }
     if matches!(input, "heic" | "heif") && matches!(target.as_str(), "jpg" | "png") {
         return engine_names(&["ffprobe", "heif-convert"]);
