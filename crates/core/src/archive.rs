@@ -46,10 +46,12 @@ pub fn archive_format_hint(path: &Path) -> Result<Option<&'static str>> {
         || file_name.ends_with(".taz");
     #[allow(clippy::case_sensitive_file_extension_comparisons)]
     let is_zip = extension.as_deref() == Some("zip");
-    if !is_targz && !is_zip {
+    #[allow(clippy::case_sensitive_file_extension_comparisons)]
+    let is_7z = extension.as_deref() == Some("7z");
+    if !is_targz && !is_zip && !is_7z {
         return Ok(None);
     }
-    let mut prefix = [0_u8; 4];
+    let mut prefix = [0_u8; 6];
     let read = File::open(path)
         .and_then(|mut file| file.read(&mut prefix))
         .map_err(|error| input_error(path, error))?;
@@ -63,7 +65,7 @@ pub fn archive_format_hint(path: &Path) -> Result<Option<&'static str>> {
         ));
     }
     if is_zip {
-        if prefix == *b"PK\x03\x04" {
+        if prefix[..4] == *b"PK\x03\x04" {
             Ok(Some("zip"))
         } else {
             Err(input_error(
@@ -71,6 +73,18 @@ pub fn archive_format_hint(path: &Path) -> Result<Option<&'static str>> {
                 std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
                     "zip extension does not carry a ZIP prefix",
+                ),
+            ))
+        }
+    } else if is_7z {
+        if prefix == [0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C] {
+            Ok(Some("7z"))
+        } else {
+            Err(input_error(
+                path,
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "7z extension does not carry a 7z signature header",
                 ),
             ))
         }
@@ -165,6 +179,62 @@ pub(crate) fn read_targz_entries(path: &Path) -> Result<Vec<ArchiveEntry>> {
     Ok(entries)
 }
 
+/// Counts copied bytes while discarding them, so 7z entry inventory can be
+/// taken without buffering payloads.
+struct CountingDiscard {
+    bytes: u64,
+}
+
+impl std::io::Write for CountingDiscard {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        self.bytes = self.bytes.saturating_add(buffer.len() as u64);
+        Ok(buffer.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+pub(crate) fn read_7z_entries(path: &Path) -> Result<Vec<ArchiveEntry>> {
+    let mut reader = sevenz_rust::SevenZReader::open(path, sevenz_rust::Password::empty())
+        .map_err(|error| input_error(path, error))?;
+    let mut entries = Vec::new();
+    let mut total: u64 = 0;
+    let mut rejected: Option<FormatWrightError> = None;
+    reader
+        .for_each_entries(|entry, data| {
+            let mut name = entry.name().replace('\\', "/");
+            if entry.is_directory() && !name.ends_with('/') {
+                // ZIP inventory names directories with a trailing slash; keep
+                // the manifest comparable across containers.
+                name.push('/');
+            }
+            let size = if entry.has_stream() {
+                let mut sink = CountingDiscard { bytes: 0 };
+                std::io::copy(data, &mut sink).map_err(sevenz_rust::Error::io)?;
+                sink.bytes
+            } else {
+                0
+            };
+            let record = ArchiveEntry { name, size };
+            if let Err(error) = record.safe_name() {
+                rejected.get_or_insert(error);
+            }
+            total = total.saturating_add(size);
+            entries.push(record);
+            // Returning false continues the iteration; every entry must be
+            // drained so the reader stays positioned.
+            Ok(rejected.is_none())
+        })
+        .map_err(|error| input_error(path, error))?;
+    if let Some(error) = rejected {
+        return Err(error);
+    }
+    enforce_archive_limits(entries.len(), u128::from(total))?;
+    Ok(entries)
+}
+
 fn enforce_archive_limits(entry_count: usize, total_bytes: u128) -> Result<()> {
     if entry_count > MAX_ARCHIVE_ENTRIES {
         return Err(FormatWrightError::new(
@@ -220,6 +290,7 @@ pub async fn inspect_archive(path: impl AsRef<Path>) -> Result<Probe> {
     let (entries, total_bytes) = tokio::task::spawn_blocking(move || {
         let entries = match format_owned.as_str() {
             "zip" => read_zip_entries(&owned)?,
+            "7z" => read_7z_entries(&owned)?,
             _ => read_targz_entries(&owned)?,
         };
         let total: u64 = entries.iter().map(|entry| entry.size).sum();
@@ -247,6 +318,7 @@ pub async fn inspect_archive(path: impl AsRef<Path>) -> Result<Probe> {
             mime_type: Some(
                 match format {
                     "zip" => "application/zip",
+                    "7z" => "application/x-7z-compressed",
                     _ => "application/gzip",
                 }
                 .to_owned(),
@@ -318,18 +390,19 @@ pub fn plan_archive_conversion(
     let normalized_target = match requested.as_str() {
         "tar.gz" | "tgz" | "taz" => "tar.gz",
         "zip" => "zip",
+        "7z" => "7z",
         _ => {
             return Err(unsupported(
-                "Archive conversion must be zip -> tar.gz or tar.gz -> zip",
+                "Archive conversion must be zip -> tar.gz, tar.gz -> zip, zip -> 7z, or 7z -> zip",
             ));
         }
     };
     if !matches!(
         (probe.format.id.as_str(), normalized_target),
-        ("zip", "tar.gz") | ("tar.gz", "zip")
+        ("zip", "tar.gz" | "7z") | ("tar.gz" | "7z", "zip")
     ) {
         return Err(unsupported(
-            "Archive conversion must be zip -> tar.gz or tar.gz -> zip",
+            "Archive conversion must be zip -> tar.gz, tar.gz -> zip, zip -> 7z, or 7z -> zip",
         ));
     }
     if engine.engine_id != "formatwright.archive" {
@@ -530,6 +603,103 @@ pub(crate) fn repack_targz_to_zip(input: &Path, output: &Path) -> Result<()> {
                 "Rebuild the archive without links or devices and retry.",
             ));
         }
+    }
+    writer
+        .finish()
+        .map_err(|error| output_error(output, error))?;
+    Ok(())
+}
+
+/// Repacks a ZIP into a 7z without extracting to disk. Timestamps stay unset
+/// so identical inputs produce identical outputs.
+pub(crate) fn repack_zip_to_7z(input: &Path, output: &Path) -> Result<()> {
+    let file = File::open(input).map_err(|error| input_error(input, error))?;
+    let mut archive = ZipArchive::new(file).map_err(|error| input_error(input, error))?;
+    enforce_archive_limits(
+        archive.len(),
+        archive.decompressed_size().unwrap_or(u128::MAX),
+    )?;
+    let mut writer =
+        sevenz_rust::SevenZWriter::create(output).map_err(|error| output_error(output, error))?;
+    for index in 0..archive.len() {
+        let mut entry = archive
+            .by_index(index)
+            .map_err(|error| input_error(input, error))?;
+        let mut record = sevenz_rust::SevenZArchiveEntry::new();
+        record.name = entry.name().to_owned();
+        if entry.is_dir() {
+            writer
+                .push_archive_entry::<std::io::Empty>(record, None)
+                .map_err(|error| output_error(output, error))?;
+        } else {
+            record.size = entry.size();
+            writer
+                .push_archive_entry(record, Some(&mut entry))
+                .map_err(|error| output_error(output, error))?;
+        }
+    }
+    writer
+        .finish()
+        .map_err(|error| output_error(output, error))?;
+    Ok(())
+}
+
+/// Repacks a 7z into a ZIP without extracting to disk.
+pub(crate) fn repack_7z_to_zip(input: &Path, output: &Path) -> Result<()> {
+    let mut reader = sevenz_rust::SevenZReader::open(input, sevenz_rust::Password::empty())
+        .map_err(|error| input_error(input, error))?;
+    let out = File::create(output).map_err(|error| output_error(output, error))?;
+    let mut writer = zip::ZipWriter::new(out);
+    let options = zip::write::SimpleFileOptions::default();
+    let mut total: u64 = 0;
+    let mut count: usize = 0;
+    // The 7z callback returns its own error type, so the first typed
+    // FormatWrightError is captured here and surfaced after the iteration.
+    let mut failure: Option<FormatWrightError> = None;
+    reader
+        .for_each_entries(|entry, data| {
+            if failure.is_some() {
+                return Ok(true);
+            }
+            let outcome: std::io::Result<(String, u64, bool)> = (|| {
+                let name = entry.name().replace('\\', "/");
+                if entry.is_directory() {
+                    let mut directory = name.clone();
+                    if !directory.ends_with('/') {
+                        directory.push('/');
+                    }
+                    writer.add_directory(directory, options)?;
+                } else {
+                    writer.start_file(name.clone(), options)?;
+                    std::io::copy(data, &mut writer)?;
+                }
+                Ok((name, entry.size, entry.is_directory()))
+            })();
+            let (name, size, is_directory) = match outcome {
+                Ok(value) => value,
+                Err(error) => {
+                    failure.get_or_insert(output_error(output, error));
+                    return Ok(true);
+                }
+            };
+            if !is_directory {
+                let record = ArchiveEntry { name, size };
+                if let Err(error) = record.safe_name() {
+                    failure.get_or_insert(error);
+                    return Ok(true);
+                }
+                total = total.saturating_add(size);
+                count += 1;
+                if let Err(error) = enforce_archive_limits(count, u128::from(total)) {
+                    failure.get_or_insert(error);
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        })
+        .map_err(|error| input_error(input, error))?;
+    if let Some(error) = failure {
+        return Err(error);
     }
     writer
         .finish()
@@ -803,6 +973,52 @@ mod tests {
             plan.validators
                 .iter()
                 .any(|validator| validator == "archive.entry-count")
+        );
+    }
+
+    #[tokio::test]
+    async fn seven_z_round_trip_preserves_the_entry_manifest() {
+        let directory = tempdir().expect("tempdir");
+        let original = directory.path().join("original.zip");
+        write_zip(
+            &original,
+            &[
+                (
+                    "docs/readme.txt",
+                    "FormatWright 7z round trip ELECTRIC 440010147700",
+                ),
+                ("data/manifest.json", r#"{"entries": 2}"#),
+                ("nested/", ""),
+            ],
+        );
+        let source_probe = inspect_archive(&original)
+            .await
+            .expect("source zip inspection");
+        let manifest_before = source_probe.streams[0].properties["entry_manifest_digest"].clone();
+        let count_before = source_probe.streams[0].properties["entry_count"].clone();
+
+        let sevenz = directory.path().join("roundtrip.7z");
+        super::repack_zip_to_7z(&original, &sevenz).expect("zip -> 7z repack");
+        let sevenz_probe = inspect_archive(&sevenz).await.expect("7z inspection");
+        assert_eq!(sevenz_probe.format.id, "7z");
+        assert_eq!(
+            sevenz_probe.streams[0].properties["entry_manifest_digest"], manifest_before,
+            "the 7z repack preserves the name-and-size manifest"
+        );
+
+        let back = directory.path().join("back.zip");
+        super::repack_7z_to_zip(&sevenz, &back).expect("7z -> zip repack");
+        let back_probe = inspect_archive(&back)
+            .await
+            .expect("round-trip zip inspection");
+        assert_eq!(back_probe.format.id, "zip");
+        assert_eq!(
+            back_probe.streams[0].properties["entry_manifest_digest"], manifest_before,
+            "the zip -> 7z -> zip round trip preserves the manifest"
+        );
+        assert_eq!(
+            back_probe.streams[0].properties["entry_count"],
+            count_before,
         );
     }
 

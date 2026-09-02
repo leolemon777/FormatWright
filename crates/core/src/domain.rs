@@ -168,6 +168,13 @@ pub struct PlanRequest {
     /// iterates the CRF ladder when the first attempt exceeds the target.
     #[serde(default)]
     pub target_size_bytes: Option<u64>,
+    /// Document /Title for the `pdf-metadata` operation. Like watermark text,
+    /// titles are not confidential and travel inside the Plan.
+    #[serde(default)]
+    pub metadata_title: Option<String>,
+    /// Document /Author for the `pdf-metadata` operation.
+    #[serde(default)]
+    pub metadata_author: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]

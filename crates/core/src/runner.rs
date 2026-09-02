@@ -160,7 +160,10 @@ where
         .await;
     }
     if step.engine.engine_id == "tesseract"
-        && step.arguments.get("ocr_mode").is_some_and(|value| value == "image")
+        && step
+            .arguments
+            .get("ocr_mode")
+            .is_some_and(|value| value == "image")
     {
         return execute_image_ocr_plan(
             input,
@@ -2462,12 +2465,30 @@ where
         .and_then(|value| value.parse().ok())
         .ok_or_else(|| invalid_plan_argument("expected_pages"))?;
     if operation == "pdf-metadata" {
-        return execute_pdf_metadata(input, plan, job_id, cancellation, output_path, partial_path, observer, expected_pages)
-            .await;
+        return execute_pdf_metadata(
+            input,
+            plan,
+            job_id,
+            cancellation,
+            output_path,
+            partial_path,
+            observer,
+            expected_pages,
+        )
+        .await;
     }
     if operation == "pdf-ocr" {
-        return execute_pdf_ocr(input, plan, job_id, cancellation, output_path, partial_path, observer, expected_pages)
-            .await;
+        return execute_pdf_ocr(
+            input,
+            plan,
+            job_id,
+            cancellation,
+            output_path,
+            partial_path,
+            observer,
+            expected_pages,
+        )
+        .await;
     }
     // G-23: the watermark overlay layer is generated in-process (zero engine
     // dependency) from the input's first-page dimensions, then staged as a
@@ -2689,6 +2710,7 @@ async fn run_tesseract_to_stdout(
 }
 
 /// Commits an OCR text output after the shared milestone/conservation gates.
+#[allow(clippy::too_many_arguments)]
 async fn commit_ocr_text_output(
     input: &Probe,
     plan: &Plan,
@@ -2714,14 +2736,8 @@ async fn commit_ocr_text_output(
             return Err(error);
         }
     };
-    let report = crate::ocr::validate_ocr_output(
-        input,
-        &output_identity,
-        plan,
-        job_id,
-        text,
-        page_coverage,
-    );
+    let report =
+        crate::ocr::validate_ocr_output(input, &output_identity, plan, job_id, text, page_coverage);
     if report.status == ValidationStatus::Fail {
         cleanup_partial(partial_path);
         return Err(FormatWrightError::new(
@@ -3035,9 +3051,7 @@ where
             .map(|entry| entry.path())
             .find(|path| {
                 path.to_str()
-                    .is_some_and(|name| {
-                        name.starts_with(prefix.to_string_lossy().as_ref())
-                    })
+                    .is_some_and(|name| name.starts_with(prefix.to_string_lossy().as_ref()))
             })
             .ok_or_else(|| {
                 cleanup_partial(partial_path);
@@ -3129,14 +3143,14 @@ where
     let partial = partial_path.to_path_buf();
     let repack_source = source.to_owned();
     let repack_target = target.to_owned();
-    tokio::task::spawn_blocking(move || {
-        match (repack_source.as_str(), repack_target.as_str()) {
+    tokio::task::spawn_blocking(
+        move || match (repack_source.as_str(), repack_target.as_str()) {
             ("zip", "tar.gz") => crate::archive::repack_zip_to_targz(&input_path, &partial),
             ("zip", "7z") => crate::archive::repack_zip_to_7z(&input_path, &partial),
             ("7z", "zip") => crate::archive::repack_7z_to_zip(&input_path, &partial),
             _ => crate::archive::repack_targz_to_zip(&input_path, &partial),
-        }
-    })
+        },
+    )
     .await
     .map_err(|error| {
         FormatWrightError::new(

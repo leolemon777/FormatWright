@@ -1588,6 +1588,306 @@ pub fn plan_pdf_decrypt(
     )
 }
 
+/// Upper bound for /Info text values (pdf-metadata). Longer titles or author
+/// names are rejected rather than silently truncated.
+const MAX_METADATA_TEXT_BYTES: usize = 200;
+
+/// Plans a metadata-only revision (ADR-0013 operation `pdf-metadata`): the
+/// document /Title and/or /Author are set through an in-process incremental
+/// update, so no external engine rewrites the file. Page count is conserved.
+///
+/// # Errors
+///
+/// Returns `InputInvalid` when neither field is supplied or a value is empty,
+/// overlong, or contains control characters; `Unsupported` otherwise.
+pub fn plan_pdf_metadata(
+    probe: &Probe,
+    title: Option<&str>,
+    author: Option<&str>,
+    output_path: PathBuf,
+    qpdf: &EngineIdentity,
+) -> Result<Plan> {
+    ensure_pdf_probe(probe, "metadata")?;
+    ensure_qpdf(qpdf, "metadata")?;
+    let title = title.map(str::trim).filter(|value| !value.is_empty());
+    let author = author.map(str::trim).filter(|value| !value.is_empty());
+    if title.is_none() && author.is_none() {
+        return Err(FormatWrightError::new(
+            ErrorCode::InputInvalid,
+            Stage::Plan,
+            "PDF metadata needs a title or an author",
+            "Pass --metadata-title and/or --metadata-author.",
+        ));
+    }
+    for (field, value) in [("title", title), ("author", author)] {
+        if let Some(value) = value
+            && (value.len() > MAX_METADATA_TEXT_BYTES || value.chars().any(char::is_control))
+        {
+            return Err(FormatWrightError::new(
+                ErrorCode::InputInvalid,
+                Stage::Plan,
+                format!(
+                    "PDF metadata {field} must be at most {MAX_METADATA_TEXT_BYTES} bytes without control characters"
+                ),
+                "Shorten the value and remove control characters.",
+            ));
+        }
+    }
+    let page_count = u32::try_from(probe.streams.len()).unwrap_or(u32::MAX);
+    let mut arguments = BTreeMap::from([
+        ("operation".to_owned(), "pdf-metadata".to_owned()),
+        ("expected_pages".to_owned(), page_count.to_string()),
+    ]);
+    if let Some(title) = title {
+        arguments.insert("metadata_title".to_owned(), title.to_owned());
+    }
+    if let Some(author) = author {
+        arguments.insert("metadata_author".to_owned(), author.to_owned());
+    }
+    let mut changed = Vec::new();
+    if title.is_some() {
+        changed.push("the document /Title is replaced".to_owned());
+    }
+    if author.is_some() {
+        changed.push("the document /Author is replaced".to_owned());
+    }
+    pdf_operation_plan(
+        "qpdf.pdf-metadata",
+        arguments,
+        probe,
+        output_path,
+        qpdf,
+        ChangeSet {
+            preserved: vec![
+                "every page in document order".to_owned(),
+                "page content streams".to_owned(),
+            ],
+            changed,
+            dropped: vec![],
+            unknown: vec!["other /Info entries are not certified".to_owned()],
+        },
+        vec![
+            "pdf-ops.metadata-page-count".to_owned(),
+            "pdf-ops.metadata-fields".to_owned(),
+        ],
+    )
+}
+
+/// Applies /Title and/or /Author to a PDF through an incremental update: the
+/// original bytes are preserved verbatim and a new /Info object, a one-entry
+/// xref subsection, and a trailer with `/Prev` pointing at the previous xref
+/// are appended. Zero dependencies, fully deterministic.
+///
+/// # Errors
+///
+/// Returns an input error when `startxref`, the previous trailer, or its
+/// `/Root` reference cannot be located (the file is not a well-formed PDF).
+pub(crate) fn apply_pdf_metadata(
+    input_bytes: &[u8],
+    title: Option<&str>,
+    author: Option<&str>,
+) -> Result<Vec<u8>> {
+    let text = String::from_utf8_lossy(input_bytes).into_owned();
+    let previous_xref = last_startxref_offset(input_bytes).ok_or_else(|| {
+        FormatWrightError::new(
+            ErrorCode::InputInvalid,
+            Stage::Execute,
+            "PDF has no startxref marker for an incremental update",
+            "Verify the file is a complete PDF and retry.",
+        )
+    })?;
+    let search_from = usize::try_from(previous_xref).unwrap_or(0).min(text.len());
+    let trailer_start = text[search_from..]
+        .find("trailer")
+        .map(|offset| search_from + offset)
+        .or_else(|| text.find("trailer"))
+        .ok_or_else(|| {
+            FormatWrightError::new(
+                ErrorCode::InputInvalid,
+                Stage::Execute,
+                "PDF trailer could not be located",
+                "Verify the file is a complete PDF and retry.",
+            )
+        })?;
+    let trailer_text = &text[trailer_start..];
+    let root = indirect_reference(trailer_text, "/Root").ok_or_else(|| {
+        FormatWrightError::new(
+            ErrorCode::InputInvalid,
+            Stage::Execute,
+            "PDF trailer carries no /Root reference",
+            "Verify the file is a complete PDF and retry.",
+        )
+    })?;
+    let max_object = max_object_number(input_bytes);
+    let new_object = max_object.saturating_add(1);
+    let size = max_object
+        .saturating_add(2)
+        .max(parse_trailer_size(trailer_text));
+
+    let mut info_entries = String::new();
+    if let Some(title) = title.map(str::trim).filter(|value| !value.is_empty()) {
+        info_entries.push_str("/Title (");
+        info_entries.push_str(&escape_pdf_string(title));
+        info_entries.push_str(") ");
+    }
+    if let Some(author) = author.map(str::trim).filter(|value| !value.is_empty()) {
+        info_entries.push_str("/Author (");
+        info_entries.push_str(&escape_pdf_string(author));
+        info_entries.push_str(") ");
+    }
+    if info_entries.is_empty() {
+        return Err(FormatWrightError::new(
+            ErrorCode::InputInvalid,
+            Stage::Execute,
+            "PDF metadata update carries no fields",
+            "Pass a title or an author.",
+        ));
+    }
+
+    let mut output = Vec::with_capacity(input_bytes.len() + 256);
+    output.extend_from_slice(input_bytes);
+    output.push(b'\n');
+    let new_object_offset = output.len() as u64;
+    output
+        .extend_from_slice(format!("{new_object} 0 obj\n<< {info_entries}>>\nendobj\n").as_bytes());
+    let new_xref_offset = output.len() as u64;
+    output.extend_from_slice(
+        format!(
+            "xref\n{new_object} 1\n{new_object_offset:010} 00000 n \n\
+             trailer\n<< /Size {size} /Prev {previous_xref} /Root {root} >>\n\
+             startxref\n{new_xref_offset}\n%%EOF\n"
+        )
+        .as_bytes(),
+    );
+    Ok(output)
+}
+
+/// Returns the byte offset carried by the last `startxref` marker.
+fn last_startxref_offset(bytes: &[u8]) -> Option<u64> {
+    let tail = &bytes[bytes.len().saturating_sub(2048)..];
+    let position = tail
+        .windows(b"startxref".len())
+        .rposition(|window| window == b"startxref")?;
+    let mut index = position + b"startxref".len();
+    while index < tail.len() && tail[index].is_ascii_whitespace() {
+        index += 1;
+    }
+    let digits: &[u8] = &tail[index..];
+    let end = digits
+        .iter()
+        .position(|byte| !byte.is_ascii_digit())
+        .unwrap_or(digits.len());
+    let value = std::str::from_utf8(&digits[..end]).ok()?.parse().ok()?;
+    Some(value)
+}
+
+/// Returns the highest `N` from every `N G obj` header in the file.
+fn max_object_number(bytes: &[u8]) -> u64 {
+    let text = String::from_utf8_lossy(bytes);
+    let mut max: u64 = 0;
+    let tokens = text.split_whitespace().collect::<Vec<_>>();
+    for window in tokens.windows(3) {
+        if window[2] == "obj"
+            && let (Ok(number), Ok(_generation)) =
+                (window[0].parse::<u64>(), window[1].parse::<u64>())
+        {
+            max = max.max(number);
+        }
+    }
+    max
+}
+
+/// Extracts the `N G R` reference that follows a trailer key like `/Root`.
+fn indirect_reference(trailer_text: &str, key: &str) -> Option<String> {
+    let key_position = trailer_text.find(key)?;
+    let rest = &trailer_text[key_position + key.len()..];
+    let mut tokens = rest.split_whitespace();
+    let number = tokens.next()?;
+    let generation = tokens.next()?;
+    let marker = tokens.next()?;
+    if marker.starts_with('R') && number.chars().all(char::is_numeric) {
+        Some(format!("{number} {generation} R"))
+    } else {
+        None
+    }
+}
+
+fn parse_trailer_size(trailer_text: &str) -> u64 {
+    parse_field(trailer_text, "/Size")
+        .and_then(|value| value.split_whitespace().next())
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(0)
+}
+
+/// Escapes a PDF literal string: `\` and parentheses are backslash-escaped and
+/// every non-ASCII byte is written as a three-digit octal escape.
+fn escape_pdf_string(text: &str) -> String {
+    let mut escaped = String::with_capacity(text.len());
+    for character in text.chars() {
+        match character {
+            '\\' | '(' | ')' => {
+                escaped.push('\\');
+                escaped.push(character);
+            }
+            ' '..='\u{7F}' => escaped.push(character),
+            _ => escaped.push_str(&format!("\\{:03o}", u32::from(character))),
+        }
+    }
+    escaped
+}
+
+/// Reads the document-level `/Title` and `/Author` pdfinfo reports for a PDF.
+///
+/// # Errors
+///
+/// Returns the `pdfinfo` inspection errors unchanged.
+pub(crate) async fn pdfinfo_document_metadata(
+    path: &Path,
+    pdfinfo: &EngineIdentity,
+) -> Result<(Option<String>, Option<String>)> {
+    let summary = run_pdfinfo(pdfinfo, &["-enc", "UTF-8"], path, false).await?;
+    Ok((
+        parse_field(&summary, "Title").map(str::to_owned),
+        parse_field(&summary, "Author").map(str::to_owned),
+    ))
+}
+
+/// Appends the required PDF_METADATA_TITLE/AUTHOR acceptance checks and
+/// re-derives the worst-case report status. Fields the Plan did not set are
+/// skipped: an incremental update cannot clear values it never touches.
+pub(crate) fn append_metadata_checks(
+    report: &mut ValidationReport,
+    plan: &Plan,
+    observed_title: Option<&str>,
+    observed_author: Option<&str>,
+) {
+    let step = plan.steps.first();
+    for (code, argument, observed) in [
+        ("PDF_METADATA_TITLE", "metadata_title", observed_title),
+        ("PDF_METADATA_AUTHOR", "metadata_author", observed_author),
+    ] {
+        let Some(expected) = step.and_then(|step| step.arguments.get(argument)) else {
+            continue;
+        };
+        let matched = observed.is_some_and(|value| value.trim() == expected.trim());
+        let check = ValidationCheck {
+            code: code.to_owned(),
+            status: if matched {
+                ValidationStatus::Pass
+            } else {
+                ValidationStatus::Fail
+            },
+            required: true,
+            expected: json!(expected),
+            observed: json!(observed),
+            evidence: "Poppler pdfinfo".to_owned(),
+            message: "pdfinfo must report the metadata value the Plan set.".to_owned(),
+        };
+        report.status = report.status.worst(check.status);
+        report.checks.push(check);
+    }
+}
+
 /// Upper bound for watermark text length; longer banners degrade readability
 /// on typical pages.
 const MAX_WATERMARK_TEXT_BYTES: usize = 80;
@@ -2394,5 +2694,53 @@ mod tests {
         assert_eq!(report.status, crate::domain::ValidationStatus::Pass);
         append_watermark_text_check(&mut report, "Secret", "nothing here");
         assert_eq!(report.status, crate::domain::ValidationStatus::Fail);
+    }
+
+    fn startxref_value(bytes: &[u8]) -> u64 {
+        let text = String::from_utf8_lossy(bytes).into_owned();
+        let position = text.rfind("startxref").expect("startxref marker");
+        text[position + "startxref".len()..]
+            .trim_start()
+            .split_whitespace()
+            .next()
+            .expect("offset digits")
+            .parse()
+            .expect("numeric offset")
+    }
+
+    #[test]
+    fn incremental_metadata_update_appends_a_valid_revision() {
+        let original = build_watermark_pdf(612.0, 792.0, "BASE", 0);
+        let previous_xref = startxref_value(&original);
+        let updated =
+            super::apply_pdf_metadata(&original, Some("ELECTRIC 440010147700"), Some("Author (A)"))
+                .expect("apply metadata");
+        assert!(
+            updated.starts_with(&original),
+            "the incremental update must preserve every original byte"
+        );
+        let text = String::from_utf8_lossy(&updated).into_owned();
+        assert!(text.contains("/Title (ELECTRIC 440010147700)"));
+        assert!(text.contains("/Author (Author \\(A\\))"));
+        assert!(text.contains(&format!("/Prev {previous_xref}")));
+        assert!(text.matches("trailer").count() >= 2);
+        assert!(startxref_value(&updated) > previous_xref);
+        assert!(startxref_value(&updated) as usize <= updated.len());
+        // Deterministic: identical inputs produce identical revisions.
+        let again =
+            super::apply_pdf_metadata(&original, Some("ELECTRIC 440010147700"), Some("Author (A)"))
+                .expect("apply metadata again");
+        assert_eq!(updated, again);
+    }
+
+    #[test]
+    fn metadata_update_rejects_bytes_without_a_pdf_tail() {
+        assert!(super::apply_pdf_metadata(b"not a pdf", Some("t"), None).is_err());
+        assert!(super::apply_pdf_metadata(b"%PDF-1.4\ntrailer only", Some("t"), None).is_err());
+        assert!(
+            super::apply_pdf_metadata(&build_watermark_pdf(100.0, 100.0, "x", 0), None, None)
+                .is_err(),
+            "an update with no fields is rejected"
+        );
     }
 }

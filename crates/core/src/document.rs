@@ -284,6 +284,95 @@ pub fn plan_markup_to_epub(
     Ok(plan)
 }
 
+/// Plans an offline Pandoc export from a DOCX package to text markup or EPUB.
+///
+/// # Errors
+///
+/// Returns `Unsupported` for other inputs or targets and `EngineIncompatible`
+/// for a non-pandoc engine.
+pub fn plan_docx_markup_export(
+    probe: &Probe,
+    output_path: std::path::PathBuf,
+    pandoc: &EngineIdentity,
+    target: &str,
+) -> Result<Plan> {
+    let target = target.trim().trim_start_matches('.').to_ascii_lowercase();
+    if probe.format.id != "docx" {
+        return Err(unsupported("Pandoc export input must be a DOCX package"));
+    }
+    if !matches!(target.as_str(), "txt" | "md" | "html" | "epub") {
+        return Err(unsupported(
+            "DOCX export target must be txt, md, html, or epub",
+        ));
+    }
+    if pandoc.engine_id != "pandoc" {
+        return Err(FormatWrightError::new(
+            ErrorCode::EngineIncompatible,
+            Stage::Plan,
+            "The DOCX export Plan was given the wrong engine",
+            "Run doctor and use Pandoc.",
+        ));
+    }
+    let arguments = BTreeMap::from([
+        ("source_format".to_owned(), "docx".to_owned()),
+        ("target_format".to_owned(), target.clone()),
+        ("sandbox".to_owned(), "true".to_owned()),
+        ("standalone".to_owned(), "true".to_owned()),
+        ("resource_policy".to_owned(), "deny-all".to_owned()),
+    ]);
+    let constraints = BTreeMap::from([
+        ("network".to_owned(), json!("deny")),
+        ("external_resources".to_owned(), json!("deny")),
+        ("macros".to_owned(), json!("disabled")),
+    ]);
+    let step = PlanStep {
+        step_id: "step-1".to_owned(),
+        capability_id: format!("pandoc.docx-to-{target}.offline"),
+        engine: pandoc.clone(),
+        operation: Operation::Transform,
+        loss_class: LossClass::Unknown,
+        arguments,
+        estimated_temporary_bytes: Some(probe.artifact.size_bytes.saturating_mul(4)),
+    };
+    let is_epub = target == "epub";
+    let mut plan = Plan {
+        schema_version: SCHEMA_VERSION,
+        plan_id: Uuid::new_v4(),
+        plan_hash: String::new(),
+        input_fingerprint: probe.artifact.fast_fingerprint.clone(),
+        target_format: target.clone(),
+        constraints,
+        steps: vec![step],
+        changes: ChangeSet {
+            preserved: vec![
+                "normalized textual content".to_owned(),
+                "document structure supported by Pandoc".to_owned(),
+            ],
+            changed: vec![format!(
+                "DOCX structure is re-serialized through Pandoc's default {target} writer"
+            )],
+            dropped: vec!["Word-specific layout and active content".to_owned()],
+            unknown: vec![
+                "semantic token order may be re-arranged by the Pandoc reader".to_owned(),
+            ],
+        },
+        validators: if is_epub {
+            vec![
+                "epub.container-valid".to_owned(),
+                "epub.content-documents".to_owned(),
+                "epub.text-coverage".to_owned(),
+            ]
+        } else {
+            vec!["document.text-extractable".to_owned()]
+        },
+        network_policy: NetworkPolicy::Deny,
+        output_path: Some(output_path),
+        estimated_output_bytes: None,
+    };
+    plan.plan_hash = deterministic_plan_hash(&plan)?;
+    Ok(plan)
+}
+
 /// Plans an offline Markdown/HTML to PDF pipeline through an intermediate DOCX.
 ///
 /// # Errors
@@ -547,6 +636,58 @@ pub(crate) fn validate_epub_output(
             expected_digest,
             observed_digest,
             "Digest matches, or differs only by EPUB navigation text.",
+        ),
+    ];
+    let report_status = checks.iter().fold(ValidationStatus::Pass, |state, check| {
+        state.worst(check.status)
+    });
+    ValidationReport {
+        schema_version: SCHEMA_VERSION,
+        report_id: Uuid::new_v4(),
+        job_id,
+        plan_hash: plan.plan_hash.clone(),
+        status: report_status,
+        input: artifact_summary(input),
+        output: artifact_summary(output),
+        engines: plan.steps.iter().map(|step| step.engine.clone()).collect(),
+        checks,
+        intentional_changes: plan.changes.changed.clone(),
+        redaction: ReportRedaction {
+            paths_redacted: false,
+            metadata_values_redacted: true,
+        },
+    }
+}
+
+pub(crate) fn validate_text_export_output(
+    input: &Probe,
+    output: &Probe,
+    plan: &Plan,
+    job_id: Uuid,
+) -> ValidationReport {
+    let expected_digest = property(input, "semantic_token_digest");
+    let observed_digest = property(output, "semantic_token_digest");
+    let observed_chars = property(output, "text_characters").as_u64().unwrap_or(0);
+    // Pandoc 重排段落/标题标记会改变 token 序列，因此 digest 只作 Warning，
+    // 输出必须保证的是"有文字"。
+    let checks = vec![
+        validation_check(
+            "EXPORT_TEXT_NONEMPTY",
+            status(observed_chars > 0),
+            json!(">0"),
+            json!(observed_chars),
+            "Output carries at least one normalized text character.",
+        ),
+        validation_check(
+            "EXPORT_TEXT_FIDELITY",
+            if expected_digest == observed_digest {
+                ValidationStatus::Pass
+            } else {
+                ValidationStatus::Warning
+            },
+            expected_digest,
+            observed_digest,
+            "Digest matches, or differs only by Pandoc re-serialization.",
         ),
     ];
     let report_status = checks.iter().fold(ValidationStatus::Pass, |state, check| {
@@ -1102,6 +1243,149 @@ mod tests {
         std::io::Write::write_all(&mut archive, b"hello").expect("write plain");
         archive.finish().expect("finish plain zip");
         assert_eq!(document_format_hint(&docx_like).expect("docx hint"), "docx");
+    }
+
+    fn write_minimal_docx(path: &std::path::Path) {
+        use std::io::Write;
+        use zip::write::SimpleFileOptions;
+
+        let file = fs::File::create(path).expect("create DOCX fixture");
+        let mut archive = zip::ZipWriter::new(file);
+        let options = SimpleFileOptions::default();
+        archive
+            .start_file("[Content_Types].xml", options)
+            .expect("content types entry");
+        archive.write_all(b"<Types/>").expect("content types");
+        archive
+            .start_file("_rels/.rels", options)
+            .expect("rels entry");
+        archive.write_all(b"<Relationships/>").expect("rels");
+        archive
+            .start_file("word/document.xml", options)
+            .expect("document entry");
+        archive
+            .write_all(
+                b"<?xml version=\"1.0\"?><w:document xmlns:w=\"ns\"><w:body>\
+                 <w:p><w:r><w:t>ELECTRIC 440</w:t></w:r></w:p></w:body></w:document>",
+            )
+            .expect("document XML");
+        archive.finish().expect("finish DOCX");
+    }
+
+    fn pandoc_engine() -> formatwright_engine_sdk::EngineIdentity {
+        formatwright_engine_sdk::EngineIdentity {
+            engine_id: "pandoc".to_owned(),
+            version: "3.8".to_owned(),
+            binary_path: std::path::PathBuf::from("pandoc.exe"),
+            binary_sha256: "0".repeat(64),
+            manifest_sha256: None,
+            build_configuration: None,
+            certification: formatwright_engine_sdk::Certification::Unverified,
+        }
+    }
+
+    #[tokio::test]
+    async fn plan_docx_markup_export_builds_pandoc_plans_for_all_text_targets() {
+        let directory = tempdir().expect("temporary directory");
+        let input = directory.path().join("report.docx");
+        write_minimal_docx(&input);
+        let probe = inspect_document(&input).await.expect("DOCX inspection");
+        assert_eq!(probe.format.id, "docx");
+        let pandoc = pandoc_engine();
+        for (target, validator) in [
+            ("txt", "document.text-extractable"),
+            ("md", "document.text-extractable"),
+            ("html", "document.text-extractable"),
+            ("epub", "epub.container-valid"),
+        ] {
+            let plan = super::plan_docx_markup_export(
+                &probe,
+                directory.path().join(format!("out.{target}")),
+                &pandoc,
+                target,
+            )
+            .unwrap_or_else(|error| panic!("{target} plan: {error}"));
+            assert_eq!(plan.target_format, target);
+            assert_eq!(
+                plan.steps[0]
+                    .arguments
+                    .get("source_format")
+                    .map(String::as_str),
+                Some("docx")
+            );
+            assert!(plan.validators.iter().any(|value| value == validator));
+            assert!(!plan.plan_hash.is_empty());
+        }
+        // 非 docx 输入 / 非法目标 / 错误引擎都要被拒绝。
+        let markdown = directory.path().join("chapter.md");
+        fs::write(&markdown, "# Title").expect("write markdown");
+        let markdown_probe = inspect_document(&markdown)
+            .await
+            .expect("markdown inspection");
+        assert!(
+            super::plan_docx_markup_export(
+                &markdown_probe,
+                directory.path().join("o.txt"),
+                &pandoc,
+                "txt"
+            )
+            .is_err(),
+            "markdown input is rejected"
+        );
+        assert!(
+            super::plan_docx_markup_export(&probe, directory.path().join("o.pdf"), &pandoc, "pdf")
+                .is_err(),
+            "pdf target is rejected"
+        );
+        let wrong = formatwright_engine_sdk::EngineIdentity {
+            engine_id: "soffice".to_owned(),
+            ..pandoc
+        };
+        assert!(
+            super::plan_docx_markup_export(&probe, directory.path().join("o.txt"), &wrong, "txt")
+                .is_err(),
+            "non-pandoc engine is rejected"
+        );
+    }
+
+    #[tokio::test]
+    async fn validate_text_export_output_requires_text_and_warns_on_digest_drift() {
+        use uuid::Uuid;
+
+        let directory = tempdir().expect("temporary directory");
+        let input = directory.path().join("report.docx");
+        write_minimal_docx(&input);
+        let input_probe = inspect_document(&input).await.expect("DOCX inspection");
+        let pandoc = pandoc_engine();
+        let output = directory.path().join("out.txt");
+        let plan = super::plan_docx_markup_export(&input_probe, output.clone(), &pandoc, "txt")
+            .expect("txt plan");
+
+        // 空输出 → EXPORT_TEXT_NONEMPTY 必须 Fail。
+        fs::write(&output, "").expect("empty txt");
+        let empty_probe = inspect_document(&output).await.expect("empty inspection");
+        let empty_report =
+            super::validate_text_export_output(&input_probe, &empty_probe, &plan, Uuid::new_v4());
+        assert!(
+            empty_report
+                .checks
+                .iter()
+                .any(|check| check.code == "EXPORT_TEXT_NONEMPTY"
+                    && check.status == crate::domain::ValidationStatus::Fail)
+        );
+
+        // 有文字但顺序不同 → NONEMPTY Pass、FIDELITY 最多 Warning。
+        fs::write(&output, "440 ELECTIC reordered words").expect("reordered txt");
+        let text_probe = inspect_document(&output).await.expect("txt inspection");
+        let report =
+            super::validate_text_export_output(&input_probe, &text_probe, &plan, Uuid::new_v4());
+        assert_ne!(report.status, crate::domain::ValidationStatus::Fail);
+        assert!(
+            report
+                .checks
+                .iter()
+                .any(|check| check.code == "EXPORT_TEXT_FIDELITY")
+        );
     }
 
     #[tokio::test]

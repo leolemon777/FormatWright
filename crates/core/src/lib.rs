@@ -16,6 +16,7 @@ pub mod fingerprint;
 pub mod inspect;
 pub mod job_store;
 pub mod maintenance;
+mod ocr;
 mod office;
 mod pdf;
 pub mod planner;
@@ -48,7 +49,8 @@ pub use doctor::{
     inspect_engine, inspect_engine_with_policy,
 };
 pub use document::{
-    inspect_document, plan_markup_to_docx, plan_markup_to_epub, plan_markup_to_pdf,
+    inspect_document, plan_docx_markup_export, plan_markup_to_docx, plan_markup_to_epub,
+    plan_markup_to_pdf,
 };
 pub use domain::{
     ArtifactIdentity, ArtifactSummary, ChangeSet, FormatDescriptor, FormatKind, JobState,
@@ -77,7 +79,9 @@ pub use maintenance::{
     BackupReport, CompactReport, IntegrityReport, MaintenanceService, MaintenanceStatus,
     RestorePreflightReport, RestoreReport,
 };
-pub use office::{inspect_office, office_format_hint, plan_office_to_pdf};
+pub use office::{
+    inspect_office, office_format_hint, plan_office_document_exchange, plan_office_to_pdf,
+};
 pub use pdf::{inspect_pdf, pdf_format_hint, plan_pdf_extract, plan_pdf_merge, plan_pdf_render};
 pub use planner::{plan_conversion, plan_heic_conversion, plan_metadata_clean};
 pub use preset::{ConversionPreset, PRESET_SCHEMA_VERSION, PresetLibrary};

@@ -307,6 +307,184 @@ pub fn plan_office_to_pdf(
     Ok(plan)
 }
 
+/// Plans a macro-disabled `LibreOffice` DOCX <-> ODT document exchange.
+///
+/// # Errors
+///
+/// Returns a planning error for unsupported inputs/targets or a wrong engine.
+pub fn plan_office_document_exchange(
+    probe: &Probe,
+    output_path: std::path::PathBuf,
+    soffice: &EngineIdentity,
+    target: &str,
+) -> Result<Plan> {
+    let target = target.trim().trim_start_matches('.').to_ascii_lowercase();
+    if !matches!(probe.format.id.as_str(), "docx" | "odt") {
+        return Err(unsupported(
+            "Document exchange requires DOCX or ODF text input",
+        ));
+    }
+    if probe.format.id == target {
+        return Err(FormatWrightError::new(
+            ErrorCode::Unsupported,
+            Stage::Plan,
+            format!("Document exchange cannot convert {target} to itself"),
+            "Choose the opposite document format.",
+        ));
+    }
+    if !matches!(target.as_str(), "docx" | "odt") {
+        return Err(unsupported("Document exchange target must be DOCX or ODT"));
+    }
+    if soffice.engine_id != "soffice" {
+        return Err(FormatWrightError::new(
+            ErrorCode::EngineIncompatible,
+            Stage::Plan,
+            "Document exchange Plan was given an incorrect engine",
+            "Run doctor and use soffice.",
+        ));
+    }
+    let conversion = PlanStep {
+        step_id: "step-1".to_owned(),
+        capability_id: format!("libreoffice.{}-to-{}.headless", probe.format.id, target),
+        engine: soffice.clone(),
+        operation: Operation::Transform,
+        loss_class: LossClass::Unknown,
+        arguments: BTreeMap::from([
+            ("source_format".to_owned(), probe.format.id.clone()),
+            ("target_format".to_owned(), target.clone()),
+            ("headless".to_owned(), "true".to_owned()),
+            ("isolated_profile".to_owned(), "true".to_owned()),
+            ("macros".to_owned(), "disabled".to_owned()),
+            ("external_resources".to_owned(), "deny".to_owned()),
+        ]),
+        estimated_temporary_bytes: Some(probe.artifact.size_bytes.saturating_mul(8)),
+    };
+    let mut plan = Plan {
+        schema_version: SCHEMA_VERSION,
+        plan_id: Uuid::new_v4(),
+        plan_hash: String::new(),
+        input_fingerprint: probe.artifact.fast_fingerprint.clone(),
+        target_format: target,
+        constraints: BTreeMap::from([
+            ("network".to_owned(), json!("deny")),
+            ("macros".to_owned(), json!("disabled")),
+            ("external_resources".to_owned(), json!("deny")),
+            ("isolated_user_profile".to_owned(), json!(true)),
+        ]),
+        steps: vec![conversion],
+        changes: ChangeSet {
+            preserved: vec![
+                "visible document content supported by LibreOffice".to_owned(),
+                "body text order produced by the isolated office converter".to_owned(),
+            ],
+            changed: vec![
+                "package structure is rewritten between OOXML and ODF containers".to_owned(),
+            ],
+            dropped: vec!["macros and interactive behavior".to_owned()],
+            unknown: vec![
+                "application-specific styling fidelity requires fixture comparison".to_owned(),
+            ],
+        },
+        validators: vec![
+            "office.package-opens".to_owned(),
+            "office.target-structure".to_owned(),
+        ],
+        network_policy: NetworkPolicy::Deny,
+        output_path: Some(output_path),
+        estimated_output_bytes: None,
+    };
+    plan.plan_hash = deterministic_plan_hash(&plan)?;
+    Ok(plan)
+}
+
+/// Structural validation for DOCX/ODF exchange output: the package must open
+/// as a ZIP, present its container-specific required parts, and be detected
+/// as the requested target family. 不依赖 Poppler（PDF 专用工具链）。
+pub(crate) fn validate_office_document_output(
+    input: &Probe,
+    output: &Probe,
+    plan: &Plan,
+    job_id: Uuid,
+) -> ValidationReport {
+    let target = plan.target_format.as_str();
+    let structure_ok = office_document_structure(&output.artifact.canonical_path, target);
+    let checks = vec![
+        check(
+            "OFFICE_DOCUMENT_OPENS",
+            status(output.format.id == target),
+            true,
+            json!(target),
+            json!(output.format.id),
+            "Native office inspector re-opened the converted package.",
+        ),
+        check(
+            "OFFICE_TARGET_STRUCTURE",
+            status(structure_ok),
+            true,
+            json!("required container parts present"),
+            json!(structure_ok),
+            "ZIP container carries the required OPC/ODF parts.",
+        ),
+        check(
+            "OFFICE_VISUAL_DRIFT",
+            ValidationStatus::Unknown,
+            false,
+            json!("fixture-calibrated structural comparison"),
+            json!("not-run"),
+            "Alpha validation checks container structure without a style baseline.",
+        ),
+    ];
+    let hard_status = checks
+        .iter()
+        .filter(|check| check.required)
+        .fold(ValidationStatus::Pass, |state, check| {
+            state.worst(check.status)
+        });
+    let report_status = if hard_status == ValidationStatus::Pass {
+        ValidationStatus::Warning
+    } else {
+        hard_status
+    };
+    ValidationReport {
+        schema_version: SCHEMA_VERSION,
+        report_id: Uuid::new_v4(),
+        job_id,
+        plan_hash: plan.plan_hash.clone(),
+        status: report_status,
+        input: artifact_summary(input),
+        output: artifact_summary(output),
+        engines: plan.steps.iter().map(|step| step.engine.clone()).collect(),
+        checks,
+        intentional_changes: plan.changes.changed.clone(),
+        redaction: ReportRedaction {
+            paths_redacted: false,
+            metadata_values_redacted: true,
+        },
+    }
+}
+
+/// OPC 需要 `[Content_Types].xml` 与 `word/document.xml`；ODF 需要未压缩的
+/// `mimetype` 与 `content.xml`。
+fn office_document_structure(path: &Path, target: &str) -> bool {
+    let Ok(file) = File::open(path) else {
+        return false;
+    };
+    let Ok(archive) = ZipArchive::new(file) else {
+        return false;
+    };
+    match target {
+        "docx" => {
+            archive.index_for_name("[Content_Types].xml").is_some()
+                && archive.index_for_name("word/document.xml").is_some()
+        }
+        "odt" => {
+            archive.index_for_name("mimetype").is_some()
+                && archive.index_for_name("content.xml").is_some()
+        }
+        _ => false,
+    }
+}
+
 /// Plans an image -> PDF page composition through `LibreOffice` Draw (`draw_pdf_Export`).
 ///
 /// # Errors
@@ -904,6 +1082,146 @@ mod tests {
             .await
             .expect_err("macro ODF must be blocked");
         assert_eq!(error.code, crate::ErrorCode::PolicyBlocked);
+    }
+
+    #[tokio::test]
+    async fn document_exchange_plans_docx_odt_in_both_directions() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let docx = directory.path().join("letter.docx");
+        write_docx(&docx);
+        let probe = inspect_office(&docx).await.expect("docx inspection");
+        let plan = super::plan_office_document_exchange(
+            &probe,
+            PathBuf::from("out.odt"),
+            &engine("soffice"),
+            "odt",
+        )
+        .expect("docx -> odt plan");
+        assert_eq!(plan.target_format, "odt");
+        assert_eq!(
+            plan.steps[0]
+                .arguments
+                .get("source_format")
+                .map(String::as_str),
+            Some("docx")
+        );
+        assert!(
+            plan.validators
+                .contains(&"office.target-structure".to_owned())
+        );
+        assert!(!plan.plan_hash.is_empty());
+
+        let odt = directory.path().join("letter.odt");
+        write_odf(&odt, "application/vnd.oasis.opendocument.text");
+        let odt_probe = inspect_office(&odt).await.expect("odt inspection");
+        let plan = super::plan_office_document_exchange(
+            &odt_probe,
+            PathBuf::from("out.docx"),
+            &engine("soffice"),
+            "docx",
+        )
+        .expect("odt -> docx plan");
+        assert_eq!(plan.target_format, "docx");
+
+        // 同格式、非法目标与错误引擎都要被拒绝。
+        assert!(
+            super::plan_office_document_exchange(
+                &probe,
+                PathBuf::from("out.docx"),
+                &engine("soffice"),
+                "docx"
+            )
+            .is_err(),
+            "docx -> docx is rejected"
+        );
+        assert!(
+            super::plan_office_document_exchange(
+                &probe,
+                PathBuf::from("out.pdf"),
+                &engine("soffice"),
+                "pdf"
+            )
+            .is_err(),
+            "pdf target is rejected"
+        );
+        assert!(
+            super::plan_office_document_exchange(
+                &probe,
+                PathBuf::from("out.odt"),
+                &engine("pandoc"),
+                "odt"
+            )
+            .is_err(),
+            "non-soffice engine is rejected"
+        );
+    }
+
+    #[tokio::test]
+    async fn document_output_structure_validation_checks_container_parts() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let docx = directory.path().join("letter.docx");
+        write_docx(&docx);
+        let input_probe = inspect_office(&docx).await.expect("docx inspection");
+        let plan = super::plan_office_document_exchange(
+            &input_probe,
+            directory.path().join("out.odt"),
+            &engine("soffice"),
+            "odt",
+        )
+        .expect("exchange plan");
+
+        // 一个合法 ODF 输出 → 结构检查通过；一个缺 content.xml 的 ZIP → Fail。
+        let valid = directory.path().join("converted.odt");
+        write_odf(&valid, "application/vnd.oasis.opendocument.text");
+        let valid_probe = inspect_office(&valid).await.expect("odt output inspection");
+        let report = super::validate_office_document_output(
+            &input_probe,
+            &valid_probe,
+            &plan,
+            uuid::Uuid::new_v4(),
+        );
+        assert!(
+            report
+                .checks
+                .iter()
+                .any(|check| check.code == "OFFICE_TARGET_STRUCTURE"
+                    && check.status == crate::domain::ValidationStatus::Pass)
+        );
+
+        let broken = directory.path().join("broken.odt");
+        let file = std::fs::File::create(&broken).expect("create broken odt");
+        let mut writer = zip::ZipWriter::new(file);
+        writer
+            .start_file("mimetype", stored_options())
+            .expect("mimetype");
+        std::io::Write::write_all(&mut writer, b"application/vnd.oasis.opendocument.text")
+            .expect("mimetype payload");
+        writer.finish().expect("finish broken");
+        let error = inspect_office(&broken)
+            .await
+            .expect_err("incomplete ODF cannot be probed as odt");
+        assert_eq!(error.code, crate::ErrorCode::Unsupported);
+    }
+
+    fn stored_options() -> zip::write::SimpleFileOptions {
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored)
+    }
+
+    fn write_docx(path: &std::path::Path) {
+        let file = std::fs::File::create(path).expect("create docx");
+        let mut writer = zip::ZipWriter::new(file);
+        let options = SimpleFileOptions::default();
+        writer
+            .start_file("[Content_Types].xml", options)
+            .expect("content types");
+        std::io::Write::write_all(&mut writer, b"<Types/>").expect("content types XML");
+        writer.start_file("_rels/.rels", options).expect("rels");
+        std::io::Write::write_all(&mut writer, b"<Relationships/>").expect("rels XML");
+        writer
+            .start_file("word/document.xml", options)
+            .expect("document part");
+        std::io::Write::write_all(&mut writer, b"<w:document/>").expect("document XML");
+        writer.finish().expect("finish docx");
     }
 
     #[tokio::test]

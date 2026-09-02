@@ -1,0 +1,197 @@
+warning: unnested or-patterns
+   --> crates\core\src\archive.rs:402:9
+    |
+402 |         ("zip", "tar.gz") | ("tar.gz", "zip") | ("zip", "7z") | ("7z", "zip")
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#unnested_or_patterns
+    = note: `-W clippy::unnested-or-patterns` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::unnested_or_patterns)]`
+help: nest the patterns
+    |
+402 -         ("zip", "tar.gz") | ("tar.gz", "zip") | ("zip", "7z") | ("7z", "zip")
+402 +         ("zip", "tar.gz" | "7z") | ("tar.gz" | "7z", "zip")
+    |
+
+warning: assigning the result of `ToOwned::to_owned()` may be inefficient
+   --> crates\core\src\archive.rs:629:9
+    |
+629 |         record.name = entry.name().to_owned();
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use `clone_into()`: `entry.name().clone_into(&mut record.name)`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#assigning_clones
+    = note: `-W clippy::assigning-clones` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::assigning_clones)]`
+
+warning: these match arms have identical bodies
+   --> crates\core\src\capabilities.rs:187:9
+    |
+187 |         "tar.gz" => &["zip"],
+    |         ^^^^^^^^^^^^^^^^^^^^
+188 |         "7z" => &["zip"],
+    |         ^^^^^^^^^^^^^^^^
+    |
+    = help: if this is unintentional make the arms return different values
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#match_same_arms
+    = note: `-W clippy::match-same-arms` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::match_same_arms)]`
+help: otherwise merge the patterns into a single arm
+    |
+187 ~         "tar.gz" | "7z" => &["zip"],
+188 ~         "png" | "jpg" | "jpeg" => &["webp", "avif", "pdf", "txt"],
+    |
+
+warning: `format!(..)` appended to existing `String`
+    --> crates\core\src\pdf.rs:1729:9
+     |
+1729 |         info_entries.push_str(&format!("/Title ({}) ", escape_pdf_string(&title)));
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: you may need to import the `std::fmt::Write` trait
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#format_push_string
+     = note: `-W clippy::format-push-string` implied by `-W clippy::pedantic`
+     = help: to override `-W clippy::pedantic` add `#[allow(clippy::format_push_string)]`
+help: consider using `write!` to avoid the extra allocation
+     |
+1729 -         info_entries.push_str(&format!("/Title ({}) ", escape_pdf_string(&title)));
+1729 +         let _ = write!(info_entries, "/Title ({}) ", escape_pdf_string(&title));
+     |
+
+warning: this expression creates a reference which is immediately dereferenced by the compiler
+    --> crates\core\src\pdf.rs:1729:74
+     |
+1729 |         info_entries.push_str(&format!("/Title ({}) ", escape_pdf_string(&title)));
+     |                                                                          ^^^^^^ help: change this to: `title`
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#needless_borrow
+     = note: `-W clippy::needless-borrow` implied by `-W clippy::all`
+     = help: to override `-W clippy::all` add `#[allow(clippy::needless_borrow)]`
+
+warning: `format!(..)` appended to existing `String`
+    --> crates\core\src\pdf.rs:1732:9
+     |
+1732 |         info_entries.push_str(&format!("/Author ({}) ", escape_pdf_string(&author)));
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: you may need to import the `std::fmt::Write` trait
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+     |
+1732 -         info_entries.push_str(&format!("/Author ({}) ", escape_pdf_string(&author)));
+1732 +         let _ = write!(info_entries, "/Author ({}) ", escape_pdf_string(&author));
+     |
+
+warning: this expression creates a reference which is immediately dereferenced by the compiler
+    --> crates\core\src\pdf.rs:1732:75
+     |
+1732 |         info_entries.push_str(&format!("/Author ({}) ", escape_pdf_string(&author)));
+     |                                                                           ^^^^^^^ help: change this to: `author`
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#needless_borrow
+
+warning: `format!(..)` appended to existing `String`
+    --> crates\core\src\pdf.rs:1829:18
+     |
+1829 |             _ => escaped.push_str(&format!("\\{:03o}", u32::from(character))),
+     |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: you may need to import the `std::fmt::Write` trait
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+     |
+1829 -             _ => escaped.push_str(&format!("\\{:03o}", u32::from(character))),
+1829 +             _ => let _ = write!(escaped, "\\{:03o}", u32::from(character)),
+     |
+
+warning: item in documentation is missing backticks
+    --> crates\core\src\pdf.rs:1851:26
+     |
+1851 | /// Appends the required PDF_METADATA_TITLE/AUTHOR acceptance checks and
+     |                          ^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#doc_markdown
+     = note: `-W clippy::doc-markdown` implied by `-W clippy::pedantic`
+     = help: to override `-W clippy::pedantic` add `#[allow(clippy::doc_markdown)]`
+help: try
+     |
+1851 - /// Appends the required PDF_METADATA_TITLE/AUTHOR acceptance checks and
+1851 + /// Appends the required `PDF_METADATA_TITLE/AUTHOR` acceptance checks and
+     |
+
+warning: this function has too many arguments (8/7)
+    --> crates\core\src\runner.rs:2713:1
+     |
+2713 | / async fn commit_ocr_text_output(
+2714 | |     input: &Probe,
+2715 | |     plan: &Plan,
+2716 | |     job_id: Uuid,
+...    |
+2721 | |     observer: &mut impl FnMut(ExecutionMilestone) -> Result<()>,
+2722 | | ) -> Result<ExecutionResult> {
+     | |____________________________^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#too_many_arguments
+     = note: `-W clippy::too-many-arguments` implied by `-W clippy::all`
+     = help: to override `-W clippy::all` add `#[allow(clippy::too_many_arguments)]`
+
+warning: this function has too many lines (111/100)
+    --> crates\core\src\runner.rs:2823:1
+     |
+2823 | / async fn execute_pdf_metadata<F>(
+2824 | |     input: &Probe,
+2825 | |     plan: &Plan,
+2826 | |     job_id: Uuid,
+...    |
+2833 | | where
+2834 | |     F: FnMut(ExecutionMilestone) -> Result<()>,
+     | |_______________________________________________^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#too_many_lines
+     = note: `-W clippy::too-many-lines` implied by `-W clippy::pedantic`
+     = help: to override `-W clippy::pedantic` add `#[allow(clippy::too_many_lines)]`
+
+warning: this function has too many lines (127/100)
+    --> crates\core\src\runner.rs:2950:1
+     |
+2950 | / async fn execute_pdf_ocr<F>(
+2951 | |     input: &Probe,
+2952 | |     plan: &Plan,
+2953 | |     job_id: Uuid,
+...    |
+2960 | | where
+2961 | |     F: FnMut(ExecutionMilestone) -> Result<()>,
+     | |_______________________________________________^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#too_many_lines
+
+warning: `formatwright-core` (lib) generated 12 warnings (run `cargo clippy --fix --lib -p formatwright-core -- ` to apply 4 suggestions)
+warning: found call to `str::trim_start` before `str::split_whitespace`
+    --> crates\core\src\pdf.rs:2699:14
+     |
+2699 |               .trim_start()
+     |  ______________^
+2700 | |             .split_whitespace()
+     | |_____________^ help: remove `trim_start()`
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#trim_split_whitespace
+     = note: `-W clippy::trim-split-whitespace` implied by `-W clippy::all`
+     = help: to override `-W clippy::all` add `#[allow(clippy::trim_split_whitespace)]`
+
+warning: casting `u64` to `usize` may truncate the value on targets with 32-bit wide pointers
+    --> crates\core\src\pdf.rs:2724:17
+     |
+2724 |         assert!(startxref_value(&updated) as usize <= updated.len());
+     |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: if this is intentional allow the lint with `#[allow(clippy::cast_possible_truncation)]` ...
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#cast_possible_truncation
+     = note: `-W clippy::cast-possible-truncation` implied by `-W clippy::pedantic`
+     = help: to override `-W clippy::pedantic` add `#[allow(clippy::cast_possible_truncation)]`
+help: ... or use `try_from` and handle the error accordingly
+     |
+2724 -         assert!(startxref_value(&updated) as usize <= updated.len());
+2724 +         assert!(usize::try_from(startxref_value(&updated)) <= updated.len());
+     |
+
+warning: `formatwright-core` (lib test) generated 14 warnings (12 duplicates) (run `cargo clippy --fix --lib -p formatwright-core --tests -- ` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.72s

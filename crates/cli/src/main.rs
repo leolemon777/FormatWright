@@ -188,7 +188,7 @@ enum Command {
 
         #[arg(
             long,
-            value_name = "pdf-merge|pdf-extract|pdf-rotate|pdf-compress|pdf-encrypt|pdf-decrypt",
+            value_name = "pdf-merge|pdf-extract|pdf-rotate|pdf-compress|pdf-encrypt|pdf-decrypt|pdf-watermark|pdf-ocr|pdf-metadata",
             help = "Run an operation-style PDF workflow (ADR-0013)"
         )]
         operation: Option<String>,
@@ -233,6 +233,12 @@ enum Command {
             help = "Target MP4 output size in KB (transcode iterates CRF)"
         )]
         target_size_kb: Option<u64>,
+
+        #[arg(long, value_name = "TEXT", help = "Document title for pdf-metadata")]
+        metadata_title: Option<String>,
+
+        #[arg(long, value_name = "TEXT", help = "Document author for pdf-metadata")]
+        metadata_author: Option<String>,
 
         #[arg(long, help = "Print the Plan and do not execute")]
         dry_run: bool,
@@ -668,6 +674,8 @@ async fn run(cli: Cli) -> Result<(), FormatWrightError> {
                 watermark_text: None,
                 watermark_angle: None,
                 target_size_bytes: None,
+                metadata_title: None,
+                metadata_author: None,
             };
             let (_, plan, _) = prepare_conversion(&input, &request).await?;
             if cli.json {
@@ -703,6 +711,8 @@ async fn run(cli: Cli) -> Result<(), FormatWrightError> {
             watermark_text,
             watermark_angle,
             target_size_kb,
+            metadata_title,
+            metadata_author,
             dry_run,
             queue_only,
             idempotency_key,
@@ -734,6 +744,8 @@ async fn run(cli: Cli) -> Result<(), FormatWrightError> {
                 watermark_text,
                 watermark_angle,
                 target_size_bytes: target_size_kb.map(|kb| kb.saturating_mul(1024)),
+                metadata_title,
+                metadata_author,
             };
             let (probe, plan, validation_engine) = prepare_conversion(&input, &request).await?;
             if dry_run && queue_only {
