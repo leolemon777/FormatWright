@@ -145,6 +145,43 @@ async fn plan_rejects_relative_input_with_structured_error() {
 }
 
 #[tokio::test]
+async fn plan_rejects_malformed_json_body_with_structured_error() {
+    let server = test_server();
+    let response = server
+        .router
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/plan")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"inputPath": "truncated"#))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    let status = response.status();
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+        .await
+        .expect("body");
+    let body = parse_json_body(status, &bytes);
+    assert_eq!(body["code"], "INPUT_INVALID");
+    assert_eq!(body["stage"], "Inspect");
+    assert!(
+        body["message"]
+            .as_str()
+            .is_some_and(|message| !message.is_empty()),
+        "expected a JSON-syntax diagnostic, got: {body}"
+    );
+    assert!(
+        body["action"]
+            .as_str()
+            .is_some_and(|action| !action.is_empty()),
+        "expected a user action, got: {body}"
+    );
+}
+
+#[tokio::test]
 async fn plan_rejects_missing_input_file_with_structured_error() {
     let server = test_server();
     let missing = server.dir.path().join("missing.json");
@@ -266,4 +303,45 @@ fn url_escape(value: &str) -> String {
         }
     }
     out
+}
+
+#[tokio::test]
+async fn responses_carry_cors_headers_for_the_local_demo_page() {
+    let server = test_server();
+    let response = server
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/health")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("health response");
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get("Access-Control-Allow-Origin")
+            .and_then(|value| value.to_str().ok()),
+        Some("*")
+    );
+
+    let preflight = server
+        .router
+        .oneshot(
+            Request::builder()
+                .method("OPTIONS")
+                .uri("/v1/plan")
+                .body(Body::empty())
+                .expect("preflight request"),
+        )
+        .await
+        .expect("preflight response");
+    assert_eq!(preflight.status(), axum::http::StatusCode::OK);
+    assert!(preflight
+        .headers()
+        .get("Access-Control-Allow-Methods")
+        .is_some());
 }

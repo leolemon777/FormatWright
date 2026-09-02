@@ -3,7 +3,8 @@
 use std::path::{Path, PathBuf};
 
 use axum::Json;
-use axum::extract::{Query, State};
+use axum::extract::{FromRequest, Query, Request, State};
+use axum::extract::rejection::JsonRejection;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use formatwright_core::domain::PlanRequest;
@@ -13,6 +14,7 @@ use formatwright_core::{
     SqliteJobStore, capability_snapshot_for_input, prepare_conversion,
 };
 use serde::Deserialize;
+use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
@@ -87,6 +89,39 @@ impl IntoResponse for ApiError {
         });
         (self.status, Json(body)).into_response()
     }
+}
+
+/// JSON request-body extractor that keeps rejections on the unified error
+/// contract.
+///
+/// axum's built-in `Json` rejects malformed bodies with a `text/plain`
+/// response that bypasses the `{code, stage, message, action}` shape; every
+/// rejection here is remapped to `INPUT_INVALID` / stage `Inspect` (HTTP 400)
+/// so API clients only ever see one error schema.
+#[derive(Debug)]
+struct ValidJson<T>(T);
+
+impl<S, T> FromRequest<S> for ValidJson<T>
+where
+    S: Send + Sync,
+    T: DeserializeOwned,
+{
+    type Rejection = ApiError;
+
+    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
+        Json::<T>::from_request(req, state)
+            .await
+            .map(|Json(value)| ValidJson(value))
+            .map_err(|rejection| json_rejection_error(&rejection))
+    }
+}
+
+/// Maps an axum `Json` extractor rejection onto the structured `ApiError`.
+fn json_rejection_error(rejection: &JsonRejection) -> ApiError {
+    invalid_input(
+        format!("invalid request body: {}", rejection.body_text()),
+        "Fix the JSON request body and retry.",
+    )
 }
 
 /// Request body for `/v1/plan` and `/v1/convert`.
@@ -185,8 +220,43 @@ pub fn build_router(state: AppState) -> axum::Router {
         .route("/v1/plan", post(plan))
         .route("/v1/convert", post(convert))
         .route("/v1/capabilities", get(capabilities))
+        // The demo page (website/demo.html) runs from file://; this is a
+        // loopback-only local service, so a permissive CORS layer keeps the
+        // browser from blocking the calls without any real exposure.
+        .layer(axum::middleware::from_fn(cors_local_demo))
         .layer(axum::extract::DefaultBodyLimit::max(MAX_BODY_BYTES))
         .with_state(state)
+}
+
+async fn cors_local_demo(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    // Preflight for application/json bodies arrives as OPTIONS; answer it
+    // in the middleware so routes stay method-clean.
+    if request.method() == axum::http::Method::OPTIONS {
+        let mut response = axum::http::Response::new(axum::body::Body::empty());
+        apply_cors_headers(response.headers_mut());
+        return response.into();
+    }
+    let mut response = next.run(request).await;
+    apply_cors_headers(response.headers_mut());
+    response
+}
+
+fn apply_cors_headers(headers: &mut axum::http::HeaderMap) {
+    headers.insert(
+        "Access-Control-Allow-Origin",
+        "*".parse().expect("static header value"),
+    );
+    headers.insert(
+        "Access-Control-Allow-Headers",
+        "Content-Type".parse().expect("static header value"),
+    );
+    headers.insert(
+        "Access-Control-Allow-Methods",
+        "GET, POST, OPTIONS".parse().expect("static header value"),
+    );
 }
 
 #[allow(clippy::unused_async)]
@@ -204,7 +274,7 @@ async fn openapi() -> Json<Value> {
 
 async fn plan(
     State(_state): State<AppState>,
-    Json(body): Json<ConversionBody>,
+    ValidJson(body): ValidJson<ConversionBody>,
 ) -> Result<Json<Value>, ApiError> {
     require_absolute_input(&body.input_path)?;
     let input_path = body.input_path.clone();
@@ -217,7 +287,7 @@ async fn plan(
 
 async fn convert(
     State(state): State<AppState>,
-    Json(body): Json<ConversionBody>,
+    ValidJson(body): ValidJson<ConversionBody>,
 ) -> Result<Json<Value>, ApiError> {
     require_absolute_input(&body.input_path)?;
     let input_path = body.input_path.clone();
