@@ -4,13 +4,16 @@ use formatwright_engine_sdk::EngineIdentity;
 
 use crate::doctor::{inspect_builtin_engine, inspect_engine};
 use crate::document::{
-    inspect_document, plan_markup_to_docx, plan_markup_to_epub, plan_markup_to_pdf,
+    inspect_document, plan_docx_markup_export, plan_markup_to_docx, plan_markup_to_epub,
+    plan_markup_to_pdf,
 };
 use crate::domain::{Plan, PlanRequest, Probe};
 use crate::edge_pdf::plan_edge_print_to_pdf;
 use crate::error::{ErrorCode, FormatWrightError, Result, Stage};
 use crate::inspect::inspect_media;
-use crate::office::{inspect_office, office_format_hint, plan_office_to_pdf};
+use crate::office::{
+    inspect_office, office_format_hint, plan_office_document_exchange, plan_office_to_pdf,
+};
 use crate::pdf::{inspect_pdf, inspect_pdf_unlocked, pdf_format_hint, plan_pdf_render};
 use crate::planner::{plan_conversion, plan_heic_conversion};
 use crate::structured::{inspect_structured, plan_structured_conversion};
@@ -48,6 +51,40 @@ pub async fn prepare_conversion(
         return Ok((probe, plan, engine));
     }
     let target = normalized_target(&request.target_format);
+    // docx <-> odt 互换走 soffice lane，验收用容器结构检查（无需 Poppler）。
+    if matches!(target.as_str(), "docx" | "odt")
+        && let Some(hint) = office_format_hint(input)?
+        && matches!(hint, "docx" | "odt")
+        && hint != target
+    {
+        let probe = inspect_office(input).await?;
+        let soffice = inspect_engine("soffice").await?;
+        let output = required_output(request, "Office document exchange")?;
+        let plan = plan_office_document_exchange(&probe, output, &soffice, &target)?;
+        return Ok((probe, plan, soffice));
+    }
+    // DOCX 输入导出到 txt/md/html/epub 走 pandoc reader。
+    if matches!(target.as_str(), "txt" | "md" | "html" | "epub")
+        && input
+            .extension()
+            .and_then(|value| value.to_str())
+            .is_some_and(|value| value.eq_ignore_ascii_case("docx"))
+    {
+        let probe = inspect_document(input).await?;
+        let pandoc = inspect_engine("pandoc").await?;
+        let output = required_output(request, "DOCX markup export")?;
+        let plan = plan_docx_markup_export(&probe, output, &pandoc, &target)?;
+        return Ok((probe, plan, pandoc));
+    }
+    if target == "txt" && is_raster_image_path(input) {
+        // Operation-free OCR lane: a raster image routes to tesseract.
+        let ffprobe = inspect_engine("ffprobe").await?;
+        let probe = inspect_media(input, &ffprobe).await?;
+        let tesseract = inspect_engine("tesseract").await?;
+        let output = required_output(request, "Image OCR")?;
+        let plan = crate::ocr::plan_image_ocr(&probe, output, &tesseract)?;
+        return Ok((probe, plan, tesseract));
+    }
     if matches!(target.as_str(), "docx" | "epub") {
         let probe = inspect_document(input).await?;
         let pandoc = inspect_engine("pandoc").await?;
@@ -132,7 +169,7 @@ pub async fn prepare_conversion(
     let ffprobe = inspect_engine("ffprobe").await?;
     let probe = inspect_media(input, &ffprobe).await?;
     if probe.format.id == "heic" && matches!(target.as_str(), "jpg" | "jpeg" | "png") {
-        let heif_convert = inspect_engine("heif-convert").await?;
+        let heif_convert = inspect_engine("heif-dec").await?;
         let plan = plan_heic_conversion(&probe, request, &heif_convert)?;
         return Ok((probe, plan, ffprobe));
     }
@@ -208,7 +245,7 @@ fn is_archive_target(target: &str) -> bool {
             .trim_start_matches('.')
             .to_ascii_lowercase()
             .as_str(),
-        "zip" | "tar.gz" | "tgz" | "taz"
+        "zip" | "tar.gz" | "tgz" | "taz" | "7z"
     )
 }
 
@@ -320,11 +357,33 @@ async fn prepare_pdf_operation(
             )?;
             Ok((probe, plan, qpdf))
         }
+        "pdf-ocr" => {
+            let probe = inspect_pdf(input, &pdfinfo).await?;
+            // The lane needs pdftoppm to rasterize pages; fail at plan time
+            // when it is missing.
+            inspect_engine("pdftoppm").await?;
+            let tesseract = inspect_engine("tesseract").await?;
+            let output = required_output(request, "PDF OCR")?;
+            let plan = crate::ocr::plan_pdf_ocr(&probe, output, &tesseract)?;
+            Ok((probe, plan, pdfinfo))
+        }
+        "pdf-metadata" => {
+            let probe = inspect_pdf(input, &pdfinfo).await?;
+            let output = required_output(request, "PDF metadata")?;
+            let plan = crate::pdf::plan_pdf_metadata(
+                &probe,
+                request.metadata_title.as_deref(),
+                request.metadata_author.as_deref(),
+                output,
+                &qpdf,
+            )?;
+            Ok((probe, plan, qpdf))
+        }
         other => Err(FormatWrightError::new(
             ErrorCode::Unsupported,
             Stage::Plan,
             format!("Unknown operation: {other}"),
-            "Choose pdf-merge, pdf-extract, pdf-rotate, pdf-compress, pdf-encrypt, pdf-decrypt, or pdf-watermark.",
+            "Choose pdf-merge, pdf-extract, pdf-rotate, pdf-compress, pdf-encrypt, pdf-decrypt, pdf-watermark, pdf-ocr, or pdf-metadata.",
         )),
     }
 }

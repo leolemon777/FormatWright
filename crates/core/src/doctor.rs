@@ -61,7 +61,7 @@ pub async fn doctor_with_policy(policy: EngineDiscoveryPolicy) -> DoctorReport {
         "ffmpeg",
         "ffprobe",
         "vips",
-        "heif-convert",
+        "heif-dec",
         "pandoc",
         "soffice",
         "pdftoppm",
@@ -70,6 +70,7 @@ pub async fn doctor_with_policy(policy: EngineDiscoveryPolicy) -> DoctorReport {
         "pdffonts",
         "msedge",
         "qpdf",
+        "tesseract",
     ] {
         let health = match inspect_engine_with_policy(executable, policy).await {
             Ok(identity) => {

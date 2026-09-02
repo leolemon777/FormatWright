@@ -6,9 +6,9 @@ use serde::{Deserialize, Serialize};
 use crate::doctor::{EngineDiscoveryPolicy, inspect_engine_with_policy};
 use crate::error::{ErrorCode, FormatWrightError, Result, Stage};
 
-const KNOWN_TARGETS: [&str; 18] = [
+const KNOWN_TARGETS: [&str; 22] = [
     "jpg", "png", "webp", "avif", "mp4", "mp3", "m4a", "wav", "gif", "pdf", "docx", "epub", "json",
-    "csv", "yaml", "xml", "zip", "tar.gz",
+    "csv", "yaml", "xml", "zip", "tar.gz", "md", "txt", "odt", "7z",
 ];
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -179,11 +179,14 @@ fn supported_targets(input: Option<&str>) -> BTreeSet<&'static str> {
     let values: &[&str] = match input.unwrap_or_default() {
         "csv" | "json" | "yaml" | "yml" | "xml" => &["csv", "json", "yaml", "xml"],
         "pdf" | "heic" | "heif" => &["jpg", "png"],
-        "docx" | "pptx" | "xlsx" | "odt" | "ods" | "odp" | "rtf" | "svg" => &["pdf"],
+        "docx" => &["pdf", "txt", "md", "html", "epub", "odt"],
+        "odt" => &["pdf", "docx"],
+        "pptx" | "xlsx" | "ods" | "odp" | "rtf" | "svg" => &["pdf"],
         "md" | "markdown" | "html" | "htm" | "txt" | "text" => &["pdf", "docx", "epub"],
-        "zip" => &["tar.gz"],
+        "zip" => &["tar.gz", "7z"],
         "tar.gz" => &["zip"],
-        "png" | "jpg" | "jpeg" => &["webp", "avif", "pdf"],
+        "7z" => &["zip"],
+        "png" | "jpg" | "jpeg" => &["webp", "avif", "pdf", "txt"],
         "mov" | "mkv" | "avi" | "webm" | "mp4" => &["mp4", "gif", "mp3"],
         "wav" | "flac" | "aac" | "m4a" | "ogg" | "opus" | "mp3" => &["m4a", "mp3", "wav"],
         _ => &[],
@@ -220,11 +223,20 @@ fn required_engines(input: Option<&str>, target: &str) -> Vec<String> {
     {
         return Vec::new();
     }
-    if matches!(input, "zip" | "tar.gz") && matches!(target.as_str(), "zip" | "tar.gz") {
+    if matches!(input, "zip" | "tar.gz" | "7z")
+        && matches!(target.as_str(), "zip" | "tar.gz" | "7z")
+    {
         return Vec::new();
     }
     if input == "pdf" && matches!(target.as_str(), "jpg" | "png") {
         return engine_names(&["pdfinfo", "pdftoppm", "ffprobe"]);
+    }
+    if input == "docx" && matches!(target.as_str(), "txt" | "md" | "html" | "epub") {
+        return engine_names(&["pandoc"]);
+    }
+    // 文档互换（docx <-> odt）只需 soffice；结构验收不依赖 Poppler。
+    if (input == "docx" && target == "odt") || (input == "odt" && target == "docx") {
+        return engine_names(&["soffice"]);
     }
     if matches!(
         input,
@@ -248,7 +260,10 @@ fn required_engines(input: Option<&str>, target: &str) -> Vec<String> {
         return engine_names(&["soffice", "pdfinfo", "pdftoppm"]);
     }
     if matches!(input, "heic" | "heif") && matches!(target.as_str(), "jpg" | "png") {
-        return engine_names(&["ffprobe", "heif-convert"]);
+        return engine_names(&["ffprobe", "heif-dec"]);
+    }
+    if matches!(input, "png" | "jpg" | "jpeg") && target == "txt" {
+        return engine_names(&["ffprobe", "tesseract"]);
     }
     engine_names(&["ffprobe", "ffmpeg"])
 }
@@ -373,6 +388,34 @@ mod tests {
         assert!(targets.contains("jpg"));
         assert!(!targets.contains("webp"));
         assert!(!targets.contains("mp4"));
+    }
+
+    #[test]
+    fn docx_exports_route_through_pandoc_and_document_exchange_through_soffice() {
+        let targets = supported_targets(Some("docx"));
+        for target in ["pdf", "txt", "md", "html", "epub", "odt"] {
+            assert!(targets.contains(target), "docx -> {target}");
+        }
+        assert_eq!(
+            required_engines(Some("docx"), "txt"),
+            ["pandoc"],
+            "docx -> txt/md/html/epub only needs pandoc"
+        );
+        assert_eq!(required_engines(Some("docx"), "epub"), ["pandoc"]);
+        assert_eq!(
+            required_engines(Some("docx"), "odt"),
+            ["soffice"],
+            "document exchange avoids the poppler-only PDF validators"
+        );
+        assert_eq!(required_engines(Some("odt"), "docx"), ["soffice"]);
+    }
+
+    #[test]
+    fn odt_targets_stay_within_pdf_and_docx() {
+        let targets = supported_targets(Some("odt"));
+        assert!(targets.contains("pdf"));
+        assert!(targets.contains("docx"));
+        assert!(!targets.contains("epub"));
     }
 
     #[tokio::test]

@@ -18,7 +18,9 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::EngineIdentity;
-use crate::document::{inspect_document, validate_docx_output, validate_epub_output};
+use crate::document::{
+    inspect_document, validate_docx_output, validate_epub_output, validate_text_export_output,
+};
 use crate::domain::{Plan, Probe, ValidationReport, ValidationStatus};
 use crate::edge_pdf::{
     EdgePrintEvidence, extract_pdf_text, inspect_pdf_font_table, validate_edge_pdf_output,
@@ -27,7 +29,7 @@ use crate::error::{ErrorCode, FormatWrightError, Result, Stage};
 use crate::fingerprint::{ensure_local_filesystem_path, identify_artifact};
 use crate::inspect::inspect_media;
 use crate::job_store::resolve_output_identity;
-use crate::office::validate_office_pdf_output;
+use crate::office::{inspect_office, validate_office_document_output, validate_office_pdf_output};
 use crate::pdf::inspect_pdf;
 use crate::pdf::validate_pdf_render;
 use crate::structured::{convert_structured_file, inspect_structured, validate_structured_output};
@@ -157,6 +159,20 @@ where
         )
         .await;
     }
+    if step.engine.engine_id == "tesseract"
+        && step.arguments.get("ocr_mode").is_some_and(|value| value == "image")
+    {
+        return execute_image_ocr_plan(
+            input,
+            plan,
+            job_id,
+            cancellation,
+            &output_path,
+            &partial_path,
+            &mut observer,
+        )
+        .await;
+    }
     if step.engine.engine_id == "formatwright.archive" {
         return execute_archive_plan(
             input,
@@ -181,7 +197,7 @@ where
         )
         .await;
     }
-    if step.engine.engine_id == "heif-convert" {
+    if step.engine.engine_id == "heif-dec" {
         return execute_heif_plan(
             input,
             plan,
@@ -220,11 +236,23 @@ where
         .await;
     }
     if step.engine.engine_id == "soffice" {
-        return execute_office_pdf_plan(
-            input,
+        if plan.target_format == "pdf" {
+            return execute_office_pdf_plan(
+                input,
+                input,
+                plan,
+                ffprobe,
+                job_id,
+                cancellation,
+                &output_path,
+                &partial_path,
+                &mut observer,
+            )
+            .await;
+        }
+        return execute_office_document_exchange(
             input,
             plan,
-            ffprobe,
             job_id,
             cancellation,
             &output_path,
@@ -684,6 +712,262 @@ where
     }
     if let Err(error) = std::fs::remove_dir_all(partial_path) {
         tracing::warn!(partial = %partial_path.display(), %error, "committed Office PDF but could not clean workspace");
+    }
+    report.output.display_path = Some(output_path.to_string_lossy().into_owned());
+    Ok(ExecutionResult {
+        output_path: output_path.to_owned(),
+        report,
+    })
+}
+
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+async fn execute_office_document_exchange<F>(
+    input: &Probe,
+    plan: &Plan,
+    job_id: Uuid,
+    cancellation: CancellationToken,
+    output_path: &Path,
+    partial_path: &Path,
+    observer: &mut F,
+) -> Result<ExecutionResult>
+where
+    F: FnMut(ExecutionMilestone) -> Result<()>,
+{
+    let step = plan
+        .steps
+        .first()
+        .ok_or_else(|| invalid_plan_argument("Office document exchange step"))?;
+    let source = checked_argument(step, "source_format", &["docx", "odt"])?;
+    let target = checked_argument(step, "target_format", &["docx", "odt"])?;
+    if source == target {
+        return Err(invalid_plan_argument(
+            "Office document exchange target differs from its source",
+        ));
+    }
+    checked_argument(step, "headless", &["true"])?;
+    checked_argument(step, "isolated_profile", &["true"])?;
+    checked_argument(step, "macros", &["disabled"])?;
+    checked_argument(step, "external_resources", &["deny"])?;
+    std::fs::create_dir(partial_path).map_err(|error| {
+        FormatWrightError::new(
+            ErrorCode::StorageFailed,
+            Stage::Execute,
+            "Unable to create the staged Office workspace",
+            "Check destination permissions and storage health.",
+        )
+        .with_diagnostic(error.to_string())
+    })?;
+    let conversion_directory = partial_path.join("converted");
+    let profile_directory = partial_path.join("profile");
+    for directory in [&conversion_directory, &profile_directory] {
+        if let Err(error) = std::fs::create_dir(directory) {
+            cleanup_partial(partial_path);
+            return Err(FormatWrightError::new(
+                ErrorCode::StorageFailed,
+                Stage::Execute,
+                "Unable to create an isolated Office work directory",
+                "Check destination permissions and storage health.",
+            )
+            .with_diagnostic(error.to_string()));
+        }
+    }
+    let profile_url = match local_file_url(&profile_directory) {
+        Ok(url) => url,
+        Err(error) => {
+            cleanup_partial(partial_path);
+            return Err(error);
+        }
+    };
+    // writer8 是 LibreOffice 的 ODF 文本导出 filter；反向用默认 MS Word 2007
+    // XML filter（bare "docx"）。
+    let filter = if target == "odt" {
+        "odt:writer8"
+    } else {
+        "docx"
+    };
+    let output_parent = output_path
+        .parent()
+        .ok_or_else(|| invalid_plan_argument("output parent"))?;
+    let office_input_path = external_process_path(&input.artifact.canonical_path);
+    let office_output_directory = external_process_path(&conversion_directory);
+    let office_current_directory = external_process_path(output_parent);
+    let office_engine_path = external_process_path(&step.engine.binary_path);
+    let mut command = Command::new(office_engine_path);
+    command
+        .current_dir(office_current_directory)
+        .arg(format!("-env:UserInstallation={profile_url}"))
+        .arg("--headless")
+        .arg("--nologo")
+        .arg("--nodefault")
+        .arg("--nolockcheck")
+        .arg("--norestore")
+        .arg("--convert-to")
+        .arg(filter)
+        .arg("--outdir")
+        .arg(&office_output_directory)
+        .arg(&office_input_path)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    #[cfg(unix)]
+    command.process_group(0);
+    tracing::info!(
+        job_id = %job_id,
+        input = %input.artifact.canonical_path.display(),
+        partial = %partial_path.display(),
+        "starting isolated Office document exchange"
+    );
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            cleanup_partial(partial_path);
+            return Err(FormatWrightError::new(
+                ErrorCode::EngineIncompatible,
+                Stage::Execute,
+                "Unable to start LibreOffice",
+                "Run doctor and verify the soffice installation.",
+            )
+            .with_diagnostic(error.to_string()));
+        }
+    };
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| invalid_plan_argument("LibreOffice stdout"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| invalid_plan_argument("LibreOffice stderr"))?;
+    let stdout_task = tokio::spawn(read_bounded_tail(stdout, MAX_STDERR_BYTES));
+    let stderr_task = tokio::spawn(read_bounded_tail(stderr, MAX_STDERR_BYTES));
+    let status = tokio::select! {
+        status = child.wait() => status.map_err(|error| {
+            FormatWrightError::new(
+                ErrorCode::ExecutionFailed,
+                Stage::Execute,
+                "Unable to wait for LibreOffice",
+                "Retry the conversion.",
+            )
+            .with_diagnostic(error.to_string())
+        })?,
+        () = cancellation.cancelled() => {
+            terminate_process_tree(&mut child).await;
+            cleanup_partial(partial_path);
+            return Err(FormatWrightError::new(
+                ErrorCode::Cancelled,
+                Stage::Execute,
+                "Office conversion was cancelled",
+                "Retry when ready.",
+            ));
+        }
+    };
+    let stdout = stdout_task
+        .await
+        .unwrap_or_else(|error| format!("stdout reader failed: {error}"));
+    let stderr = stderr_task
+        .await
+        .unwrap_or_else(|error| format!("stderr reader failed: {error}"));
+    let diagnostic = format!("{stdout}\n{stderr}");
+    if !status.success() {
+        cleanup_partial(partial_path);
+        return Err(FormatWrightError::new(
+            ErrorCode::ExecutionFailed,
+            Stage::Execute,
+            format!("LibreOffice exited with status {status}"),
+            "Inspect the diagnostic and verify the Office document.",
+        )
+        .with_diagnostic(diagnostic));
+    }
+    let source_stem = input
+        .artifact
+        .canonical_path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| invalid_plan_argument("Office input filename"))?;
+    let produced = conversion_directory.join(format!("{source_stem}.{target}"));
+    let output_appeared =
+        wait_for_regular_file(&produced, &cancellation, std::time::Duration::from_secs(30)).await;
+    if cancellation.is_cancelled() {
+        cleanup_partial(partial_path);
+        return Err(FormatWrightError::new(
+            ErrorCode::Cancelled,
+            Stage::Execute,
+            "Office conversion was cancelled while waiting for converter output",
+            "Retry when ready.",
+        ));
+    }
+    if !output_appeared {
+        let observed_entries = std::fs::read_dir(&conversion_directory)
+            .ok()
+            .into_iter()
+            .flatten()
+            .filter_map(std::result::Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        let detailed_diagnostic = format!(
+            "{diagnostic}\ninput={}\noutdir={}\nprofile={profile_url}\nentries={observed_entries:?}",
+            office_input_path.display(),
+            office_output_directory.display()
+        );
+        cleanup_partial(partial_path);
+        return Err(FormatWrightError::new(
+            ErrorCode::ExecutionFailed,
+            Stage::Execute,
+            "LibreOffice reported success but produced no expected document",
+            "Inspect the diagnostic and retry.",
+        )
+        .with_diagnostic(detailed_diagnostic));
+    }
+    if let Err(error) = observer(ExecutionMilestone::EngineFinished) {
+        cleanup_partial(partial_path);
+        return Err(error);
+    }
+    if cancellation.is_cancelled() {
+        cleanup_partial(partial_path);
+        return Err(FormatWrightError::new(
+            ErrorCode::Cancelled,
+            Stage::Validate,
+            "Office conversion was cancelled before validation",
+            "Retry when ready.",
+        ));
+    }
+    if let Err(error) = ensure_input_unchanged(input, Stage::Commit).await {
+        cleanup_partial(partial_path);
+        return Err(error);
+    }
+    let output_probe = match inspect_office(&produced).await {
+        Ok(probe) => probe,
+        Err(error) => {
+            cleanup_partial(partial_path);
+            return Err(error);
+        }
+    };
+    let mut report = validate_office_document_output(input, &output_probe, plan, job_id);
+    if report.status == ValidationStatus::Fail {
+        cleanup_partial(partial_path);
+        return Err(FormatWrightError::new(
+            ErrorCode::ValidationFailed,
+            Stage::Validate,
+            "Office document exchange failed structural validation",
+            "Inspect the validation report and adjust the source.",
+        )
+        .with_diagnostic(serde_json::to_string(&report).unwrap_or_default()));
+    }
+    if output_path.exists() {
+        cleanup_partial(partial_path);
+        return Err(FormatWrightError::new(
+            ErrorCode::OutputConflict,
+            Stage::Commit,
+            "The document destination appeared while LibreOffice was running",
+            "Choose another output path.",
+        ));
+    }
+    if let Err(error) = commit_path_no_replace(&produced, output_path) {
+        cleanup_partial(partial_path);
+        return Err(error);
+    }
+    if let Err(error) = std::fs::remove_dir_all(partial_path) {
+        tracing::warn!(partial = %partial_path.display(), %error, "committed Office document but could not clean workspace");
     }
     report.output.display_path = Some(output_path.to_string_lossy().into_owned());
     Ok(ExecutionResult {
@@ -1539,7 +1823,7 @@ where
     let step = plan
         .steps
         .first()
-        .filter(|step| step.engine.engine_id == "heif-convert")
+        .filter(|step| step.engine.engine_id == "heif-dec")
         .ok_or_else(|| invalid_plan_argument("HEIC libheif step"))?;
     checked_argument(step, "source_format", &["heic"])?;
     let target = checked_argument(step, "target_format", &["jpeg", "png"])?;
@@ -1567,7 +1851,6 @@ where
         command.arg("--quality").arg(quality.to_string());
     } else {
         checked_argument(step, "quality", &["lossless"])?;
-        command.arg("--png-compression-level").arg("6");
     }
     command
         .arg(&input.artifact.canonical_path)
@@ -1584,7 +1867,7 @@ where
             return Err(FormatWrightError::new(
                 ErrorCode::EngineIncompatible,
                 Stage::Execute,
-                "Unable to start heif-convert",
+                "Unable to start heif-dec",
                 "Run doctor and verify the libheif engine.",
             )
             .with_diagnostic(error.to_string()));
@@ -1593,11 +1876,11 @@ where
     let stdout = child
         .stdout
         .take()
-        .ok_or_else(|| invalid_plan_argument("heif-convert stdout"))?;
+        .ok_or_else(|| invalid_plan_argument("heif-dec stdout"))?;
     let stderr = child
         .stderr
         .take()
-        .ok_or_else(|| invalid_plan_argument("heif-convert stderr"))?;
+        .ok_or_else(|| invalid_plan_argument("heif-dec stderr"))?;
     let stdout_task = tokio::spawn(read_bounded_tail(stdout, MAX_STDERR_BYTES));
     let stderr_task = tokio::spawn(read_bounded_tail(stderr, MAX_STDERR_BYTES));
     let status = tokio::select! {
@@ -1605,7 +1888,7 @@ where
             FormatWrightError::new(
                 ErrorCode::ExecutionFailed,
                 Stage::Execute,
-                "Unable to wait for heif-convert",
+                "Unable to wait for heif-dec",
                 "Retry the conversion.",
             )
             .with_diagnostic(error.to_string())
@@ -1632,7 +1915,7 @@ where
         return Err(FormatWrightError::new(
             ErrorCode::ExecutionFailed,
             Stage::Execute,
-            format!("heif-convert exited with status {status}"),
+            format!("heif-dec exited with status {status}"),
             "Inspect the HEIC input and decoder availability.",
         )
         .with_diagnostic(format!("{stdout}\n{stderr}")));
@@ -2169,6 +2452,8 @@ where
             "pdf-encrypt",
             "pdf-decrypt",
             "pdf-watermark",
+            "pdf-ocr",
+            "pdf-metadata",
         ],
     )?;
     let expected_pages: u32 = step
@@ -2176,6 +2461,14 @@ where
         .get("expected_pages")
         .and_then(|value| value.parse().ok())
         .ok_or_else(|| invalid_plan_argument("expected_pages"))?;
+    if operation == "pdf-metadata" {
+        return execute_pdf_metadata(input, plan, job_id, cancellation, output_path, partial_path, observer, expected_pages)
+            .await;
+    }
+    if operation == "pdf-ocr" {
+        return execute_pdf_ocr(input, plan, job_id, cancellation, output_path, partial_path, observer, expected_pages)
+            .await;
+    }
     // G-23: the watermark overlay layer is generated in-process (zero engine
     // dependency) from the input's first-page dimensions, then staged as a
     // temporary PDF that qpdf overlays onto every page. The TempPath removes
@@ -2313,6 +2606,476 @@ where
     commit_pdf_ops_result(partial_path, output_path, report)
 }
 
+/// Runs one tesseract pass and returns the recognized text from stdout.
+/// Tesseract's `stdout` output configuration avoids the automatic `.txt`
+/// suffix it appends to file basenames.
+async fn run_tesseract_to_stdout(
+    tesseract: &formatwright_engine_sdk::EngineIdentity,
+    image: &Path,
+    language: &str,
+    psm: &str,
+) -> Result<String> {
+    let mut command = Command::new(&tesseract.binary_path);
+    command
+        .arg(external_process_path(image))
+        .arg("stdout")
+        .arg("-l")
+        .arg(language)
+        .arg("--psm")
+        .arg(psm)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    #[cfg(unix)]
+    command.process_group(0);
+    let mut child = command.spawn().map_err(|error| {
+        FormatWrightError::new(
+            ErrorCode::EngineIncompatible,
+            Stage::Execute,
+            "Unable to start tesseract",
+            "Run doctor and verify the tesseract engine.",
+        )
+        .with_diagnostic(error.to_string())
+    })?;
+    let stdout_task = tokio::spawn(read_bounded_tail(
+        child
+            .stdout
+            .take()
+            .ok_or_else(|| invalid_plan_argument("tesseract stdout"))?,
+        MAX_STDERR_BYTES,
+    ));
+    let stderr_task = tokio::spawn(read_bounded_tail(
+        child
+            .stderr
+            .take()
+            .ok_or_else(|| invalid_plan_argument("tesseract stderr"))?,
+        MAX_STDERR_BYTES,
+    ));
+    let status = tokio::time::timeout(std::time::Duration::from_secs(120), child.wait())
+        .await
+        .map_err(|_| {
+            FormatWrightError::new(
+                ErrorCode::ExecutionFailed,
+                Stage::Execute,
+                "OCR recognition timed out",
+                "Check whether the input or storage is responsive.",
+            )
+            .retryable(true)
+        })?
+        .map_err(|error| {
+            FormatWrightError::new(
+                ErrorCode::ExecutionFailed,
+                Stage::Execute,
+                "Unable to wait for tesseract",
+                "Retry the operation.",
+            )
+            .with_diagnostic(error.to_string())
+        })?;
+    let stderr = stderr_task
+        .await
+        .unwrap_or_else(|error| format!("stderr reader failed: {error}"));
+    if !status.success() {
+        return Err(FormatWrightError::new(
+            ErrorCode::ExecutionFailed,
+            Stage::Execute,
+            format!("tesseract exited with status {status}"),
+            "Inspect the diagnostic and adjust the inputs.",
+        )
+        .with_diagnostic(stderr));
+    }
+    Ok(stdout_task
+        .await
+        .unwrap_or_else(|error| format!("stdout reader failed: {error}")))
+}
+
+/// Commits an OCR text output after the shared milestone/conservation gates.
+async fn commit_ocr_text_output(
+    input: &Probe,
+    plan: &Plan,
+    job_id: Uuid,
+    partial_path: &Path,
+    output_path: &Path,
+    text: &str,
+    page_coverage: Option<(u32, u32)>,
+    observer: &mut impl FnMut(ExecutionMilestone) -> Result<()>,
+) -> Result<ExecutionResult> {
+    if let Err(error) = observer(ExecutionMilestone::EngineFinished) {
+        cleanup_partial(partial_path);
+        return Err(error);
+    }
+    if let Err(error) = ensure_input_unchanged(input, Stage::Commit).await {
+        cleanup_partial(partial_path);
+        return Err(error);
+    }
+    let output_identity = match identify_artifact(partial_path).await {
+        Ok(identity) => identity,
+        Err(error) => {
+            cleanup_partial(partial_path);
+            return Err(error);
+        }
+    };
+    let report = crate::ocr::validate_ocr_output(
+        input,
+        &output_identity,
+        plan,
+        job_id,
+        text,
+        page_coverage,
+    );
+    if report.status == ValidationStatus::Fail {
+        cleanup_partial(partial_path);
+        return Err(FormatWrightError::new(
+            ErrorCode::ValidationFailed,
+            Stage::Validate,
+            "OCR output failed validation",
+            "Inspect the validation report and adjust the inputs.",
+        )
+        .with_diagnostic(serde_json::to_string(&report).unwrap_or_default()));
+    }
+    commit_pdf_ops_result(partial_path, output_path, report)
+}
+
+/// Executes the operation-free image OCR lane (png/jpg -> txt).
+async fn execute_image_ocr_plan<F>(
+    input: &Probe,
+    plan: &Plan,
+    job_id: Uuid,
+    cancellation: CancellationToken,
+    output_path: &Path,
+    partial_path: &Path,
+    observer: &mut F,
+) -> Result<ExecutionResult>
+where
+    F: FnMut(ExecutionMilestone) -> Result<()>,
+{
+    let step = plan
+        .steps
+        .first()
+        .ok_or_else(|| invalid_plan_argument("OCR step"))?;
+    checked_argument(step, "ocr_mode", &["image"])?;
+    let language = step
+        .arguments
+        .get("language")
+        .cloned()
+        .unwrap_or_else(|| "eng".to_owned());
+    let psm = step
+        .arguments
+        .get("psm")
+        .cloned()
+        .unwrap_or_else(|| crate::ocr::OCR_PSM.to_string());
+    let text = run_tesseract_to_stdout(
+        &step.engine,
+        &input.artifact.canonical_path,
+        &language,
+        &psm,
+    )
+    .await?;
+    std::fs::write(partial_path, text.as_bytes()).map_err(|error| {
+        cleanup_partial(partial_path);
+        FormatWrightError::new(
+            ErrorCode::StorageFailed,
+            Stage::Execute,
+            "Unable to write the OCR text output",
+            "Check destination permissions and storage health.",
+        )
+        .with_diagnostic(error.to_string())
+    })?;
+    if cancellation.is_cancelled() {
+        cleanup_partial(partial_path);
+        return Err(FormatWrightError::new(
+            ErrorCode::Cancelled,
+            Stage::Execute,
+            "Image OCR was cancelled",
+            "Retry when ready.",
+        ));
+    }
+    commit_ocr_text_output(
+        input,
+        plan,
+        job_id,
+        partial_path,
+        output_path,
+        &text,
+        None,
+        &mut *observer,
+    )
+    .await
+}
+
+/// Executes the `pdf-metadata` operation: an in-process incremental update
+/// appends a new /Info object, so no external engine rewrites the document.
+#[allow(clippy::too_many_arguments)]
+async fn execute_pdf_metadata<F>(
+    input: &Probe,
+    plan: &Plan,
+    job_id: Uuid,
+    cancellation: CancellationToken,
+    output_path: &Path,
+    partial_path: &Path,
+    observer: &mut F,
+    expected_pages: u32,
+) -> Result<ExecutionResult>
+where
+    F: FnMut(ExecutionMilestone) -> Result<()>,
+{
+    let step = plan
+        .steps
+        .first()
+        .ok_or_else(|| invalid_plan_argument("PDF metadata step"))?;
+    let title = step.arguments.get("metadata_title").cloned();
+    let author = step.arguments.get("metadata_author").cloned();
+    if title.is_none() && author.is_none() {
+        return Err(invalid_plan_argument("metadata_title/metadata_author"));
+    }
+    let input_path = input.artifact.canonical_path.clone();
+    let partial = partial_path.to_path_buf();
+    let metadata_title = title;
+    let metadata_author = author;
+    tokio::task::spawn_blocking(move || {
+        let bytes = std::fs::read(&input_path).map_err(|error| {
+            FormatWrightError::new(
+                ErrorCode::InputInvalid,
+                Stage::Execute,
+                "Unable to read the PDF input",
+                "Verify the input file is readable.",
+            )
+            .with_diagnostic(error.to_string())
+        })?;
+        let updated = crate::pdf::apply_pdf_metadata(
+            &bytes,
+            metadata_title.as_deref(),
+            metadata_author.as_deref(),
+        )?;
+        std::fs::write(&partial, updated).map_err(|error| {
+            FormatWrightError::new(
+                ErrorCode::StorageFailed,
+                Stage::Execute,
+                "Unable to write the metadata-revised PDF",
+                "Check destination permissions and storage health.",
+            )
+            .with_diagnostic(error.to_string())
+        })
+    })
+    .await
+    .map_err(|error| {
+        FormatWrightError::new(
+            ErrorCode::Internal,
+            Stage::Execute,
+            "PDF metadata worker failed",
+            "Retry the operation.",
+        )
+        .with_diagnostic(error.to_string())
+    })??;
+    if !partial_path.is_file() {
+        cleanup_partial(partial_path);
+        return Err(FormatWrightError::new(
+            ErrorCode::ExecutionFailed,
+            Stage::Execute,
+            "PDF metadata update produced no output",
+            "Retry or report the input.",
+        ));
+    }
+    if cancellation.is_cancelled() {
+        cleanup_partial(partial_path);
+        return Err(FormatWrightError::new(
+            ErrorCode::Cancelled,
+            Stage::Execute,
+            "PDF metadata update was cancelled",
+            "Retry when ready.",
+        ));
+    }
+    if let Err(error) = observer(ExecutionMilestone::EngineFinished) {
+        cleanup_partial(partial_path);
+        return Err(error);
+    }
+    if let Err(error) = ensure_input_unchanged(input, Stage::Commit).await {
+        cleanup_partial(partial_path);
+        return Err(error);
+    }
+    let pdfinfo = crate::doctor::inspect_engine("pdfinfo").await?;
+    let output_probe = match crate::pdf::inspect_pdf(partial_path, &pdfinfo).await {
+        Ok(probe) => probe,
+        Err(error) => {
+            cleanup_partial(partial_path);
+            return Err(error);
+        }
+    };
+    let mut report =
+        crate::pdf::validate_pdf_ops_output(input, &output_probe, plan, job_id, expected_pages);
+    let (observed_title, observed_author) =
+        match crate::pdf::pdfinfo_document_metadata(partial_path, &pdfinfo).await {
+            Ok(values) => values,
+            Err(error) => {
+                cleanup_partial(partial_path);
+                return Err(error);
+            }
+        };
+    crate::pdf::append_metadata_checks(
+        &mut report,
+        plan,
+        observed_title.as_deref(),
+        observed_author.as_deref(),
+    );
+    if report.status == ValidationStatus::Fail {
+        cleanup_partial(partial_path);
+        return Err(FormatWrightError::new(
+            ErrorCode::ValidationFailed,
+            Stage::Validate,
+            "PDF metadata output failed validation",
+            "Inspect the validation report and adjust the inputs.",
+        )
+        .with_diagnostic(serde_json::to_string(&report).unwrap_or_default()));
+    }
+    commit_pdf_ops_result(partial_path, output_path, report)
+}
+
+/// Executes the `pdf-ocr` operation: every page is rasterized with pdftoppm at
+/// the planned DPI, recognized by tesseract, and concatenated into one txt.
+#[allow(clippy::too_many_arguments)]
+async fn execute_pdf_ocr<F>(
+    input: &Probe,
+    plan: &Plan,
+    job_id: Uuid,
+    cancellation: CancellationToken,
+    output_path: &Path,
+    partial_path: &Path,
+    observer: &mut F,
+    expected_pages: u32,
+) -> Result<ExecutionResult>
+where
+    F: FnMut(ExecutionMilestone) -> Result<()>,
+{
+    let step = plan
+        .steps
+        .first()
+        .ok_or_else(|| invalid_plan_argument("PDF OCR step"))?;
+    let language = step
+        .arguments
+        .get("language")
+        .cloned()
+        .unwrap_or_else(|| "eng".to_owned());
+    let psm = step
+        .arguments
+        .get("psm")
+        .cloned()
+        .unwrap_or_else(|| crate::ocr::OCR_PSM.to_string());
+    let dpi = step
+        .arguments
+        .get("dpi")
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(u64::from(crate::ocr::OCR_PDF_DPI));
+    let pdftoppm = crate::doctor::inspect_engine("pdftoppm").await?;
+    let staging = tempfile::tempdir().map_err(|error| {
+        FormatWrightError::new(
+            ErrorCode::StorageFailed,
+            Stage::Execute,
+            "Unable to create the OCR staging directory",
+            "Check temporary-directory permissions and retry.",
+        )
+        .with_diagnostic(error.to_string())
+    })?;
+    let mut text = String::new();
+    let mut processed: u32 = 0;
+    for page in 1..=expected_pages {
+        if cancellation.is_cancelled() {
+            cleanup_partial(partial_path);
+            return Err(FormatWrightError::new(
+                ErrorCode::Cancelled,
+                Stage::Execute,
+                "PDF OCR was cancelled",
+                "Retry when ready.",
+            ));
+        }
+        let prefix = staging.path().join(format!("p{page}"));
+        let rasterized = Command::new(&pdftoppm.binary_path)
+            .arg("-f")
+            .arg(page.to_string())
+            .arg("-l")
+            .arg(page.to_string())
+            .arg("-r")
+            .arg(dpi.to_string())
+            .arg("-png")
+            .arg(external_process_path(&input.artifact.canonical_path))
+            .arg(&prefix)
+            .output()
+            .await
+            .map_err(|error| {
+                FormatWrightError::new(
+                    ErrorCode::EngineIncompatible,
+                    Stage::Execute,
+                    "Unable to start pdftoppm",
+                    "Run doctor and verify the pdftoppm engine.",
+                )
+                .with_diagnostic(error.to_string())
+            })?;
+        if !rasterized.status.success() {
+            cleanup_partial(partial_path);
+            return Err(FormatWrightError::new(
+                ErrorCode::ExecutionFailed,
+                Stage::Execute,
+                format!("pdftoppm could not rasterize page {page}"),
+                "Inspect the diagnostic and adjust the inputs.",
+            )
+            .with_diagnostic(String::from_utf8_lossy(&rasterized.stderr).into_owned()));
+        }
+        // pdftoppm appends `-N` (zero-padded to the document's page digits)
+        // plus `.png`, so locate the produced page by prefix.
+        let page_image = std::fs::read_dir(staging.path())
+            .map_err(|error| {
+                cleanup_partial(partial_path);
+                FormatWrightError::new(
+                    ErrorCode::Internal,
+                    Stage::Execute,
+                    "Unable to list the OCR staging directory",
+                    "Retry the operation.",
+                )
+                .with_diagnostic(error.to_string())
+            })?
+            .filter_map(std::result::Result::ok)
+            .map(|entry| entry.path())
+            .find(|path| {
+                path.to_str()
+                    .is_some_and(|name| {
+                        name.starts_with(prefix.to_string_lossy().as_ref())
+                    })
+            })
+            .ok_or_else(|| {
+                cleanup_partial(partial_path);
+                FormatWrightError::new(
+                    ErrorCode::ExecutionFailed,
+                    Stage::Execute,
+                    format!("pdftoppm produced no image for page {page}"),
+                    "Retry or report the input.",
+                )
+            })?;
+        let page_text = run_tesseract_to_stdout(&step.engine, &page_image, &language, &psm).await?;
+        text.push_str(&page_text);
+        text.push_str("\n\n");
+        processed += 1;
+    }
+    std::fs::write(partial_path, text.as_bytes()).map_err(|error| {
+        cleanup_partial(partial_path);
+        FormatWrightError::new(
+            ErrorCode::StorageFailed,
+            Stage::Execute,
+            "Unable to write the OCR text output",
+            "Check destination permissions and storage health.",
+        )
+        .with_diagnostic(error.to_string())
+    })?;
+    commit_ocr_text_output(
+        input,
+        plan,
+        job_id,
+        partial_path,
+        output_path,
+        &text,
+        Some((processed, expected_pages)),
+        &mut *observer,
+    )
+    .await
+}
+
 /// Commits a validated PDF operation output without replacing an existing
 /// destination (ADR-0013 commit gate).
 fn commit_pdf_ops_result(
@@ -2357,8 +3120,8 @@ where
         .steps
         .first()
         .ok_or_else(|| invalid_plan_argument("Archive step"))?;
-    let source = checked_argument(step, "source_format", &["zip", "tar.gz"])?;
-    let target = checked_argument(step, "target_format", &["zip", "tar.gz"])?;
+    let source = checked_argument(step, "source_format", &["zip", "tar.gz", "7z"])?;
+    let target = checked_argument(step, "target_format", &["zip", "tar.gz", "7z"])?;
     if source == target {
         return Err(invalid_plan_argument("target_format"));
     }
@@ -2367,10 +3130,11 @@ where
     let repack_source = source.to_owned();
     let repack_target = target.to_owned();
     tokio::task::spawn_blocking(move || {
-        if (repack_source.as_str(), repack_target.as_str()) == ("zip", "tar.gz") {
-            crate::archive::repack_zip_to_targz(&input_path, &partial)
-        } else {
-            crate::archive::repack_targz_to_zip(&input_path, &partial)
+        match (repack_source.as_str(), repack_target.as_str()) {
+            ("zip", "tar.gz") => crate::archive::repack_zip_to_targz(&input_path, &partial),
+            ("zip", "7z") => crate::archive::repack_zip_to_7z(&input_path, &partial),
+            ("7z", "zip") => crate::archive::repack_7z_to_zip(&input_path, &partial),
+            _ => crate::archive::repack_targz_to_zip(&input_path, &partial),
         }
     })
     .await
@@ -2464,12 +3228,31 @@ where
         .steps
         .first()
         .ok_or_else(|| invalid_plan_argument("Pandoc step"))?;
-    let source = checked_argument(step, "source_format", &["markdown", "html", "plain"])?;
-    let target = checked_argument(step, "target_format", &["docx", "epub"])?;
+    let source = checked_argument(
+        step,
+        "source_format",
+        &["markdown", "html", "plain", "docx"],
+    )?;
+    let target = checked_argument(
+        step,
+        "target_format",
+        &["docx", "epub", "txt", "md", "html"],
+    )?;
     checked_argument(step, "sandbox", &["true"])?;
     checked_argument(step, "resource_policy", &["deny-all"])?;
     // Plain text has no dedicated Pandoc reader; it rides the GFM reader.
-    let reader = if source == "html" { "html" } else { "gfm" };
+    // DOCX export rides Pandoc's own docx reader/writer.
+    let reader = match source {
+        "html" => "html",
+        "docx" => "docx",
+        _ => "gfm",
+    };
+    let writer = match target {
+        "txt" => "plain",
+        "md" => "gfm",
+        "html" => "html",
+        other => other,
+    };
     let output_parent = output_path
         .parent()
         .ok_or_else(|| invalid_plan_argument("output parent"))?;
@@ -2478,7 +3261,7 @@ where
         .current_dir(output_parent)
         .arg("--sandbox=true")
         .arg(format!("--from={reader}"))
-        .arg(format!("--to={target}"))
+        .arg(format!("--to={writer}"))
         .arg("--standalone")
         .arg("--output")
         .arg(partial_path)
@@ -2564,10 +3347,10 @@ where
             return Err(error);
         }
     };
-    let mut report = if target == "epub" {
-        validate_epub_output(input, &output_probe, plan, job_id)
-    } else {
-        validate_docx_output(input, &output_probe, plan, job_id)
+    let mut report = match target {
+        "epub" => validate_epub_output(input, &output_probe, plan, job_id),
+        "docx" => validate_docx_output(input, &output_probe, plan, job_id),
+        _ => validate_text_export_output(input, &output_probe, plan, job_id),
     };
     if report.status == ValidationStatus::Fail {
         cleanup_partial(partial_path);

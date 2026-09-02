@@ -100,7 +100,7 @@ jobs:
           pnpm test
           pnpm build
       - name: Build accessibility-instrumented desktop
-        run: pnpm --filter @formatwright/desktop tauri build -- --debug --no-bundle --config src-tauri/tauri.accessibility.conf.json
+        run: pnpm --filter @formatwright/desktop exec tauri build --debug --no-bundle --config src-tauri/tauri.accessibility.conf.json
       - name: Native WebView accessibility smoke
         shell: pwsh
         run: ./scripts/test_desktop_accessibility.ps1

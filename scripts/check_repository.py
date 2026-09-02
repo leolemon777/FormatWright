@@ -234,12 +234,21 @@ def check_desktop_contract(errors: list[str]) -> None:
         permissions = capability.get("permissions")
         expected_permissions = [
             "core:event:default",
+            "core:window:default",
+            "core:window:allow-close",
+            "core:window:allow-minimize",
+            "core:window:allow-toggle-maximize",
+            "core:window:allow-start-dragging",
             "dialog:allow-open",
             "dialog:allow-save",
+            "updater:default",
+            "updater:allow-check",
+            "updater:allow-download",
+            "updater:allow-install",
         ]
         if permissions != expected_permissions:
             errors.append(
-                "capabilities/main.json: desktop permissions must remain the reviewed event/dialog allowlist"
+                "capabilities/main.json: desktop permissions must remain the reviewed allowlist"
             )
 
 

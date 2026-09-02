@@ -66,12 +66,12 @@ pub fn plan_heic_conversion(
             "Choose a content-detected HEIC/HEIF still image.",
         ));
     }
-    if heif_convert.engine_id != "heif-convert" {
+    if heif_convert.engine_id != "heif-dec" {
         return Err(FormatWrightError::new(
             ErrorCode::EngineIncompatible,
             Stage::Plan,
             "The HEIC Plan was given the wrong engine",
-            "Run doctor and use heif-convert.",
+            "Run doctor and use heif-dec.",
         ));
     }
     if request.width.is_some() {
@@ -1277,6 +1277,8 @@ mod tests {
             watermark_text: None,
             watermark_angle: None,
             target_size_bytes: None,
+            metadata_title: None,
+            metadata_author: None,
         }
     }
 
