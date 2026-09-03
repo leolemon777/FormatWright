@@ -400,9 +400,12 @@ pub fn plan_archive_conversion(
     if !matches!(
         (probe.format.id.as_str(), normalized_target),
         ("zip", "tar.gz" | "7z") | ("tar.gz" | "7z", "zip")
+    ) && !matches!(
+        (probe.format.id.as_str(), normalized_target),
+        ("tar.gz", "7z") | ("7z", "tar.gz")
     ) {
         return Err(unsupported(
-            "Archive conversion must be zip -> tar.gz, tar.gz -> zip, zip -> 7z, or 7z -> zip",
+            "Archive conversion must be between zip, tar.gz, and 7z",
         ));
     }
     if engine.engine_id != "formatwright.archive" {
@@ -828,6 +831,132 @@ fn artifact_summary(probe: &Probe) -> ArtifactSummary {
     }
 }
 
+/// Repacks a tar.gz into a 7z without extracting to disk.
+pub(crate) fn repack_targz_to_7z(input: &Path, output: &Path) -> Result<()> {
+    let file = File::open(input).map_err(|error| input_error(input, error))?;
+    let decoder = GzDecoder::new(file);
+    let mut archive = tar::Archive::new(decoder);
+    let mut writer =
+        sevenz_rust::SevenZWriter::create(output).map_err(|error| output_error(output, error))?;
+    let mut total: u64 = 0;
+    let mut buffer = Vec::new();
+    for (count, entry) in archive
+        .entries()
+        .map_err(|error| input_error(input, error))?
+        .enumerate()
+    {
+        let mut entry = entry.map_err(|error| input_error(input, error))?;
+        let name = entry
+            .path()
+            .map_err(|error| input_error(input, error))?
+            .to_string_lossy()
+            .replace('\\', "/");
+        let header = entry.header();
+        let entry_type = header.entry_type();
+        let mut record = sevenz_rust::SevenZArchiveEntry::new();
+        name.clone_into(&mut record.name);
+        if entry_type.is_dir() {
+            let mut directory = name;
+            if !directory.ends_with('/') {
+                directory.push('/');
+            }
+            record.name = directory;
+            writer
+                .push_archive_entry::<std::io::Empty>(record, None)
+                .map_err(|error| output_error(output, error))?;
+        } else if entry_type.is_file() {
+            let size = entry
+                .header()
+                .entry_size()
+                .map_err(|error| input_error(input, error))?;
+            total = total.saturating_add(size);
+            enforce_archive_limits(count.saturating_add(1), u128::from(total))?;
+            buffer.clear();
+            entry
+                .read_to_end(&mut buffer)
+                .map_err(|error| input_error(input, error))?;
+            record.size = size;
+            let cursor = std::io::Cursor::new(buffer.as_slice());
+            writer
+                .push_archive_entry(record, Some(cursor))
+                .map_err(|error| output_error(output, error))?;
+        } else {
+            return Err(FormatWrightError::new(
+                ErrorCode::InputInvalid,
+                Stage::Execute,
+                format!("Archive entry {name} is a link or device, not a regular file"),
+                "Rebuild the archive without links or devices and retry.",
+            ));
+        }
+    }
+    writer
+        .finish()
+        .map_err(|error| output_error(output, error))?;
+    Ok(())
+}
+
+/// Repacks a 7z into a tar.gz without extracting to disk.
+pub(crate) fn repack_7z_to_targz(input: &Path, output: &Path) -> Result<()> {
+    let entries = read_7z_entries(input)?;
+    let mut reader = sevenz_rust::SevenZReader::open(input, sevenz_rust::Password::empty())
+        .map_err(|error| input_error(input, error))?;
+    let out = File::create(output).map_err(|error| output_error(output, error))?;
+    let encoder = flate2::write::GzEncoder::new(out, flate2::Compression::default());
+    let mut builder = tar::Builder::new(encoder);
+    let mut failure: Option<FormatWrightError> = None;
+    let mut buffer = Vec::new();
+    reader
+        .for_each_entries(|entry, data| {
+            if failure.is_some() {
+                return Ok(true);
+            }
+            let name = entry.name().replace('\\', "/");
+            buffer.clear();
+            if std::io::copy(data, &mut buffer).is_err() {
+                failure = Some(output_error(
+                    input,
+                    std::io::Error::other("7z stream read failed"),
+                ));
+                return Ok(false);
+            }
+            let mut header = tar::Header::new_gnu();
+            if entry.is_directory() {
+                let mut directory = name.clone();
+                if !directory.ends_with('/') {
+                    directory.push('/');
+                }
+                header.set_entry_type(tar::EntryType::Directory);
+                header.set_size(0);
+                if let Err(error) =
+                    append_tar_entry(&mut builder, &mut header, &directory, &mut std::io::empty())
+                {
+                    failure = Some(error);
+                }
+            } else {
+                header.set_entry_type(tar::EntryType::Regular);
+                header.set_size(entry.size);
+                let mut cursor = std::io::Cursor::new(buffer.as_slice());
+                if let Err(error) = append_tar_entry(&mut builder, &mut header, &name, &mut cursor)
+                {
+                    failure = Some(error);
+                }
+            }
+            Ok(true)
+        })
+        .map_err(|error| input_error(input, error))?;
+    if let Some(error) = failure {
+        return Err(error);
+    }
+    let _ = entries;
+    let encoder = builder
+        .into_inner()
+        .map_err(|error| output_error(output, error))?;
+    encoder
+        .finish()
+        .map_err(|error| output_error(output, error))?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -1019,6 +1148,41 @@ mod tests {
         assert_eq!(
             back_probe.streams[0].properties["entry_count"],
             count_before,
+        );
+    }
+
+    #[test]
+    fn targz_7z_round_trip_preserves_the_entry_manifest() {
+        let directory = tempdir().expect("tempdir");
+        let targz = directory.path().join("cross.tar.gz");
+        {
+            let file = fs::File::create(&targz).expect("create tar.gz");
+            let encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+            let mut builder = tar::Builder::new(encoder);
+            let mut header = tar::Header::new_gnu();
+            header.set_size(14);
+            let content = b"tar.gz to 7z!";
+            let mut h = tar::Header::new_gnu();
+            h.set_size(content.len() as u64);
+            h.set_mode(0o644);
+            h.set_mtime(0);
+            h.set_cksum();
+            builder
+                .append_data(&mut h, "cross.txt", std::io::Cursor::new(content))
+                .expect("append");
+            let enc = builder.into_inner().expect("finish tar");
+            enc.finish().expect("finish gz");
+        }
+        let sevenz = directory.path().join("cross.7z");
+        super::repack_targz_to_7z(&targz, &sevenz).expect("tar.gz -> 7z repack");
+        let back = directory.path().join("back.tar.gz");
+        super::repack_7z_to_targz(&sevenz, &back).expect("7z -> tar.gz repack");
+        let source_entries = super::read_targz_entries(&targz).expect("source inventory");
+        let back_entries = super::read_targz_entries(&back).expect("round-trip inventory");
+        assert_eq!(
+            super::entry_manifest_digest(&source_entries),
+            super::entry_manifest_digest(&back_entries),
+            "tar.gz <-> 7z round trip preserves the manifest"
         );
     }
 

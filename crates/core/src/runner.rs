@@ -3148,6 +3148,8 @@ where
             ("zip", "tar.gz") => crate::archive::repack_zip_to_targz(&input_path, &partial),
             ("zip", "7z") => crate::archive::repack_zip_to_7z(&input_path, &partial),
             ("7z", "zip") => crate::archive::repack_7z_to_zip(&input_path, &partial),
+            ("tar.gz", "7z") => crate::archive::repack_targz_to_7z(&input_path, &partial),
+            ("7z", "tar.gz") => crate::archive::repack_7z_to_targz(&input_path, &partial),
             _ => crate::archive::repack_targz_to_zip(&input_path, &partial),
         },
     )
