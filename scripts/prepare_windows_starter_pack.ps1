@@ -40,11 +40,11 @@ $dependencies = @(
         ExtractedDirectory = "poppler-26.02.0"
     },
     [ordered]@{
-        Name = "ffmpeg-9.0-essentials"
-        Archive = "ffmpeg-9.0-essentials_build.zip"
-        Url = "https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-9.0-essentials_build.zip"
-        Sha256 = "e6b54767a6065919048f1a098eb27211ca4e12b4348a05d88777a5855d0b6e71"
-        ExtractedDirectory = "ffmpeg-9.0-essentials_build"
+        Name = "ffmpeg-9.0.1-essentials"
+        Archive = "ffmpeg-9.0.1-essentials_build.zip"
+        Url = "https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-9.0.1-essentials_build.zip"
+        Sha256 = "fec81ae03971d9dd4be3ebe02e263bd2ec1d789483f931bdba5f5715e65da2e9"
+        ExtractedDirectory = "ffmpeg-9.0.1-essentials_build"
     }
 )
 
@@ -118,5 +118,5 @@ foreach ($dependency in $dependencies) {
 
 & (Join-Path $PSScriptRoot "build_windows_starter_pack.ps1") `
     -PopplerRoot $resolved["poppler-26.02.0-0"] `
-    -FfmpegRoot $resolved["ffmpeg-9.0-essentials"] `
+    -FfmpegRoot $resolved["ffmpeg-9.0.1-essentials"] `
     -OutputRoot $OutputRoot
