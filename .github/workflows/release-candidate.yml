@@ -62,6 +62,9 @@ jobs:
           # Tauri's minisign loader is picky about file encoding; passing the
           # key content directly as the env var value avoids the file layer.
           echo "TAURI_SIGNING_PRIVATE_KEY=$key" >> $env:GITHUB_ENV
+          # The dev keypair is generated with an empty password; Tauri's
+          # minisign loader needs the variable set (even empty) to try it.
+          echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=" >> $env:GITHUB_ENV
       - name: Build offline NSIS candidate
         run: pnpm --filter @formatwright/desktop tauri build --bundles nsis
       - name: Generate checksums
