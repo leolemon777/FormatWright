@@ -1096,6 +1096,11 @@ where
         .current_dir(external_process_path(output_parent))
         .arg("--headless=new")
         .arg("--disable-gpu")
+        // Standalone Chromium builds (e.g. Chrome for Testing) ship no
+        // setuid sandbox helper and most CI/service environments disable
+        // unprivileged user namespaces; without this flag the browser
+        // deadlocks at startup there.
+        .arg("--no-sandbox")
         .arg("--no-first-run")
         .arg("--no-default-browser-check")
         .arg("--disable-extensions")

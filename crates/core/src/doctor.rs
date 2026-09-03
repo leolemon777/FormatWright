@@ -257,10 +257,18 @@ fn known_install_location(executable: &str) -> Option<PathBuf> {
 
     #[cfg(all(unix, not(target_os = "macos")))]
     {
+        // Edge first; any Chromium-family build backs the same print lane
+        // (ADR-0012: system discovery only, never bundled).
         [
             "/usr/bin/microsoft-edge",
             "/usr/bin/microsoft-edge-stable",
             "/opt/microsoft/edge/microsoft-edge",
+            "/usr/bin/google-chrome-stable",
+            "/usr/bin/google-chrome",
+            "/usr/bin/chromium",
+            "/usr/bin/chromium-browser",
+            "/opt/google/chrome/chrome",
+            "/snap/bin/chromium",
         ]
         .iter()
         .map(PathBuf::from)
@@ -276,15 +284,20 @@ fn known_install_location(executable: &str) -> Option<PathBuf> {
 /// a pure path computation so the layout stays unit-testable on every host.
 #[cfg(any(target_os = "macos", test))]
 fn macos_browser_bundle_paths(applications_roots: &[PathBuf]) -> Vec<PathBuf> {
-    applications_roots
-        .iter()
-        .map(|root| {
-            root.join("Microsoft Edge.app")
-                .join("Contents")
-                .join("MacOS")
-                .join("Microsoft Edge")
-        })
-        .collect()
+    // Edge first; Chromium-family apps back the same print lane. Every
+    // bundle keeps the identical Chromium executable layout.
+    const APPS: [(&str, &str); 3] = [
+        ("Microsoft Edge.app", "Microsoft Edge"),
+        ("Google Chrome.app", "Google Chrome"),
+        ("Chromium.app", "Chromium"),
+    ];
+    let mut paths = Vec::new();
+    for root in applications_roots {
+        for (app, executable) in APPS {
+            paths.push(root.join(app).join("Contents").join("MacOS").join(executable));
+        }
+    }
+    paths
 }
 
 /// Standard macOS roots that may hold an Edge installation: the system-wide
@@ -645,9 +658,11 @@ mod tests {
         let paths = macos_browser_bundle_paths(&[PathBuf::from("/Applications")]);
         assert_eq!(
             paths,
-            vec![PathBuf::from(
-                "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"
-            )]
+            vec![
+                PathBuf::from("/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"),
+                PathBuf::from("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+                PathBuf::from("/Applications/Chromium.app/Contents/MacOS/Chromium"),
+            ]
         );
     }
 
@@ -657,12 +672,11 @@ mod tests {
             PathBuf::from("/Applications"),
             PathBuf::from("/Users/demo/Applications"),
         ]);
-        assert_eq!(paths.len(), 2);
-        assert!(
-            paths
-                .iter()
-                .all(|path| { path.ends_with("Microsoft Edge.app/Contents/MacOS/Microsoft Edge") })
-        );
+        assert_eq!(paths.len(), 6);
+        assert!(paths.iter().any(|path| path
+            .ends_with("Microsoft Edge.app/Contents/MacOS/Microsoft Edge")));
+        assert!(paths.iter().any(|path| path
+            .ends_with("Users/demo/Applications/Chromium.app/Contents/MacOS/Chromium")));
     }
 
     #[test]
