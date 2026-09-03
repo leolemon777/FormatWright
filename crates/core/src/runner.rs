@@ -1090,6 +1090,7 @@ where
         .ok_or_else(|| invalid_plan_argument("output parent"))?;
     let engine_path = external_process_path(&step.engine.binary_path);
     let print_target = external_process_path(&staged_pdf);
+    #[cfg(windows)]
     let profile_target = external_process_path(&profile_directory);
     let mut command = Command::new(engine_path);
     command

@@ -761,7 +761,8 @@ async fn run(cli: Cli) -> Result<(), FormatWrightError> {
                 metadata_title,
                 metadata_author,
             };
-            let (probe, plan, validation_engine) = match prepare_conversion(&input, &request).await {
+            let (probe, plan, validation_engine) = match prepare_conversion(&input, &request).await
+            {
                 Ok(prepared) => prepared,
                 Err(error) => {
                     let Some(chain) = conversion_chain_fallback(&input, &request) else {
@@ -1467,8 +1468,7 @@ async fn execute_chain_stored(
         println!("chain: {}", chain.description());
     }
     let chain_job_id = Uuid::new_v4();
-    let result =
-        execute_conversion_chain(input, request, chain, chain_job_id, cancellation).await;
+    let result = execute_conversion_chain(input, request, chain, chain_job_id, cancellation).await;
     match result {
         Ok(result) => {
             if json {

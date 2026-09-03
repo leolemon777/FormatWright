@@ -1324,11 +1324,7 @@ mod tests {
         )
         .expect("rewrite manifest");
         let error = verify_engine_pack(&manifest_path).expect_err("future pack must fail");
-        assert!(
-            error
-                .message
-                .contains("requires Anole 9.0.0..10.0.0")
-        );
+        assert!(error.message.contains("requires Anole 9.0.0..10.0.0"));
         assert!(error.message.contains(env!("CARGO_PKG_VERSION")));
     }
 

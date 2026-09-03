@@ -81,7 +81,10 @@ pub async fn capability_snapshot_for_input(
             // No direct route: report whether a one-hop chain reaches this
             // target so surfaces can show "via <mid>" options.
             let chained = crate::chain::find_conversion_chain(
-                &std::path::PathBuf::from(format!("fixture.{}", extension.as_deref().unwrap_or_default())),
+                &std::path::PathBuf::from(format!(
+                    "fixture.{}",
+                    extension.as_deref().unwrap_or_default()
+                )),
                 &target,
             )
             .map(|chain| {
