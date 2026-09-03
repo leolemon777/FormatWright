@@ -78,6 +78,24 @@ pub async fn capability_snapshot_for_input(
     let mut routes = BTreeMap::new();
     for (target, lanes) in lanes_by_target {
         let Some(lanes) = lanes else {
+            // No direct route: report whether a one-hop chain reaches this
+            // target so surfaces can show "via <mid>" options.
+            let chained = crate::chain::find_conversion_chain(
+                &std::path::PathBuf::from(format!("fixture.{}", extension.as_deref().unwrap_or_default())),
+                &target,
+            )
+            .map(|chain| {
+                chain
+                    .hops()
+                    .iter()
+                    .map(|hop| hop.to.clone())
+                    .collect::<Vec<_>>()
+                    .join(" > ")
+            });
+            let message = match chained {
+                Some(path) => format!("No direct route; reachable via chain {path}."),
+                None => "This input/target route is not supported.".to_owned(),
+            };
             routes.insert(
                 target.clone(),
                 RouteAvailability {
@@ -85,7 +103,7 @@ pub async fn capability_snapshot_for_input(
                     available: false,
                     required_engines: Vec::new(),
                     missing_engines: Vec::new(),
-                    message: "This input/target route is not supported.".to_owned(),
+                    message,
                 },
             );
             continue;

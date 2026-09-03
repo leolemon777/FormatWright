@@ -294,7 +294,12 @@ fn macos_browser_bundle_paths(applications_roots: &[PathBuf]) -> Vec<PathBuf> {
     let mut paths = Vec::new();
     for root in applications_roots {
         for (app, executable) in APPS {
-            paths.push(root.join(app).join("Contents").join("MacOS").join(executable));
+            paths.push(
+                root.join(app)
+                    .join("Contents")
+                    .join("MacOS")
+                    .join(executable),
+            );
         }
     }
     paths
@@ -673,10 +678,14 @@ mod tests {
             PathBuf::from("/Users/demo/Applications"),
         ]);
         assert_eq!(paths.len(), 6);
-        assert!(paths.iter().any(|path| path
-            .ends_with("Microsoft Edge.app/Contents/MacOS/Microsoft Edge")));
-        assert!(paths.iter().any(|path| path
-            .ends_with("Users/demo/Applications/Chromium.app/Contents/MacOS/Chromium")));
+        assert!(
+            paths
+                .iter()
+                .any(|path| path.ends_with("Microsoft Edge.app/Contents/MacOS/Microsoft Edge"))
+        );
+        assert!(paths.iter().any(|path| {
+            path.ends_with("Users/demo/Applications/Chromium.app/Contents/MacOS/Chromium")
+        }));
     }
 
     #[test]

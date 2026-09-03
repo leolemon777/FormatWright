@@ -157,6 +157,7 @@ pub async fn execute_conversion_chain(
     input: &Path,
     request: &PlanRequest,
     chain: &ConversionChain,
+    job_id: Uuid,
     cancellation: CancellationToken,
 ) -> Result<ExecutionResult> {
     let final_output = request.output_path.clone().ok_or_else(|| {
@@ -175,7 +176,7 @@ pub async fn execute_conversion_chain(
             "Choose another output path or an explicit conflict policy.",
         ));
     }
-    let staging = chain_staging_dir(&final_output)?;
+    let staging = chain_staging_dir(&final_output, job_id)?;
     if staging.exists() {
         return Err(FormatWrightError::new(
             ErrorCode::OutputConflict,
@@ -268,7 +269,7 @@ async fn run_chain_segments(
     })
 }
 
-fn chain_staging_dir(final_output: &Path) -> Result<PathBuf> {
+fn chain_staging_dir(final_output: &Path, job_id: Uuid) -> Result<PathBuf> {
     let parent = final_output.parent().ok_or_else(|| {
         FormatWrightError::new(
             ErrorCode::InputInvalid,
@@ -277,10 +278,9 @@ fn chain_staging_dir(final_output: &Path) -> Result<PathBuf> {
             "Choose a complete output path.",
         )
     })?;
-    Ok(parent.join(format!(
-        ".fw-chain-{}",
-        &Uuid::new_v4().simple().to_string()[..12]
-    )))
+    // Deterministic in the job id so crash recovery can find and clean it
+    // through staged_output_candidates like every other staging path.
+    Ok(parent.join(format!(".fw-chain-{job_id}")))
 }
 
 #[cfg(test)]
@@ -391,6 +391,7 @@ mod tests {
             Path::new("fixture.xlsx"),
             &request,
             &chain,
+            uuid::Uuid::new_v4(),
             tokio_util::sync::CancellationToken::new(),
         )
         .await
@@ -413,6 +414,7 @@ mod tests {
             Path::new("fixture.xlsx"),
             &request,
             &chain,
+            uuid::Uuid::new_v4(),
             tokio_util::sync::CancellationToken::new(),
         )
         .await

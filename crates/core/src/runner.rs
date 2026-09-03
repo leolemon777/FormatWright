@@ -4198,10 +4198,14 @@ pub fn cleanup_staged_output(output: &Path, job_id: Uuid) -> Result<bool> {
 ///
 /// Returns an input error when the output path is incomplete or non-Unicode.
 pub fn staged_output_candidates(output: &Path, job_id: Uuid) -> Result<Vec<PathBuf>> {
-    Ok(vec![
+    let mut candidates = vec![
         staged_output_path(output, job_id)?,
         office_staged_work_path(output, job_id)?,
-    ])
+    ];
+    if let Some(parent) = output.parent() {
+        candidates.push(parent.join(format!(".fw-chain-{job_id}")));
+    }
+    Ok(candidates)
 }
 
 fn office_staged_work_path(output: &Path, job_id: Uuid) -> Result<PathBuf> {

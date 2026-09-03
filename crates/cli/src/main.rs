@@ -1466,7 +1466,9 @@ async fn execute_chain_stored(
     if !json {
         println!("chain: {}", chain.description());
     }
-    let result = execute_conversion_chain(input, request, chain, cancellation).await;
+    let chain_job_id = Uuid::new_v4();
+    let result =
+        execute_conversion_chain(input, request, chain, chain_job_id, cancellation).await;
     match result {
         Ok(result) => {
             if json {

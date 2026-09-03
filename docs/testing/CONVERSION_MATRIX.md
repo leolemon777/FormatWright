@@ -28,3 +28,15 @@ extension-backed, so an extension-less output fails validation by design.
 - Independent content spot-checks: YAML/JSON/XML round trips carry the exact
   records; PNG->PDF embeds the original pixel data (pdfimages); PDF->PNG
   matches source page dimensions at the requested DPI.
+
+## Linux second-platform matrix (2026-09-03)
+
+`scripts/test_conversion_matrix_linux.sh` runs the same family-by-family
+smoke against the Linux runner (engines from a user-level conda env).
+Latest: 28/29 with the msedge miss resolved the same day - the browser
+lane now runs on Chrome for Testing via Chromium-family discovery, with
+profile isolation switched to HOME injection (CfT 152 hangs on
+print-to-pdf whenever --user-data-dir is set on Linux).
+`scripts/test_browser_lane_linux.sh` captures the svg/html -> pdf lane
+check. Both 10k release soaks (structured and mixed) pass on the Linux
+runner: structured 530.93s wall, recorded in docs/testing/TEN_THOUSAND_LINUX.md.
