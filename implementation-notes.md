@@ -1,5 +1,22 @@
 # Implementation Notes
 
+## Current milestone — Linux runner operational: OCR closed, three-way archive matrix, second-platform evidence (2026-09-02)
+
+### The Linux execution lane is live
+- macair-away (Linux Mint 22.3, Tailscale) is now the second execution environment per the owner's standing rules: Windows holds the authoritative source; Linux runs compile/test; sync is one-way via git archive; no sudo without asking.
+- User-level toolchain, zero system packages touched: rustup in ~/.cargo; a conda-forge env (~/.miniforge/envs/ocr) carries tesseract 5.5.3 (+chi_sim), poppler, qpdf, ffmpeg, pandoc, pillow, matplotlib.
+- Core suite natively: 214 passed / 0 failed - the Windows symlink-privilege failure class does not exist here.
+
+### OCR gap CLOSED (G-24)
+- e2e on Linux: image -> txt validation Pass (OCR_TEXT_NONEMPTY); pdf-ocr validation Pass with the extracted text matching the fixture exactly (OCR TEST ELECTRIC 440010147700). Engine resolution via FORMATWRIGHT_ENGINE_TESSERACT; chi-sim available for Chinese documents.
+
+### Archive family complete
+- tar.gz <-> 7z joins zip <-> tar.gz and zip <-> 7z: all three containers now interconvert in memory with manifest conservation. Windows e2e: tar.gz -> 7z -> tar.gz round trip byte-exact.
+
+### Second-platform conversion matrix
+- 28/29 routes pass on Linux (structured, markup->pdf/docx/epub via pandoc, raster, PDF->image, OCR, audio, full archive trio). The single miss is svg->pdf requiring msedge - correct EngineMissing behavior for a Windows-only browser lane on Linux; a Chromium discovery branch for Linux is the natural follow-up.
+
+
 ## Current milestone — Wave 4 + first tri-platform green CI (2026-09-02)
 
 ### Landed
