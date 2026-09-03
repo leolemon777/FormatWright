@@ -407,3 +407,24 @@ Name and mascot decided by the owner: **Anole** (the color-changing "American ch
 **Deliberately kept (technical identifiers, own follow-up pass):** crate/binary names (`formatwright*`), `formatwright_core::` paths, `FormatWrightError`/`FormatWrightCompatibility`, `.join("FormatWright")` state-database dirs, `FORMATWRIGHT_ENGINE_*` env vars, `...\shell\FormatWright` + `FormatWright.To*` registry verbs, tauri identifier `local.formatwright.desktop`, repo/GitHub name and updater URL.
 
 Verified: `cargo check` (core/cli/server/engine-sdk) clean; `core --lib` 244 passed / 4 failed = the known Windows reparse/symlink baseline; engine-sdk 11 passed; residual-string audit shows only the intended technical identifiers. Trademark screening (Nice 9/42) is still owed before external promotion.
+
+## 2026-09-03 — Updater release keypair re-rotation (rehearsal wrong-password root cause)
+
+### Root cause
+Rehearsal runs 2-4 (`release-candidate.yml`, workflow_dispatch) all failed at updater signing with `incorrect updater private key password: Wrong password for that key` after the NSIS bundle itself built fine. The 2026-09-01 keypair generation ran `PW=$(python secrets.token_urlsafe(24))` in bash, wrote the token to `RELEASE_KEY_PASSWORD.txt`, then passed `--password "%PW%"` **through `cmd //c` + the `.cmd` shim** — `%PW%` is cmd syntax, the bash var was never exported, and the shim path mangles even plain literal passwords (reproduced locally: a fresh key generated via the shim with `--password "plainpw99"` does not decrypt with `plainpw99`, while the identical generate via direct `npx pnpm tauri` works and verifies). The release private key's real password was therefore never the recorded token and is unrecoverable.
+
+### Changes
+- Regenerated the release keypair via the direct CLI path (`npx pnpm@11.16.0 --dir apps/desktop tauri signer generate --password <fresh token_urlsafe(24)> --ci`); password written with `printf '%s'` (32 bytes, **no trailing newline** — the old file carried one, which would also have poisoned secret-setting via stdin redirect).
+- Pinned the new pubkey in `apps/desktop/src-tauri/tauri.conf.json` (commit `2a39f1d`). Safe window: v0.1.0 unreleased, zero installed copies, and the old key never successfully signed anything.
+- Re-set `TAURI_DEV_UPDATER_KEY` (base64-wrapped private key, single line) and `TAURI_DEV_UPDATER_PASSWORD` (32 chars) via `printf '%s' "$(tr -d '\r\n' < file)" | gh secret set` — both secrets guaranteed whitespace-clean.
+- Broken pair retained at `target/updater-keys/formatwright-release.key{,.pub}.broken-20260903` for forensics; test keys removed.
+
+### Verification
+- Local end-to-end BEFORE pushing: `tauri signer sign` with the exact CI env-var path (`TAURI_SIGNING_PRIVATE_KEY` + `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`) succeeds with the new pair; throwaway-key control proved the harness and the shim corruption both reproduce deterministically.
+- Negative controls on the old key (token / empty / literal `%PW%`, env and argv transports) all fail — pair confirmed dead.
+- Rehearsal run 5 (`33773232889`): the password fix WORKED (run moved past secret-key decode) but died at `failed to decode pubkey: Missing encoded key in public key` — the follow-up fix double-encoded the pinned value: `tauri signer generate --ci` writes the `.pub` file itself base64-wrapped, so the config value must be `base64(decode(.pub))`, not `base64(.pub)`. Corrected value re-verified structurally against the known-good old format (2-line raw, `RW`-prefixed key line) before pushing; rehearsal run 6 triggered.
+
+### Risks / Follow-up
+- Never generate signing keys through `cmd //c`/`.cmd` shims on this machine; always the direct npx/CLI path, and always verify by signing a scratch file before the key is trusted.
+- The `dev` keypair (`formatwright-updater.key`, empty password) was also shim-generated and is likewise undecryptable — it only ever backed earlier failed rehearsals; regenerate on demand if a test-only pair is needed again.
+- UPDATER.md still says "dev keypair (empty password)" — accurate as intent, but both pairs' file format notes now assume `--ci` base64-wrapped storage (tauri's own format since the CLI writes it that way).
