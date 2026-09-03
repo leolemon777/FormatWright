@@ -816,7 +816,7 @@ fn validation_check(
         required: true,
         expected,
         observed,
-        evidence: "FormatWright native archive inspector".to_owned(),
+        evidence: "Anole native archive inspector".to_owned(),
         message: message.to_owned(),
     }
 }
@@ -1114,7 +1114,7 @@ mod tests {
             &[
                 (
                     "docs/readme.txt",
-                    "FormatWright 7z round trip ELECTRIC 440010147700",
+                    "Anole 7z round trip ELECTRIC 440010147700",
                 ),
                 ("data/manifest.json", r#"{"entries": 2}"#),
                 ("nested/", ""),
@@ -1193,7 +1193,7 @@ mod tests {
         write_zip(
             &original,
             &[
-                ("docs/readme.txt", "FormatWright archive round trip"),
+                ("docs/readme.txt", "Anole archive round trip"),
                 ("data/manifest.json", r#"{"entries": 2}"#),
             ],
         );

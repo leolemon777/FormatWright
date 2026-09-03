@@ -1,4 +1,4 @@
-# FormatWright — 下一阶段执行计划：通往 v0.1 Public Beta
+# Anole — 下一阶段执行计划：通往 v0.1 Public Beta
 
 > 状态基线：2026-09-02 · 319 条可达转换组合 · 三平台 CI 绿 · 双执行环境（Windows 权威源 + Linux 执行机）
 

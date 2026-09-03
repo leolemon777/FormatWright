@@ -377,7 +377,7 @@ pub fn openapi_document() -> Value {
     json!({
         "openapi": "3.0.3",
         "info": {
-            "title": "FormatWright Local API",
+            "title": "Anole Local API",
             "version": env!("CARGO_PKG_VERSION"),
             "description": "Local REST API exposing probe/plan/convert with a ValidationReport on every conversion response. All paths must be absolute. Binds 127.0.0.1 by default."
         },

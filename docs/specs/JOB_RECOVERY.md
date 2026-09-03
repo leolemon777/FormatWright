@@ -7,7 +7,7 @@
 
 ## 1. Resume terminology
 
-FormatWright v0.1 promises **job and file-level recovery**, not arbitrary byte-level continuation.
+Anole v0.1 promises **job and file-level recovery**, not arbitrary byte-level continuation.
 
 - A completed and validated file is skipped after restart when its identity still matches.
 - A file interrupted during an engine step is restarted from the beginning of that step.
@@ -93,7 +93,7 @@ Office-to-PDF uses a short, unpredictable same-parent workspace named `.fw-<12-h
 ### 5.2 Commit sequence
 
 1. Engine closes output successfully.
-2. FormatWright flushes and closes owned handles.
+2. Anole flushes and closes owned handles.
 3. Output, or every member of a multi-file output set, is independently re-probed.
 4. Required validation completes.
 5. Existing destination handling is rechecked.
@@ -105,7 +105,7 @@ The database must never record completed before the destination exists at its fi
 
 ### 5.3 Cross-volume behavior
 
-A cross-volume move is not called atomic. If a future workflow requires it, FormatWright copies to a destination-side partial, verifies the copy, and then performs the same-filesystem final rename.
+A cross-volume move is not called atomic. If a future workflow requires it, Anole copies to a destination-side partial, verifies the copy, and then performs the same-filesystem final rename.
 
 ## 6. Recovery matrix
 

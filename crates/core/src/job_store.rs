@@ -2831,7 +2831,7 @@ fn storage_error(error: rusqlite::Error) -> FormatWrightError {
             ErrorCode::StorageFailed,
             Stage::Store,
             "The state database is busy with another writer",
-            "Retry after the other FormatWright operation finishes.",
+            "Retry after the other Anole operation finishes.",
         )
         .retryable(true)
         .with_diagnostic(error.to_string());

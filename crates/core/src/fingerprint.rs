@@ -232,7 +232,7 @@ mod tests {
         file.as_file_mut()
             .rewind()
             .expect("rewind temporary fixture");
-        file.write_all(b"FormatWright").expect("rewrite fixture");
+        file.write_all(b"Anole").expect("rewrite fixture");
         file.flush().expect("flush rewrite");
         let second = identify_artifact(file.path())
             .await

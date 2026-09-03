@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-08-10
-- Owners: FormatWright maintainers
+- Owners: Anole maintainers
 - Related requirements: FW-FR-020 through FW-FR-023, FW-FR-050 through FW-FR-052
 
 ## Context

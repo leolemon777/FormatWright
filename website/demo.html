@@ -3,14 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>FormatWright Demo — 本地 API 演示</title>
-  <meta name="description" content="FormatWright 本地 REST API 的纯静态演示页：Plan 预览、结构化格式转换、验收回执渲染。需要先在本机运行 formatwright-server。">
+  <title>Anole Demo — 本地 API 演示</title>
+  <meta name="description" content="Anole 本地 REST API 的纯静态演示页：Plan 预览、结构化格式转换、验收回执渲染。需要先在本机运行 formatwright-server。">
   <meta name="color-scheme" content="light">
   <meta name="theme-color" content="#f8f4ed">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%231f3a46'/%3E%3Ctext x='16' y='22' font-family='Georgia,serif' font-size='17' fill='%23f8f4ed' text-anchor='middle'%3EF%3C/text%3E%3C/svg%3E">
   <style>
     /* ============================================================
-       FormatWright API demo — Meadowlark tokens
+       Anole API demo — Meadowlark tokens
        (slimmed copy of website/index.html :root palette & type;
        same paper/receipt metaphor, zero external dependencies)
        ============================================================ */
@@ -495,7 +495,7 @@
 <body>
   <header class="site-header">
     <div class="container header-inner">
-      <a class="wordmark" href="index.html">FormatWright<span class="dot" aria-hidden="true">.</span></a>
+      <a class="wordmark" href="index.html">Anole<span class="dot" aria-hidden="true">.</span></a>
       <nav class="site-nav" aria-label="主导航">
         <a href="index.html">首页</a>
         <span aria-current="page">Demo</span>
@@ -508,7 +508,7 @@
       <p class="eyebrow">本地 API 演示 · Local REST API demo</p>
       <h1>先把服务跑起来，再用这张页面调 API。</h1>
       <p class="lede">
-        这是一个纯静态演示页（零依赖、零构建），直接调用本机 FormatWright REST API：
+        这是一个纯静态演示页（零依赖、零构建），直接调用本机 Anole REST API：
         <code>POST /v1/plan</code> 做转换预案预览，<code>POST /v1/convert</code> 执行转换并渲染返回的验收回执（ValidationReport）。
       </p>
       <div class="callout">
@@ -601,7 +601,7 @@
   <footer class="site-footer">
     <div class="container footer-grid">
       <div>
-        <p class="footer-brand">FormatWright</p>
+        <p class="footer-brand">Anole</p>
         <p class="footer-tag">可验证的文件转换 · 演示页零依赖、零遥测</p>
       </div>
       <p class="footer-tag">API 只绑定 127.0.0.1 · 文件永不离开本机</p>
@@ -770,7 +770,7 @@
         }).join("");
 
         verdict.innerHTML =
-          '<div class="receipt-band"><span>FormatWright · Acceptance proof</span><span>Job ' +
+          '<div class="receipt-band"><span>Anole · Acceptance proof</span><span>Job ' +
             esc(truncateMiddle(body.jobId, 20)) + "</span></div>" +
           "<dl>" +
             '<div class="field-row"><dt>输出</dt><dd>' + esc(body.outputPath || "—") + "</dd></div>" +

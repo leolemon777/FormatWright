@@ -16,7 +16,7 @@ This promotes only the covered libheif fallback to Experimental on Windows. The 
 - The Plan records single-primary selection, JPEG quality or lossless PNG, HEIF transformation handling, metadata drop, no resize, and Network Deny.
 - EXIF/XMP sidecars, auxiliary images, thumbnails, depth data, and additional image items are not requested. A conversion producing anything other than the single expected staged image is blocked.
 - Output stays in a deterministic same-parent staged directory until ffprobe validation completes; cancellation, failure, and recovery remove that exact directory.
-- libheif security limits remain enabled; FormatWright never passes `--disable-limits`.
+- libheif security limits remain enabled; Anole never passes `--disable-limits`.
 
 ## Directly verified assertions
 

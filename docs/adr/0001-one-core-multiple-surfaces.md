@@ -2,12 +2,12 @@
 
 - Status: Accepted
 - Date: 2026-08-10
-- Owners: FormatWright maintainers
+- Owners: Anole maintainers
 - Related requirements: FW-FR-001 through FW-FR-052
 
 ## Context
 
-FormatWright plans a desktop application, CLI, local REST API, self-hosted worker, and MCP adapter. Duplicating inspection, planning, execution, recovery, or validation logic would produce inconsistent behavior and weaken test evidence.
+Anole plans a desktop application, CLI, local REST API, self-hosted worker, and MCP adapter. Duplicating inspection, planning, execution, recovery, or validation logic would produce inconsistent behavior and weaken test evidence.
 
 ## Decision
 

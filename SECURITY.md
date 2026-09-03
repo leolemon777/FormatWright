@@ -2,13 +2,13 @@
 
 ## Supported versions
 
-FormatWright has not reached a supported public release. Security fixes currently target the main development branch.
+Anole has not reached a supported public release. Security fixes currently target the main development branch.
 
 ## Reporting a vulnerability
 
 Until a private repository advisory channel is configured, do not publish exploit details. Contact the project maintainers privately and include:
 
-- FormatWright version or commit.
+- Anole version or commit.
 - Operating system and architecture.
 - Engine name, version, and build configuration.
 - Minimal reproduction steps.

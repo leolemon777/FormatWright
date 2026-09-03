@@ -174,11 +174,11 @@ def generate(manifest_path: Path, epoch: int | None) -> dict[str, Any]:
         "spdxVersion": "SPDX-2.3",
         "dataLicense": "CC0-1.0",
         "SPDXID": "SPDXRef-DOCUMENT",
-        "name": f"FormatWright-{engine_id}-{version}-engine-pack-SBOM",
+        "name": f"Anole-{engine_id}-{version}-engine-pack-SBOM",
         "documentNamespace": f"https://formatwright.local/spdx/engine/{identity_digest}",
         "creationInfo": {
             "created": creation_time(epoch),
-            "creators": ["Tool: FormatWright scripts/generate_engine_sbom.py"],
+            "creators": ["Tool: Anole scripts/generate_engine_sbom.py"],
         },
         "packages": [
             {
@@ -215,7 +215,7 @@ def generate(manifest_path: Path, epoch: int | None) -> dict[str, Any]:
             {
                 "annotationDate": creation_time(epoch),
                 "annotationType": "OTHER",
-                "annotator": "Tool: FormatWright scripts/generate_engine_sbom.py",
+                "annotator": "Tool: Anole scripts/generate_engine_sbom.py",
                 "comment": (
                     "Complete hash inventory of manifest-declared binary pack files. "
                     "Component attribution and legal review status are recorded separately "

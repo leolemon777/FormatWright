@@ -1,4 +1,4 @@
-# FormatWright Name and Namespace Preflight
+# Anole Name and Namespace Preflight
 
 - Status: Technical preflight only
 - Checked: 2026-08-10
@@ -8,7 +8,7 @@
 
 At the time of the check:
 
-- GitHub repository search returned no exact FormatWright repository name.
+- GitHub repository search returned no exact Anole repository name.
 - crates.io returned HTTP 404 for formatwright.
 - npm returned HTTP 404 for formatwright.
 - General web search did not identify a file-conversion product using the exact name.
@@ -16,7 +16,7 @@ At the time of the check:
 
 ## Consequences
 
-- The codebase may continue using FormatWright as its working product and binary name.
+- The codebase may continue using Anole as its working product and binary name.
 - No repository metadata or Schema ID may claim an unowned domain.
 - Schema IDs use the domain-independent urn:formatwright namespace.
 - Public release remains blocked on a proper trademark search, jurisdiction decision, and selected domain/organization ownership.

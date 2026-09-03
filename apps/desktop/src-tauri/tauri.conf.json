@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "FormatWright",
+  "productName": "Anole",
   "version": "0.1.0",
   "identifier": "local.formatwright.desktop",
   "build": {
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "FormatWright",
+        "title": "Anole",
         "width": 1180,
         "height": 780,
         "minWidth": 760,
@@ -31,10 +31,10 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "publisher": "FormatWright Contributors",
+    "publisher": "Anole Contributors",
     "category": "Utility",
     "shortDescription": "Private, offline-first file conversion",
-    "longDescription": "FormatWright plans, executes, and validates local file conversions with durable jobs and explicit loss policies.",
+    "longDescription": "Anole plans, executes, and validates local file conversions with durable jobs and explicit loss policies.",
     "licenseFile": "../../../LICENSE",
     "useLocalToolsDir": true,
     "createUpdaterArtifacts": true

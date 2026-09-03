@@ -597,7 +597,7 @@ impl EngineManifest {
                 .trim()
                 .is_empty()
         {
-            return manifest_error("FormatWright compatibility bounds are empty".to_owned());
+            return manifest_error("Anole compatibility bounds are empty".to_owned());
         }
         if self.executables.is_empty() {
             return manifest_error("at least one executable is required".to_owned());

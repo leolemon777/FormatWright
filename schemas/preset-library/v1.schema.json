@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:formatwright:schema:preset-library:v1",
-  "title": "FormatWright Preset Library v1",
+  "title": "Anole Preset Library v1",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema_version", "presets"],

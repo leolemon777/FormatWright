@@ -2,7 +2,7 @@
 
 - Status: Proposed
 - Date: 2026-08-31
-- Owners: FormatWright maintainers
+- Owners: Anole maintainers
 - Related requirements: GW-10 (HTML/SVG → vector PDF lane)
 
 ## Context
@@ -15,7 +15,7 @@ Poppler's `pdftotext` and `pdffonts` utilities join `pdfinfo`/`pdftoppm` as vali
 
 ## Decision
 
-1. The browser print engine is identified by engine id `msedge` and is resolved only through (a) a registered verified pack, (b) the `FORMATWRIGHT_ENGINE_MSEDGE` development override, (c) PATH, or (d) the canonical vendor install locations (`%ProgramFiles(x86)%`/`%ProgramFiles%` on Windows, `/Applications/...` on macOS, `/usr/bin/microsoft-edge*` on Linux) — the last three only under `EngineDiscoveryPolicy::Development`. It is never bundled or redistributed by FormatWright.
+1. The browser print engine is identified by engine id `msedge` and is resolved only through (a) a registered verified pack, (b) the `FORMATWRIGHT_ENGINE_MSEDGE` development override, (c) PATH, or (d) the canonical vendor install locations (`%ProgramFiles(x86)%`/`%ProgramFiles%` on Windows, `/Applications/...` on macOS, `/usr/bin/microsoft-edge*` on Linux) — the last three only under `EngineDiscoveryPolicy::Development`. It is never bundled or redistributed by Anole.
 2. Doctor never launches the browser to probe it. Identity is the executable hash plus the version derived from the versioned install directory (Windows) or `unknown`.
 3. The engine is executed headless with an isolated staged `--user-data-dir`, `--host-resolver-rules=MAP * ~NOTFOUND` as a network-deny reinforcement, a bounded print timeout, process-tree termination on cancel/timeout, and `LossClass::None` on the print step because vector printing rasterizes nothing.
 4. HTML→PDF keeps the Pandoc lane as an explicit fallback lane; route availability is per-lane, so a machine with only one lane still converts. SVG→PDF is browser-lane only.

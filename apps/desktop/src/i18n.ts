@@ -2,7 +2,7 @@ export type Language = "zh-CN" | "en";
 
 export const messages = {
   "zh-CN": {
-    product: "FormatWright",
+    product: "Anole",
     tagline: "本地转换，结果有据可查。",
     localOnly: "仅本地",
     skipToContent: "跳到主要内容",
@@ -36,7 +36,7 @@ export const messages = {
     containerSummary: "只换容器，画面和声音不重压",
     losslessSummary: "会重编码，但按计划是无损",
     oldExcel: "这是旧版 Excel。请另存为 .xlsx 后再转 PDF。",
-    pairUnsupported: "这个格式对不在当前支持名单。FormatWright 不靠堆格式对。",
+    pairUnsupported: "这个格式对不在当前支持名单。Anole 不靠堆格式对。",
     engineMissingPack: "缺引擎包：{names}。打开“引擎”导入官方包。",
     outputExists: "目标已存在，没有覆盖。请改保存位置。",
     policyBlocked: "没有批准的 Plan，不能转。",
@@ -305,7 +305,7 @@ export const messages = {
     restoreRestartWarning: "确认后会复制并再次校验整包；真正恢复发生在下次启动、数据库打开之前，并自动保留恢复前安全整包。",
     confirmRestoreOnRestart: "确认下次启动恢复",
     schedulingRestore: "正在安排恢复…",
-    restoreScheduled: "恢复已安全安排。请完全退出并重新打开 FormatWright；下次启动会再次验证后恢复。",
+    restoreScheduled: "恢复已安全安排。请完全退出并重新打开 Anole；下次启动会再次验证后恢复。",
     restoreCompleted: "应用状态恢复完成",
     restoreFailed: "应用状态恢复失败，现有数据保持不变",
     engineFallbackNotice: "引擎 {engine} 活动版本校验失败，已自动回退到 {version}",
@@ -314,7 +314,7 @@ export const messages = {
     engineRecoveryFailedBadge: "恢复失败",
   },
   en: {
-    product: "FormatWright",
+    product: "Anole",
     tagline: "File conversion you can verify.",
     localOnly: "LOCAL ONLY",
     skipToContent: "Skip to main content",
@@ -348,7 +348,7 @@ export const messages = {
     containerSummary: "Container change only",
     losslessSummary: "Lossless re-encode",
     oldExcel: "This is legacy Excel. Save as .xlsx, then convert to PDF.",
-    pairUnsupported: "This format pair is not on the current support list. FormatWright does not chase format-count.",
+    pairUnsupported: "This format pair is not on the current support list. Anole does not chase format-count.",
     engineMissingPack: "Missing engine pack: {names}. Open Engines to import an official pack.",
     outputExists: "The destination already exists and was not overwritten. Choose another location.",
     policyBlocked: "No approved Plan, so conversion cannot start.",
@@ -617,7 +617,7 @@ export const messages = {
     restoreRestartWarning: "Confirmation copies and revalidates the bundle. The actual restore runs before the database opens on next startup and keeps an automatic full safety bundle.",
     confirmRestoreOnRestart: "Restore on next startup",
     schedulingRestore: "Scheduling restore…",
-    restoreScheduled: "Restore safely scheduled. Fully quit and reopen FormatWright; startup will verify it again before restoring.",
+    restoreScheduled: "Restore safely scheduled. Fully quit and reopen Anole; startup will verify it again before restoring.",
     restoreCompleted: "Application state restore completed",
     restoreFailed: "Application state restore failed; existing data was preserved",
     engineFallbackNotice: "Engine {engine} failed verification and was automatically rolled back to {version}",

@@ -53,7 +53,7 @@
 un-tests.bat`: 222 passed + the 4 pre-existing symlink os-error-1314 failures (unchanged baseline; two of the +tests belong to the parallel document agent).
 - `targetmt-fix.bat`: FMT_CLEAN; clippy zero warnings for the files touched here (document.rs warnings belong to the parallel wave).
 - E2E (debug CLI, engines via FORMATWRIGHT_ENGINE_*):
-  - pdf-metadata on a soffice-produced 1-page PDF: `pass` with `PDF_OPS_PAGE_COUNT`, `PDF_METADATA_TITLE`, `PDF_METADATA_AUTHOR` all pass; `pdfinfo` independently reports `Title: ELECTRIC Title 440010147700`, `Author: FormatWright e2e`, `Pages: 1`; `qpdf --check` reports no syntax errors.
+  - pdf-metadata on a soffice-produced 1-page PDF: `pass` with `PDF_OPS_PAGE_COUNT`, `PDF_METADATA_TITLE`, `PDF_METADATA_AUTHOR` all pass; `pdfinfo` independently reports `Title: ELECTRIC Title 440010147700`, `Author: Anole e2e`, `Pages: 1`; `qpdf --check` reports no syntax errors.
   - zip -> 7z -> zip round trip: both legs pass `ARCHIVE_ENTRY_COUNT`/`ARCHIVE_ENTRY_MANIFEST`; python zipfile confirms identical (name,size) inventory.
 - **OCR e2e pending tesseract install** (`E:\DevCaches\Tesseract-OCR	esseract.exe` not present). Rerun after install:
   - `set FORMATWRIGHT_ENGINE_TESSERACT=E:\DevCaches\Tesseract-OCR	esseract.exe`
@@ -397,3 +397,13 @@ un-tests.bat`: 222 passed + the 4 pre-existing symlink os-error-1314 failures (u
 8. Only then extract full `ConversionService`, `ReportService`, and the minimum `MaintenanceService`.
 
 The authoritative checklist, long-term module design, 12-week route and maintenance cadence live in `docs/MASTER_EXECUTION_PLAN.md`.
+
+## 2026-09-03 — Rebrand FormatWright → Anole
+
+Name and mascot decided by the owner: **Anole** (the color-changing "American chameleon", 5 letters, clean in the converter category) with mascot direction A "The Color Shift". Brand assets live in `branding/` (candidates + `branding/final/`: icon light/dark, logo, horizontal lockups, favicon ladder, PNG exports).
+
+**Swapped this pass (user-visible surface):** README/website/governance docs/docs tree (guarded line-level script with an identifier allow-list), core/cli/server/engine-sdk user-visible messages and evidence strings, desktop window titles/`productName`/i18n/dialog filters, Explorer context-menu labels (`Open in Anole`, registry **key names unchanged**), JSON-Schema titles, SBOM generators, crate `description`/`authors`, and the release workflow's installer filename (now `Anole_0.1.0_x64-setup.exe`, matching the new `productName`).
+
+**Deliberately kept (technical identifiers, own follow-up pass):** crate/binary names (`formatwright*`), `formatwright_core::` paths, `FormatWrightError`/`FormatWrightCompatibility`, `.join("FormatWright")` state-database dirs, `FORMATWRIGHT_ENGINE_*` env vars, `...\shell\FormatWright` + `FormatWright.To*` registry verbs, tauri identifier `local.formatwright.desktop`, repo/GitHub name and updater URL.
+
+Verified: `cargo check` (core/cli/server/engine-sdk) clean; `core --lib` 244 passed / 4 failed = the known Windows reparse/symlink baseline; engine-sdk 11 passed; residual-string audit shows only the intended technical identifiers. Trademark screening (Nice 9/42) is still owed before external promotion.

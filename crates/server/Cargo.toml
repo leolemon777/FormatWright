@@ -1,6 +1,6 @@
 [package]
 name = "formatwright-server"
-description = "Local REST API service exposing FormatWright planning and conversion"
+description = "Local REST API service exposing Anole planning and conversion"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

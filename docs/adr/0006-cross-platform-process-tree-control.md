@@ -2,7 +2,7 @@
 
 - Status: Accepted for Phase 1
 - Date: 2026-08-10
-- Owners: FormatWright maintainers
+- Owners: Anole maintainers
 - Related requirements: FW-FR-021, FW-FR-023, FW-NFR-004
 
 ## Context

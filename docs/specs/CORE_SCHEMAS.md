@@ -6,7 +6,7 @@
 
 ## 1. Contract set
 
-FormatWright publishes these machine contracts:
+Anole publishes these machine contracts:
 
 | Contract | Schema ID | Producer | Main consumers |
 |---|---|---|---|
@@ -102,7 +102,7 @@ Manifest includes:
 - Build configuration.
 - Capability declarations.
 - Protocol version.
-- FormatWright compatibility range.
+- Anole compatibility range.
 - Pack signature and manifest hash.
 
 Capability claims are intersected with runtime Doctor inspection. A manifest cannot force support for a capability the binary does not expose.

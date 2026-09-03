@@ -1,4 +1,4 @@
-# FormatWright Threat Model
+# Anole Threat Model
 
 - Status: Initial
 - Version: 0.1
@@ -13,7 +13,7 @@
 - Host availability and resources.
 - Job and validation integrity.
 - Engine pack and update integrity.
-- FormatWright signing identities.
+- Anole signing identities.
 
 ## 2. Trust boundaries
 

@@ -8,7 +8,7 @@
 
 One Win32 destination can have only one active durable reservation, even when callers spell it through another case, a regular versus `\\?\` disk path, an existing 8.3 ancestor, lexical dot components, or a directory reparse point. The commit path uses the same resolver as the reservation path.
 
-FormatWright checks the original components before asking Windows for an absolute path, because Win32 can trim ASCII spaces and final periods during path handling. Components containing trailing dot/space, leading ASCII space, reserved device stems (`CON`, `NUL`, `COM1`… including superscript digits), alternate data streams/reserved characters, UNC paths, and device namespaces are rejected.
+Anole checks the original components before asking Windows for an absolute path, because Win32 can trim ASCII spaces and final periods during path handling. Components containing trailing dot/space, leading ASCII space, reserved device stems (`CON`, `NUL`, `COM1`… including superscript digits), alternate data streams/reserved characters, UNC paths, and device namespaces are rejected.
 
 The resolver lexically removes regular `.`/`..`, finds the deepest existing ancestor, asks the filesystem for its final canonical path, then appends the validated nonexistent suffix. This expands existing short names and resolves symlink/junction ancestors without requiring the complete future parent path to exist.
 

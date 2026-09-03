@@ -4,7 +4,7 @@
 - Snapshot: 2026-08-10
 - Legal status: engineering inventory, not legal advice
 
-FormatWright keeps engines outside the Apache-2.0 application package unless a reviewed engine pack includes exact source, build, hash, notice, and SBOM evidence. System-discovered tools remain `unverified`; an executable is never described as certified merely because it runs.
+Anole keeps engines outside the Apache-2.0 application package unless a reviewed engine pack includes exact source, build, hash, notice, and SBOM evidence. System-discovered tools remain `unverified`; an executable is never described as certified merely because it runs.
 
 ## Inventory
 

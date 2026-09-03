@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:formatwright:schema:job-event:v1",
-  "title": "FormatWright Job Event v1",
+  "title": "Anole Job Event v1",
   "type": "object",
   "additionalProperties": false,
   "required": [

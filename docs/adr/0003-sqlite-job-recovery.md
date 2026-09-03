@@ -2,12 +2,12 @@
 
 - Status: Accepted
 - Date: 2026-08-10
-- Owners: FormatWright maintainers
+- Owners: Anole maintainers
 - Related requirements: FW-FR-030 through FW-FR-034
 
 ## Context
 
-FormatWright must recover large batch queues after crashes and must not treat UI memory as durable state. A separate database service would make a local desktop application harder to install and operate.
+Anole must recover large batch queues after crashes and must not treat UI memory as durable state. A separate database service would make a local desktop application harder to install and operate.
 
 ## Decision
 

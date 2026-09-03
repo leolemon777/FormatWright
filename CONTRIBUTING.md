@@ -1,6 +1,6 @@
-# Contributing to FormatWright
+# Contributing to Anole
 
-FormatWright is early-stage software. Contributions should preserve the project principles in SPEC_PLAN.md: local-first operation, explicit loss, safe recovery, deterministic planning, and validation of every successful output.
+Anole is early-stage software. Contributions should preserve the project principles in SPEC_PLAN.md: local-first operation, explicit loss, safe recovery, deterministic planning, and validation of every successful output.
 
 ## Before opening a change
 

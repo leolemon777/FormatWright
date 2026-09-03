@@ -6,7 +6,7 @@
 
 ## Context
 
-Every FormatWright workflow today is a *format conversion*: one input artifact
+Every Anole workflow today is a *format conversion*: one input artifact
 becomes one output artifact in a different format, routed by
 (input extension, target format) through engine lanes. PDF tooling needs a
 second shape: *operations* such as merge (N inputs → 1 output) and page-range

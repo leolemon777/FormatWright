@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-08-12
-- Owners: FormatWright maintainers
+- Owners: Anole maintainers
 - Related requirements: FW-FR-030 through FW-FR-034; long-term operations §20.1
 
 ## Context
@@ -18,7 +18,7 @@ SQLite is the durable source of truth for jobs, Plans, events, and output reserv
 - Restore first copies the selected backup into a temporary database, rejects schemas newer than the running release, migrates the temporary copy, and validates it. The live database is not changed during this preflight.
 - An explicitly confirmed restore creates a validated safety snapshot, then uses SQLite's transactional backup mechanism to replace the live database from the validated temporary copy. A post-switch validation failure triggers a best-effort rollback from the safety snapshot.
 - Before a disk-backed schema migration, the current database is snapshotted. Automatic snapshots share a default retention limit of five, and the snapshot just created is never pruned by timestamp ties.
-- Online backup/restore lock acquisition is bounded to 30 seconds. Restore callers must stop queue execution and close other FormatWright processes.
+- Online backup/restore lock acquisition is bounded to 30 seconds. Restore callers must stop queue execution and close other Anole processes.
 - `compact` is explicit and creates a safety snapshot before `VACUUM`.
 
 The implementation follows the [SQLite Online Backup API](https://sqlite.org/backup.html) and uses the checks defined by [SQLite PRAGMA integrity_check and foreign_key_check](https://sqlite.org/pragma.html#pragma_integrity_check).

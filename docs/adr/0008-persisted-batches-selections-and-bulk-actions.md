@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-08-12
-- Owners: FormatWright maintainers
+- Owners: Anole maintainers
 - Related requirements: FW-FR-030 through FW-FR-034; Gate 1 durable queue
 
 ## Context
@@ -24,7 +24,7 @@ Bulk actions are intentionally state-aware:
 - Resume: Blocked or Interrupted to Queued.
 - Retry: Failed, Cancelled, or Interrupted to Queued.
 
-The action re-reads current state under an immediate SQLite writer transaction. Ineligible jobs are `skipped-state`; a destination reserved by another active job is `skipped-output-conflict`. Eligible staged outputs are cleaned while the same writer lock prevents another FormatWright process from starting that job. Normal job events (`BULK_CANCELLED`, `BULK_RESUMED`, or `BULK_RETRIED`) remain the canonical state history.
+The action re-reads current state under an immediate SQLite writer transaction. Ineligible jobs are `skipped-state`; a destination reserved by another active job is `skipped-output-conflict`. Eligible staged outputs are cleaned while the same writer lock prevents another Anole process from starting that job. Normal job events (`BULK_CANCELLED`, `BULK_RESUMED`, or `BULK_RETRIED`) remain the canonical state history.
 
 CLI and Desktop call the same `BulkJobService`. Desktop filtering is only presentation; every button first persists a selection snapshot and then applies the action to that immutable membership.
 

@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Anole icon (light): selected direction A "The Color Shift", padded to 82% for favicon use. -->
+  <defs>
+    <clipPath id="cIcon">
+      <path d="M 212 112 C 180 118 158 148 154 184 C 110 212 62 242 42 300
+               C 20 352 7 396 14 432 C 34 482 114 502 184 496
+               C 254 490 298 448 312 400 C 322 360 320 330 307 305
+               C 340 296 366 288 374 270 C 396 242 402 202 382 172
+               C 364 152 334 136 304 130 C 270 122 230 104 212 112 Z"/>
+    </clipPath>
+  </defs>
+
+  <rect width="512" height="512" fill="#F6F1E7"/>
+
+  <g transform="translate(91 -12) scale(0.88)">
+    <path d="M 212 112 C 180 118 158 148 154 184 C 110 212 62 242 42 300
+             C 20 352 7 396 14 432 C 34 482 114 502 184 496
+             C 254 490 298 448 312 400 C 322 360 320 330 307 305
+             C 340 296 366 288 374 270 C 396 242 402 202 382 172
+             C 364 152 334 136 304 130 C 270 122 230 104 212 112 Z"
+          fill="#52AE7F"/>
+
+    <circle cx="430" cy="260" r="210" fill="#F0925A" clip-path="url(#cIcon)"/>
+
+    <circle cx="110" cy="252" r="12" fill="#3F8F68"/>
+    <circle cx="84" cy="288" r="10" fill="#3F8F68"/>
+    <circle cx="60" cy="326" r="9" fill="#3F8F68"/>
+
+    <path d="M 60 448 C -20 430 -26 312 34 282 C 72 262 96 296 72 314
+             C 56 326 44 308 56 300"
+          fill="none" stroke="#52AE7F" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/>
+
+    <circle cx="178" cy="464" r="27" fill="#3F8F68"/>
+    <circle cx="254" cy="452" r="24" fill="#3F8F68"/>
+
+    <circle cx="264" cy="200" r="27" fill="#FFFFFF"/>
+    <circle cx="330" cy="220" r="30" fill="#FFFFFF"/>
+    <circle cx="274" cy="204" r="12" fill="#2E3A33"/>
+    <circle cx="340" cy="224" r="13" fill="#2E3A33"/>
+    <circle cx="269" cy="199" r="4" fill="#FFFFFF"/>
+    <circle cx="336" cy="219" r="5" fill="#FFFFFF"/>
+
+    <circle cx="242" cy="238" r="11" fill="#F49E93"/>
+    <circle cx="368" cy="246" r="12" fill="#F49E93"/>
+
+    <path d="M 330 268 Q 346 274 362 264"
+          fill="none" stroke="#2E3A33" stroke-width="6" stroke-linecap="round"/>
+  </g>
+</svg>

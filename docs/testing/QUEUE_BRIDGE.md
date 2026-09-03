@@ -39,11 +39,11 @@ Frontend tests in `apps/desktop/src/queueProjection.test.ts` assert:
 
 1. Build using the command in section 2.
 2. Launch `target/debug/formatwright-desktop.exe` as a normal Windows desktop application.
-3. Verify that the embedded FormatWright page appears; a localhost error page is a failure.
+3. Verify that the embedded Anole page appears; a localhost error page is a failure.
 4. Invoke **Run 10,000-job benchmark** through the accessible button.
 5. Verify the visible summary, aggregate counts, final batch number, and 100-row preview.
 6. Invoke the benchmark a second time without reloading the window to detect listener leaks or stale state.
-7. Close the application and confirm no FormatWright window remains.
+7. Close the application and confirm no Anole window remains.
 
 ## 5. Recorded evidence
 

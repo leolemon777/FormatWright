@@ -1,4 +1,4 @@
-# FormatWright — Master Specification & Delivery Plan
+# Anole — Master Specification & Delivery Plan
 
 > 把文件转换正确：本地优先、可验证、可恢复、可自动化。
 
@@ -6,7 +6,7 @@
 
 | 字段 | 内容 |
 |---|---|
-| 项目名称 | FormatWright |
+| 项目名称 | Anole |
 | 名称状态 | 正式工作名称；公开发布前完成商标、域名、GitHub 组织名与包名复核 |
 | 文档类型 | 产品规格 + 技术规格 + 交付总计划 |
 | 文档版本 | 0.3-draft |
@@ -17,7 +17,7 @@
 
 ## 0. 执行摘要
 
-FormatWright 是一个开源、本地优先的通用文件转换平台。它不以“支持多少种扩展名”作为核心卖点，而以以下能力形成差异：
+Anole 是一个开源、本地优先的通用文件转换平台。它不以“支持多少种扩展名”作为核心卖点，而以以下能力形成差异：
 
 1. 超大文件稳定转换，内存不会随输入文件大小线性增长。
 2. 文件夹级批处理、暂停、恢复、跳过已完成项和崩溃恢复。
@@ -37,7 +37,7 @@ FormatWright 是一个开源、本地优先的通用文件转换平台。它不�
 
 ### 0.2 一句话定位
 
-**FormatWright 是一个会解释转换路径、验证转换结果，并能可靠处理超大文件和批量任务的开源本地文件转换平台。**
+**Anole 是一个会解释转换路径、验证转换结果，并能可靠处理超大文件和批量任务的开源本地文件转换平台。**
 
 ### 0.3 v0.1 成功定义
 
@@ -60,7 +60,7 @@ FormatWright 是一个开源、本地优先的通用文件转换平台。它不�
 
 ### 1.1 竞品格局
 
-| 产品 | 当前优势 | 已发现的结构性缺口 | 对 FormatWright 的启示 |
+| 产品 | 当前优势 | 已发现的结构性缺口 | 对 Anole 的启示 |
 |---|---|---|---|
 | HowToConvert | 首页即 WASM 试用（文件不离开浏览器）再 upsell 桌面；拖放三步（选文件 → 选扩展名 → Convert）；宣称 5,438 条路由；一次性 29 美元 / 5 台设备；Win/Mac/Linux；批量、裁剪、trim、PDF 压缩、矢量化 SVG、EML/MSG、EPUB、RAW/PSD；首页宣传 HEIC→JPG、MP4→MP3、Word→PDF | 闭源；桌面是 shell 调用户自装 FFmpeg/ImageMagick/LibreOffice/Pandoc 等，安装检查偏糙；无 Explorer 右键；无 Plan / ValidationReport / 崩溃可恢复队列；路由数是引擎组合而非认证工作流；定价卡仍标 Beta | 不能只拼格式数量或抄其 HEIC/Word 英雄句；手感对齐拖放简化与「打开输出位置」；Starter 精确路径、Release 不扫 PATH 对准其引擎安装摩擦 |
 | VERT | AGPL；浏览器 WASM；约 250+ 格式；约 15.3k GitHub Stars | 大视频可能依赖自托管 daemon；曾出现约 800MB 视频转换后下载失败 | 浏览器适合轻任务，超大文件应优先由本地原生执行 |
@@ -131,7 +131,7 @@ FormatWright 是一个开源、本地优先的通用文件转换平台。它不�
 
 ### 1.4 最终机会判断
 
-FormatWright 不应在首页宣传一个不断膨胀但质量未知的“转换组合数”。首发应围绕四个可被用户立即验证的承诺：
+Anole 不应在首页宣传一个不断膨胀但质量未知的“转换组合数”。首发应围绕四个可被用户立即验证的承诺：
 
 1. **大文件不会拖垮主程序。**
 2. **批处理可以停、可以恢复。**
@@ -146,7 +146,7 @@ FormatWright 不应在首页宣传一个不断膨胀但质量未知的“转换�
 
 ### 2.2 核心承诺
 
-FormatWright 不只告诉用户“转换完成”，还要回答：
+Anole 不只告诉用户“转换完成”，还要回答：
 
 - 输入文件实际上是什么，而不只看扩展名。
 - 为什么选择这条转换路径。
@@ -415,7 +415,7 @@ FormatWright 不只告诉用户“转换完成”，还要回答：
 **FW-FR-050：Doctor**
 
 - 检查所有可用引擎、版本、路径、编解码能力、许可证元数据和健康状态。
-- 区分系统引擎、FormatWright 认证引擎包和用户自定义引擎。
+- 区分系统引擎、Anole 认证引擎包和用户自定义引擎。
 - 生成带 engine identity 的 capability snapshot，供 Doctor、Planner、UI 和执行后端共同使用。
 
 **FW-FR-051：引擎包**
@@ -681,7 +681,7 @@ FormatWright/
 5. **执行**：显示队列、逐项进度、速度、剩余时间和控制按钮。
 6. **验证**：完成后展示 Pass、Warning 或 Fail，并可打开报告和输出目录。
 
-Explorer **Convert to X** is the documented Plan-first exception that matches CLI `convert`: the Core still builds, hashes, and validates a Plan, but the named verb is the approval. **Open in FormatWright** stays the GUI review path. See [`docs/specs/WINDOWS_DAILY_USE_SPEC_PLAN.md`](docs/specs/WINDOWS_DAILY_USE_SPEC_PLAN.md) KD-2.
+Explorer **Convert to X** is the documented Plan-first exception that matches CLI `convert`: the Core still builds, hashes, and validates a Plan, but the named verb is the approval. **Open in Anole** stays the GUI review path. See [`docs/specs/WINDOWS_DAILY_USE_SPEC_PLAN.md`](docs/specs/WINDOWS_DAILY_USE_SPEC_PLAN.md) KD-2.
 
 ### 7.2 普通模式
 
@@ -755,7 +755,7 @@ Office 到 PDF 的 v0.1 验证流程：
 
 报告必须携带：
 
-- FormatWright 版本。
+- Anole 版本。
 - 操作系统和架构。
 - 引擎版本与构建配置。
 - 计划摘要哈希。
@@ -965,7 +965,7 @@ v0.1 必须包含自动化测试：
 
 Release 默认顺序：
 
-1. 检测并验证 FormatWright Engine Registry 中已激活的认证包。
+1. 检测并验证 Anole Engine Registry 中已激活的认证包。
 2. Offline Bundle/安装介质提供 Windows Starter pack；可选能力由用户主动下载或离线导入。
 3. 缺失能力时禁用对应路线并展示安装/导入动作；已有可用能力不受影响。
 4. 未知系统 PATH 只在显式开发模式中可作为候选发现；生产 Release 不执行它，即使专家模式也不能绕过身份验证。
@@ -1004,7 +1004,7 @@ Release 默认顺序：
 
 交付：
 
-- 确认 FormatWright 名称和发布前复核清单。
+- 确认 Anole 名称和发布前复核清单。
 - 固化本 SPEC_PLAN。
 - 建立 Monorepo、许可证和基础文档。
 - 建立 ADR 模板和首批架构决策。
@@ -1212,7 +1212,7 @@ Release 默认顺序：
 
 ### 20.1 已定
 
-- 项目工作名称：FormatWright。
+- 项目工作名称：Anole。
 - 产品类别：开源、本地优先的文件转换平台。
 - 差异化：大文件、恢复、路径规划、质量验证、自动化。
 - 核心：Rust。
@@ -1226,7 +1226,7 @@ Release 默认顺序：
 
 ### 20.2 Phase 1 前必须确认
 
-- FormatWright 的商标、域名、GitHub 组织、crates.io 和 npm 名称。
+- Anole 的商标、域名、GitHub 组织、crates.io 和 npm 名称。
 - Windows/macOS 代码签名预算与账户。
 - v0.1 最低支持的操作系统版本。
 - 官方引擎包采用“默认下载”还是“安装时选择”。
@@ -1282,7 +1282,7 @@ Release 默认顺序：
 
 **MKV/MOV → MP4：兼容时 remux，不兼容时解释为何转码，并验证时长、轨道和章节。**
 
-它能最早验证 FormatWright 最重要的产品主张：智能路径、超大文件、进度、取消和质量报告。
+它能最早验证 Anole 最重要的产品主张：智能路径、超大文件、进度、取消和质量报告。
 
 ## 23. 计划维护规则
 

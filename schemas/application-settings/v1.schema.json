@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:formatwright:schema:application-settings:v1",
-  "title": "FormatWright Application Settings v1",
+  "title": "Anole Application Settings v1",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema_version", "language", "expert_mode"],

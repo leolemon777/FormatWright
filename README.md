@@ -1,12 +1,14 @@
-# FormatWright
+# Anole
+
+<p align="center"><img src="branding/final/png/lockup-light.png" width="420" alt="Anole — one file, any form." /></p>
 
 **File conversion you can verify.**
 
-FormatWright is an open-source, local-first file conversion platform. It is designed to explain the selected conversion path, prefer remuxing or lossless operations when possible, recover safely from interrupted batch jobs, and validate the result instead of treating a zero exit code as proof of success.
+Anole (formerly FormatWright) is an open-source, local-first file conversion platform. It is designed to explain the selected conversion path, prefer remuxing or lossless operations when possible, recover safely from interrupted batch jobs, and validate the result instead of treating a zero exit code as proof of success.
 
 ## Status
 
-FormatWright is under active **Windows development Alpha**. The unsigned Windows development installer embeds pinned PDF and Media Starter packs and has passed local real-file conversion, but clean-machine offline certification, complete engine licensing/SBOM work, trusted signatures, upgrade/rollback, and code signing are still pending. It is not Public Beta or Certified, and it is not ready for production data.
+Anole is under active **Windows development Alpha**. The unsigned Windows development installer embeds pinned PDF and Media Starter packs and has passed local real-file conversion, but clean-machine offline certification, complete engine licensing/SBOM work, trusted signatures, upgrade/rollback, and code signing are still pending. It is not Public Beta or Certified, and it is not ready for production data.
 
 - Product scope and release gates: [SPEC_PLAN.md](SPEC_PLAN.md)
 - Living completed / pending checklist, architecture, and ordered gates: [docs/MASTER_EXECUTION_PLAN.md](docs/MASTER_EXECUTION_PLAN.md) (see §1.1 progress snapshot)
@@ -64,7 +66,7 @@ test-corpus          Licensed golden corpus manifests and generated fixtures
 
 ## Engines
 
-FormatWright deliberately ships **without bundled conversion engines**. Third-party binaries carry their own license and supply-chain obligations (GPL/LGPL/MPL components, and Microsoft Edge may not be redistributed at all), so the application discovers engines on the host instead. See [the engine inventory](engines/README.md), [ADR-0011](docs/adr/0011-trusted-engine-signatures-and-release-keyring.md), and [ADR-0012](docs/adr/0012-system-discovered-edge-print-engine.md) for the full rationale.
+Anole deliberately ships **without bundled conversion engines**. Third-party binaries carry their own license and supply-chain obligations (GPL/LGPL/MPL components, and Microsoft Edge may not be redistributed at all), so the application discovers engines on the host instead. See [the engine inventory](engines/README.md), [ADR-0011](docs/adr/0011-trusted-engine-signatures-and-release-keyring.md), and [ADR-0012](docs/adr/0012-system-discovered-edge-print-engine.md) for the full rationale.
 
 Discovery order per engine: an activated engine pack, then a `FORMATWRIGHT_ENGINE_<NAME>` environment variable (full path to the executable, e.g. `FORMATWRIGHT_ENGINE_PDFINFO`), then `PATH`, then known vendor install locations (`msedge` only). Discovered engines are reported as `unverified` by design; the doctor never downloads anything.
 
@@ -126,7 +128,7 @@ Start with [the user guide](docs/USER_GUIDE.md), use [troubleshooting](docs/TROU
 
 ## Security
 
-Do not use FormatWright on untrusted files until the relevant engine sandbox and threat-model gates are complete. Please follow [SECURITY.md](SECURITY.md) for reporting vulnerabilities.
+Do not use Anole on untrusted files until the relevant engine sandbox and threat-model gates are complete. Please follow [SECURITY.md](SECURITY.md) for reporting vulnerabilities.
 
 ## License
 

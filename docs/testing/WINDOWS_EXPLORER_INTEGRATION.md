@@ -14,7 +14,7 @@ The installer owns **2 Open-in keys + 17 Convert keys** (19 total). Open-in:
 
 Convert keys live under `Software\Classes\SystemFileAssociations\<ext>\shell\FormatWright.To*` and invoke `--shell-convert --to <format> "%1"`. Uninstall deletes only this generated set. Windows 11 normally shows classic verbs under **Show more options**; a modern top-level extension is out of Wave 1.
 
-**Open in FormatWright** is navigation only: it may pre-fill an existing local file or directory and must create **0 Jobs**.
+**Open in Anole** is navigation only: it may pre-fill an existing local file or directory and must create **0 Jobs**.
 
 **Convert to X** is CLI-equivalent approval (`convert INPUT --to X`). A cold-start Convert of a small PDF must create **1 Job**, persist a Pass (or Warning) ValidationReport, leave the source hash unchanged, and refuse overwrite.
 

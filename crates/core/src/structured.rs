@@ -949,7 +949,7 @@ fn validation_check(
         required: true,
         expected,
         observed,
-        evidence: "FormatWright native structured parser".to_owned(),
+        evidence: "Anole native structured parser".to_owned(),
         message: message.to_owned(),
     }
 }
@@ -986,7 +986,7 @@ fn invalid_plan(message: &str) -> FormatWrightError {
         ErrorCode::PolicyBlocked,
         Stage::Execute,
         format!("Invalid structured Plan: {message}"),
-        "Create a new Plan with the current FormatWright version.",
+        "Create a new Plan with the current Anole version.",
     )
 }
 

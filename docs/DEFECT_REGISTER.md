@@ -1,4 +1,4 @@
-# FormatWright Defect Register
+# Anole Defect Register
 
 - Status: Active
 - Updated: 2026-08-15

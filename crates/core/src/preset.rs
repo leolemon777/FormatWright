@@ -36,7 +36,7 @@ impl ConversionPreset {
         if self.schema_version != PRESET_SCHEMA_VERSION {
             return Err(invalid_preset(
                 "Unsupported preset schema version",
-                "Export the preset again from a compatible FormatWright version.",
+                "Export the preset again from a compatible Anole version.",
             ));
         }
         let name = self.name.trim();
@@ -156,7 +156,7 @@ impl PresetLibrary {
         if self.schema_version != PRESET_SCHEMA_VERSION {
             return Err(invalid_preset(
                 "Unsupported preset-library schema version",
-                "Export the library again from a compatible FormatWright version.",
+                "Export the library again from a compatible Anole version.",
             ));
         }
         if self.presets.len() > 4096 {

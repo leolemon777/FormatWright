@@ -1,4 +1,4 @@
-//! Entry point for the `FormatWright` local `REST` API server (G-33).
+//! Entry point for the `Anole` local `REST` API server (G-33).
 
 #![forbid(unsafe_code)]
 

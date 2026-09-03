@@ -1,7 +1,7 @@
-# FormatWright Windows 日常使用 Spec Plan
+# Anole Windows 日常使用 Spec Plan
 
 **文档类型：** 产品规格 + 技术规格 + 交付计划（下一增量，非 v0.1 Public Beta 总规格）  
-**作者：** FormatWright maintainers（草稿）  
+**作者：** Anole maintainers（草稿）  
 **日期：** 2026-08-17  
 **状态：** Ready for implementation（评审 4 轮后 0 open）  
 **权威边界：** 产品范围与发布门槛仍以仓库根目录 [`SPEC_PLAN.md`](../../SPEC_PLAN.md) 为准；本文件只定义 **Windows 日常使用手感** 这一增量。执行顺序以 [`VOC_BACKLOG.md`](../VOC_BACKLOG.md) 为准；Gate / R-xxx 关闭条件以 [`MASTER_EXECUTION_PLAN.md`](../MASTER_EXECUTION_PLAN.md) 为准。本增量把 Explorer **Convert to X** 写成与 CLI `convert` 同等的 **Plan-first 用户可见步骤例外**（见 KD-2）；Core 仍生成、哈希、验证 Plan。权威文档中「零自动任务 / 仅预填」的过时句由 **PR-02** 一次性改掉，避免 MASTER 勾选与产品合同打架。
@@ -16,7 +16,7 @@
 
 ## Overview
 
-FormatWright 的差异化不是格式数量，而是 Plan-first、Validate-always、local-first 与单一 Rust Core。截至 2026-08-17，Windows 开发候选已经能在本机完成 PDF→PNG/JPG、结构化互转、部分媒体路径，并具备经典 Explorer **Open in FormatWright**、按扩展名 **Convert to …**、capability snapshot 门控，以及 `--shell-convert --to FORMAT PATH` 冷/热启动。这些改动大量仍在脏工作树中；NSIS 钩子代码已写完整 Convert 键，但测试、MASTER、UX_FLOWS、WINDOWS_PACKAGING 仍编码「永不自动转换 / 只拥有两把 Open-in 键」。
+Anole 的差异化不是格式数量，而是 Plan-first、Validate-always、local-first 与单一 Rust Core。截至 2026-08-17，Windows 开发候选已经能在本机完成 PDF→PNG/JPG、结构化互转、部分媒体路径，并具备经典 Explorer **Open in Anole**、按扩展名 **Convert to …**、capability snapshot 门控，以及 `--shell-convert --to FORMAT PATH` 冷/热启动。这些改动大量仍在脏工作树中；NSIS 钩子代码已写完整 Convert 键，但测试、MASTER、UX_FLOWS、WINDOWS_PACKAGING 仍编码「永不自动转换 / 只拥有两把 Open-in 键」。
 
 本增量不重写 Core，也不开启 API/MCP。它把两条已拍板的入口做成「第一次就能转成功」的日常产品：拖一个 PDF 在 Convert 页三步出图（Plan 可见）；在资源管理器对 PDF 右键 **Convert to PNG** 即视为与 CLI `convert INPUT --to png` 同等的一次批准。窗口仍会生成不可变 Plan、绑定 `plan_hash`、验证后原子提交、永不静默覆盖。Open-in 继续只预填 Convert 页，是 GUI 上完整的 Plan-first 路径。
 
@@ -105,13 +105,13 @@ SPEC_PLAN §2.4「Plan-first：执行前先生成可解释计划」、§1.4「�
 
 - Plan **仍然**生成、哈希、验证、落报告；`prepare_approved_desktop_conversion` 不得省略 `ensure_plan_approved`。
 - 用户在 Explorer 上不再获得「先读 Plan 再点开始」的回合。窗口必须出现，成功条与报告可打开，但不阻塞执行。
-- **Open in FormatWright** 仍是 GUI 上完整的 Plan-first 路径：只预填，0 Job。
+- **Open in Anole** 仍是 GUI 上完整的 Plan-first 路径：只预填，0 Job。
 - 本例外必须写进 PR-02 对 MASTER / `UX_FLOWS.md` / `DESKTOP_MVP.md` 的同步，以免已勾选的「零自动任务」继续当产品真相。
 
 **理由：** 负责人已批 Convert=批准；与 CLI 合同一致，避免表面绕过 Plan hash。  
 **后果：** UI 可以为 N=1 shell convert 自动 preview+run，但必须携带刚生成的 `plan_hash`，并应用 `defaultPlanConstraints(target)`（KD-15），不得继承热窗口表单。
 
-### KD-3 — Open in FormatWright 只预览
+### KD-3 — Open in Anole 只预览
 
 **决策：** `--shell-open PATH` 只预填 Convert 页（文件或目录）。不得设置 `pendingShellConvert`，不得创建 Job。  
 **理由：** 打开 ≠ 批准。USER_GUIDE 与 VOC 已拍板。  
@@ -571,7 +571,7 @@ FIFO 32 仍是 **进程到达** 上限；静默合并后的 `paths[]` 最多 32�
 | 条件 | 用户句 |
 |---|---|
 | 扩展名 xls/xlsm/xlsb | 这是旧版 Excel。请另存为 .xlsx 后再转 PDF。 |
-| `ErrorCode::Unsupported` | 这个格式对不在当前支持名单。FormatWright 不靠堆格式对。 |
+| `ErrorCode::Unsupported` | 这个格式对不在当前支持名单。Anole 不靠堆格式对。 |
 | `ErrorCode::EngineMissing` | 缺引擎包：{names}。打开「引擎」导入官方包。xlsx 缺 soffice 时点名 Document pack。 |
 | `ErrorCode::OutputConflict` | 目标已存在，没有覆盖。请改保存位置。 |
 | `ErrorCode::PolicyBlocked` | 没有批准的 Plan，不能转。 |
@@ -733,7 +733,7 @@ Convert 批次：**ready FIFO** + `take_desktop_shell_convert_batch`（pop 一�
 第 1 波拥有集 = 2 Open-in + **17** Convert 键（与下表一致，共 19）。PR-02 测试必须用这一集合，并修复 CLEAN_VM 的 `FormatWrightConvert` 错误名。
 
 ```
-Software\Classes\*\shell\FormatWright
+Software\Classes\*\shell\Anole
 Software\Classes\Directory\shell\FormatWright
 Software\Classes\SystemFileAssociations\.pdf\shell\FormatWright.ToPng
 Software\Classes\SystemFileAssociations\.pdf\shell\FormatWright.ToJpg

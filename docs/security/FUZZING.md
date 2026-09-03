@@ -3,7 +3,7 @@
 - Status: Phase 5 development harness
 - Updated: 2026-08-10
 
-FormatWright uses `cargo-fuzz`/libFuzzer for two untrusted-input boundaries:
+Anole uses `cargo-fuzz`/libFuzzer for two untrusted-input boundaries:
 
 - `engine_manifest`: arbitrary JSON deserialization followed by complete protocol/schema/path/capability invariant validation.
 - `structured_file`: arbitrary JSON, YAML, CSV, or XML bytes through the bounded native inspector, including strict duplicate-key and XML DTD/entity policy.

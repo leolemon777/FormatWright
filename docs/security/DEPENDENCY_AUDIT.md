@@ -2,7 +2,7 @@
 
 Updated: 2026-08-10
 
-FormatWright treats a known vulnerability in any locked Rust application, Rust fuzzing, or production JavaScript dependency as a failing release gate. The gate does not use advisory suppressions.
+Anole treats a known vulnerability in any locked Rust application, Rust fuzzing, or production JavaScript dependency as a failing release gate. The gate does not use advisory suppressions.
 
 Run it from the repository root:
 
@@ -25,7 +25,7 @@ The 2026-08-10 audit used RustSec database commit `2ae3ea41b89902e846595002ca29a
 
 The audit initially found `RUSTSEC-2026-0194`, `RUSTSEC-2026-0195`, and `RUSTSEC-2026-0009`. Updating `plist` from 1.8.0 to 1.10.0 removed `quick-xml` 0.38.4 and updated `time` to 0.3.55. Because that secure dependency set requires Rust 1.88, the workspace MSRV was raised from 1.85 to 1.88.
 
-RustSec also reports informational warnings for the GTK3 dependency family and one affected `glib` API in Tauri's Linux WebView dependency graph. These are not vulnerability findings and are not suppressed. FormatWright does not call the affected `glib::VariantStrIter` APIs directly. They remain an upstream migration risk to review before a Linux release claim; a Windows-only build does not link that target-specific GTK graph.
+RustSec also reports informational warnings for the GTK3 dependency family and one affected `glib` API in Tauri's Linux WebView dependency graph. These are not vulnerability findings and are not suppressed. Anole does not call the affected `glib::VariantStrIter` APIs directly. They remain an upstream migration risk to review before a Linux release claim; a Windows-only build does not link that target-specific GTK graph.
 
 `deny.toml` independently enforces an explicit SPDX license allowlist, denies unknown registries and Git sources, and rejects wildcard dependencies. It fails unmaintained direct workspace dependencies while reporting transitive duplicates and maintenance notices for review. The 2026-08-10 run passed all four cargo-deny checks: advisories, bans, licenses, and sources.
 

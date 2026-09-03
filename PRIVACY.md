@@ -1,6 +1,6 @@
 # Privacy
 
-FormatWright is designed for local file conversion. The v0.1 application does not upload input files, converted outputs, Plans, validation reports, filenames, usage events, or crash data. Conversion Plans use `network_policy: deny`, and the product has no analytics or advertising SDK.
+Anole is designed for local file conversion. The v0.1 application does not upload input files, converted outputs, Plans, validation reports, filenames, usage events, or crash data. Conversion Plans use `network_policy: deny`, and the product has no analytics or advertising SDK.
 
 ## Data stored locally
 
@@ -16,13 +16,13 @@ Local reports redact metadata values classified as private or secret, but curren
 
 ## Network behavior
 
-FormatWright does not automatically download engines or updates in the current development build. Doctor inspects local or explicitly imported binaries. Engine-pack import reads local files and does not trust a signature merely because one is present.
+Anole does not automatically download engines or updates in the current development build. Doctor inspects local or explicitly imported binaries. Engine-pack import reads local files and does not trust a signature merely because one is present.
 
-Third-party conversion engines are separate programs with their own behavior. FormatWright supplies local paths and typed arguments, but the complete OS-level zero-network sandbox and release audit are not yet certified. Use the development build only with engines you trust, and review `docs/security/THREAT_MODEL.md` before processing hostile files.
+Third-party conversion engines are separate programs with their own behavior. Anole supplies local paths and typed arguments, but the complete OS-level zero-network sandbox and release audit are not yet certified. Use the development build only with engines you trust, and review `docs/security/THREAT_MODEL.md` before processing hostile files.
 
 ## Deletion and retention
 
-Deleting an output does not delete its local job/report history. The current desktop UI does not yet expose bulk history deletion. A user may remove the application-data directory after closing FormatWright to erase local history and imported-engine references; this does not delete original inputs, conversion outputs, or the referenced engine packs. Back up anything needed before doing so.
+Deleting an output does not delete its local job/report history. The current desktop UI does not yet expose bulk history deletion. A user may remove the application-data directory after closing Anole to erase local history and imported-engine references; this does not delete original inputs, conversion outputs, or the referenced engine packs. Back up anything needed before doing so.
 
 ## Telemetry and future changes
 

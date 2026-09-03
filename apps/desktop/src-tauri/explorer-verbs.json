@@ -2,11 +2,11 @@
   "openIn": [
     {
       "classesPath": "*\\shell\\FormatWright",
-      "label": "Open in FormatWright"
+      "label": "Open in Anole"
     },
     {
       "classesPath": "Directory\\shell\\FormatWright",
-      "label": "Open in FormatWright"
+      "label": "Open in Anole"
     }
   ],
   "convert": [

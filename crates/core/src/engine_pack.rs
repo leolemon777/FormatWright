@@ -686,12 +686,12 @@ fn ensure_application_compatible(manifest: &EngineManifest) -> Result<()> {
     }
     Err(engine_error(
         format!(
-            "Engine pack requires FormatWright {}..{}, this application is {}",
+            "Engine pack requires Anole {}..{}, this application is {}",
             manifest.formatwright_compatibility.minimum,
             manifest.formatwright_compatibility.maximum_exclusive,
             env!("CARGO_PKG_VERSION")
         ),
-        "Import a pack built for this FormatWright version.".to_owned(),
+        "Import a pack built for this Anole version.".to_owned(),
     ))
 }
 
@@ -1327,7 +1327,7 @@ mod tests {
         assert!(
             error
                 .message
-                .contains("requires FormatWright 9.0.0..10.0.0")
+                .contains("requires Anole 9.0.0..10.0.0")
         );
         assert!(error.message.contains(env!("CARGO_PKG_VERSION")));
     }

@@ -33,7 +33,7 @@ The 2026-08-13 run reported:
 - an Arabic/Hebrew/CJK path remained intact in the real WebView and used isolated bidi rendering;
 - reduced motion, increased contrast and forced colors all matched; transition duration became `0s` and the high-contrast root became black;
 - switching Chinese to English changed `document.lang`, the navigation accessible name, and skip-link text;
-- both original application-state trees were restored byte-for-byte and no FormatWright test process remained.
+- both original application-state trees were restored byte-for-byte and no Anole test process remained.
 
 The harness saves `accessibility-audit.json`, `desktop-200-percent.png`, and `desktop-forced-colors.png` under the ignored `.artifacts/desktop-accessibility` directory. Both screenshots were visually inspected for clipping, overlap, readable navigation, focus affordance, and text retention.
 

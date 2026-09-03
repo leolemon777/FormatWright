@@ -4094,7 +4094,7 @@ fn invalid_plan_argument(name: &str) -> FormatWrightError {
         ErrorCode::PolicyBlocked,
         Stage::Execute,
         format!("Plan contains an invalid or missing {name} argument"),
-        "Create a new Plan with the installed FormatWright version.",
+        "Create a new Plan with the installed Anole version.",
     )
 }
 

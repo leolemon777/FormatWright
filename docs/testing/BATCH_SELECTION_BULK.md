@@ -18,7 +18,7 @@ Core regressions prove:
 - maintenance detects selection member-count and bulk matched-count drift;
 - opening a true schema v3 fixture creates one v3 portable snapshot before migration to v4.
 
-The filesystem cleanup hook executes only for a currently eligible job while the same immediate writer transaction prevents another FormatWright process from starting it. Database failure rolls the action back; cleanup is safe to repeat because staging names are deterministic and owned by job ID.
+The filesystem cleanup hook executes only for a currently eligible job while the same immediate writer transaction prevents another Anole process from starting it. Database failure rolls the action back; cleanup is safe to repeat because staging names are deterministic and owned by job ID.
 
 ## Surface evidence
 

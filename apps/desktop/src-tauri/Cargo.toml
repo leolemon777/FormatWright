@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "Tauri desktop surface for the FormatWright core"
+description = "Tauri desktop surface for the Anole core"
 
 [lib]
 name = "formatwright_desktop_lib"

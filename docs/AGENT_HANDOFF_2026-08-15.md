@@ -1,4 +1,4 @@
-# FormatWright Agent 交接说明
+# Anole Agent 交接说明
 
 - 交接日期：2026-08-15
 - 仓库：`E:\Users\Administrator\Desktop\FormatWright`
@@ -9,7 +9,7 @@
 
 ## 1. 一句话结论
 
-FormatWright 的 Windows 主链路已经从“依赖系统工具且 PDF 无法转换”推进到：安装器内嵌固定版本 PDF/Media Starter，引擎首次启动时按哈希验证并原子安装，Release 只解析激活包的精确二进制路径，PNG/JPG 路线由前后端共同门控；真实安装、Explorer 入口、无障碍和本机转换已有证据。
+Anole 的 Windows 主链路已经从“依赖系统工具且 PDF 无法转换”推进到：安装器内嵌固定版本 PDF/Media Starter，引擎首次启动时按哈希验证并原子安装，Release 只解析激活包的精确二进制路径，PNG/JPG 路线由前后端共同门控；真实安装、Explorer 入口、无障碍和本机转换已有证据。
 
 当前正在收口的是每个引擎包的确定性 SPDX 文件 SBOM、来源侧车和安装后完整性验证。代码与绝大多数测试已通过，但本批次尚未提交，最终标准 NSIS 也需要在最后一处前端修正后重新构建。
 

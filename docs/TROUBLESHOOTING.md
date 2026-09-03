@@ -7,7 +7,7 @@
 
 Run `formatwright doctor --json` or open **Engines** in the desktop app. A missing engine is not downloaded automatically. Import a reviewed local pack, configure an exact `FORMATWRIGHT_ENGINE_<NAME>` path before startup, or install the engine through its official distribution channel.
 
-If an imported pack becomes invalid, restore it at the recorded path or import an intact compatible pack. FormatWright rejects wrong architecture/protocol, missing license files, path escapes, tampered binaries, and a second manifest claiming an already registered executable name.
+If an imported pack becomes invalid, restore it at the recorded path or import an intact compatible pack. Anole rejects wrong architecture/protocol, missing license files, path escapes, tampered binaries, and a second manifest claiming an already registered executable name.
 
 ## Common typed errors
 
@@ -37,7 +37,7 @@ Run `formatwright jobs recover --state-db PATH` after an abnormal CLI exit. Desk
 
 Run `formatwright --state-db PATH maintenance integrity-check` before attempting state repair. The check covers SQLite pages, foreign keys, migrations, queue reservations/events, and stored Plan hashes. Do not delete or recreate the database after a read error.
 
-Create a portable copy with `maintenance backup BACKUP.sqlite3`; an existing backup path is refused. `maintenance restore BACKUP.sqlite3` only validates and migrates a temporary copy. Stop queue execution, close other FormatWright processes, and add `--yes` only after preflight succeeds. A confirmed restore first stores a pre-restore safety snapshot under `backups`. A schema newer than the running application is intentionally refused; install an equal or newer FormatWright release instead of forcing a downgrade.
+Create a portable copy with `maintenance backup BACKUP.sqlite3`; an existing backup path is refused. `maintenance restore BACKUP.sqlite3` only validates and migrates a temporary copy. Stop queue execution, close other Anole processes, and add `--yes` only after preflight succeeds. A confirmed restore first stores a pre-restore safety snapshot under `backups`. A schema newer than the running application is intentionally refused; install an equal or newer Anole release instead of forcing a downgrade.
 
 ## Reports and sensitive paths
 

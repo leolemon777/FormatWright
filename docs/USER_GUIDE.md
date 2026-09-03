@@ -1,4 +1,4 @@
-# FormatWright User Guide
+# Anole User Guide
 
 - Status: Development guide; no Public Beta support claim
 - Updated: 2026-08-12
@@ -16,10 +16,10 @@
 
 PDF-to-image conversion selects an output directory because every page is rendered. Other current workflows select one output file. Existing destinations are refused; silent overwrite is not supported.
 
-On an installed Windows development build, Explorer's classic context menu (normally **Show more options** on Windows 11) has two kinds of FormatWright actions:
+On an installed Windows development build, Explorer's classic context menu (normally **Show more options** on Windows 11) has two kinds of Anole actions:
 
-- **Open in FormatWright** on any file or folder only fills the Convert page. It does not start work.
-- **Convert to …** on supported extensions (PDF→PNG/JPG, images→WebP, JSON/CSV/YAML/XML, common media) is an explicit approval, same as a one-shot CLI `convert`. FormatWright still builds a Plan, validates, and refuses to overwrite. Unsupported files stay review-only.
+- **Open in Anole** on any file or folder only fills the Convert page. It does not start work.
+- **Convert to …** on supported extensions (PDF→PNG/JPG, images→WebP, JSON/CSV/YAML/XML, common media) is an explicit approval, same as a one-shot CLI `convert`. Anole still builds a Plan, validates, and refuses to overwrite. Unsupported files stay review-only.
 
 Network shares are rejected by the current local-path policy. Choosing a Convert verb on a folder is ignored.
 
@@ -31,7 +31,7 @@ Open **Presets** to name and save the current target, quality, width, DPI, color
 
 ## Engines
 
-**Engines** runs Doctor without downloading anything. The Windows candidate installs its embedded Starter packs into a versioned application-data store on first launch. A local engine pack can also be imported by selecting its `manifest.json`; FormatWright verifies protocol, platform/architecture, canonical paths, executable/runtime hashes, and declared license files, then copies only declared files into the same store and atomically switches the active registry record. Every pack is re-verified at startup. Doctor, Plan steps, and ValidationReport all show the same derived certification. A trusted signature alone is displayed as “signature trusted, review incomplete”; `Certified` requires that trust **and** a completed human supply-chain review. Hash completeness or a present signature never promote a pack.
+**Engines** runs Doctor without downloading anything. The Windows candidate installs its embedded Starter packs into a versioned application-data store on first launch. A local engine pack can also be imported by selecting its `manifest.json`; Anole verifies protocol, platform/architecture, canonical paths, executable/runtime hashes, and declared license files, then copies only declared files into the same store and atomically switches the active registry record. Every pack is re-verified at startup. Doctor, Plan steps, and ValidationReport all show the same derived certification. A trusted signature alone is displayed as “signature trusted, review incomplete”; `Certified` requires that trust **and** a completed human supply-chain review. Hash completeness or a present signature never promote a pack.
 
 For development only, an exact system executable can be selected before startup with `FORMATWRIGHT_ENGINE_<NAME>`, such as `FORMATWRIGHT_ENGINE_FFMPEG` or `FORMATWRIGHT_ENGINE_PDFTOPPM`. Release ignores `PATH` and these overrides; production capability comes only from an activated verified pack.
 
@@ -71,7 +71,7 @@ Every successful immediate conversion, `jobs run` item, and image-batch item sto
 
 `maintenance restore BACKUP` is the SQLite-only path. `maintenance bundle-backup BACKUP.fwstate` packages a consistent SQLite copy, presets, persisted UI settings, and engine-registry identities; `--include-reports` also includes bounded report JSON. Third-party engine binaries are intentionally excluded, so missing paths must be re-imported on another machine.
 
-`maintenance bundle-restore BACKUP.fwstate` is preflight-only: it rejects unsafe/undeclared paths, links, duplicate members, size violations, SHA-256 mismatches, invalid component JSON, and an incompatible SQLite copy before live state changes. Stop queue execution and close other FormatWright processes, review the warnings, then rerun with `--yes`. Confirmed restore retains a full pre-restore safety bundle under `backups` and uses a recovery journal; CLI/Desktop startup rolls back an interrupted multi-component switch before opening the queue. Bundle and manual database backup destinations are never overwritten.
+`maintenance bundle-restore BACKUP.fwstate` is preflight-only: it rejects unsafe/undeclared paths, links, duplicate members, size violations, SHA-256 mismatches, invalid component JSON, and an incompatible SQLite copy before live state changes. Stop queue execution and close other Anole processes, review the warnings, then rerun with `--yes`. Confirmed restore retains a full pre-restore safety bundle under `backups` and uses a recovery journal; CLI/Desktop startup rolls back an interrupted multi-component switch before opening the queue. Bundle and manual database backup destinations are never overwritten.
 
 ## Supported development workflows
 

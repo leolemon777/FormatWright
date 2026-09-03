@@ -8,9 +8,9 @@
 
 Tauri bundling is enabled in `apps/desktop/src-tauri/tauri.conf.json`. The Windows override builds a current-user NSIS installer with English and Simplified Chinese UI, embeds the full WebView2 offline installer, and maps the generated Windows x86-64 Starter resources to `engine-packs/starter/`. It does not use Tauri's network-dependent WebView bootstrapper.
 
-`windows-explorer-hooks.nsh` is generated from `apps/desktop/src-tauri/explorer-verbs.json`. It registers classic Explorer **Open in FormatWright** for files and directories (`--shell-open`) and 17 per-extension **Convert to …** verbs (`--shell-convert --to`). `NSIS_HOOK_PREUNINSTALL` deletes that closed 2+17 key set only. Windows 11 normally places these classic registrations under **Show more options**; a modern top-level shell extension is not claimed.
+`windows-explorer-hooks.nsh` is generated from `apps/desktop/src-tauri/explorer-verbs.json`. It registers classic Explorer **Open in Anole** for files and directories (`--shell-open`) and 17 per-extension **Convert to …** verbs (`--shell-convert --to`). `NSIS_HOOK_PREUNINSTALL` deletes that closed 2+17 key set only. Windows 11 normally places these classic registrations under **Show more options**; a modern top-level shell extension is not claimed.
 
-The application registers Tauri's official single-instance plugin before every other plugin. If FormatWright is already open, a context invocation forwards its argument to the existing process, queues it until the frontend consumes it, restores/focuses the main window, and exits before Desktop setup can run recovery a second time. Open-in only pre-fills Convert. A named Convert verb is CLI-equivalent approval and may start one conversion after a Plan is generated, hashed, and validated. Silent overwrite is still refused.
+The application registers Tauri's official single-instance plugin before every other plugin. If Anole is already open, a context invocation forwards its argument to the existing process, queues it until the frontend consumes it, restores/focuses the main window, and exits before Desktop setup can run recovery a second time. Open-in only pre-fills Convert. A named Convert verb is CLI-equivalent approval and may start one conversion after a Plan is generated, hashed, and validated. Silent overwrite is still refused.
 
 On first startup, the Release backend verifies each embedded manifest, executable, runtime file and license notice; copies declared files into the versioned application-data engine store; atomically updates one active registry pointer per engine ID; and activates exact installed paths. Release never substitutes a tool discovered from the user's `PATH`.
 
@@ -23,7 +23,7 @@ pnpm --filter @formatwright/desktop tauri build --bundles nsis
 Generate release checksums from an explicit artifact list:
 
 ```text
-python scripts/generate_checksums.py target/release/formatwright-desktop.exe target/release/bundle/nsis/FormatWright_0.1.0_x64-setup.exe
+python scripts/generate_checksums.py target/release/formatwright-desktop.exe target/release/bundle/nsis/Anole_0.1.0_x64-setup.exe
 ```
 
 The checksum generator hashes files in 1 MiB chunks, rejects missing/non-file inputs, duplicate basenames, and attempts to include the manifest itself.
@@ -34,7 +34,7 @@ The final 2026-08-16 standard-configuration rebuild — including the trusted-si
 
 | Artifact | Bytes | SHA-256 | Signature |
 |---|---:|---|---|
-| `FormatWright_0.1.0_x64-setup.exe` | 282,479,337 | `016c7cc657839560ae1b41a99c800bae865990041c71154b839cfe1ce55233be` | NotSigned |
+| `Anole_0.1.0_x64-setup.exe` | 282,479,337 | `016c7cc657839560ae1b41a99c800bae865990041c71154b839cfe1ce55233be` | NotSigned |
 | `formatwright-desktop.exe` (standard config) | 15,787,008 | `3af8702b0c975db109001cf8c163d39556dcc954b381d2842ed9d86a88faf1b8` | NotSigned |
 
 The enhanced current-user install smoke passed against this installer (evidence `.artifacts/windows-explorer-installed-smoke/suite-ba4135da354340c798bbf511f94a66b3`).
@@ -45,8 +45,8 @@ A byte scan of both standard artifacts is negative for the release-e2e DevTools 
 
 The earlier application-shell installer was run silently with `/S` and an explicit `/D=` path inside the ignored project `.artifacts/installer-smoke` directory. The installed application:
 
-- reported file/product version 0.1.0 / FormatWright;
-- opened a native window titled `FormatWright`;
+- reported file/product version 0.1.0 / Anole;
+- opened a native window titled `Anole`;
 - remained alive and responsive during the observation;
 - closed on a normal main-window request.
 

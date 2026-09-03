@@ -124,7 +124,7 @@ impl MaintenanceService {
         })
     }
 
-    /// Runs `SQLite` page, foreign-key, and `FormatWright` queue-invariant checks.
+    /// Runs `SQLite` page, foreign-key, and `Anole` queue-invariant checks.
     ///
     /// # Errors
     ///
@@ -365,7 +365,7 @@ fn backup_database(source: &Path, destination: &Path, overwrite: bool) -> Result
             ErrorCode::StorageFailed,
             Stage::Store,
             format!("Database does not exist: {}", source.display()),
-            "Choose an existing FormatWright state database.",
+            "Choose an existing Anole state database.",
         ));
     }
     ensure_distinct_paths(source, destination)?;
@@ -455,7 +455,7 @@ fn online_copy(source: &Path, destination: &Path, mode: CopyMode) -> Result<()> 
                         ErrorCode::PolicyBlocked,
                         Stage::Store,
                         "SQLite maintenance could not acquire a database lock within 30 seconds",
-                        "Stop queue execution, close other FormatWright processes, and retry.",
+                        "Stop queue execution, close other Anole processes, and retry.",
                     )
                     .retryable(true));
                 }
@@ -486,7 +486,7 @@ fn online_copy(source: &Path, destination: &Path, mode: CopyMode) -> Result<()> 
                 format!(
                     "SQLite refused portable backup journal mode DELETE: {actual_journal_mode}"
                 ),
-                "Close other FormatWright processes and retry maintenance.",
+                "Close other Anole processes and retry maintenance.",
             ));
         }
     }
@@ -820,7 +820,7 @@ fn ensure_supported_schema(version: i64) -> Result<()> {
             format!(
                 "Database schema v{version} is newer than supported v{DATABASE_SCHEMA_VERSION}"
             ),
-            "Open this database with an equal or newer FormatWright release.",
+            "Open this database with an equal or newer Anole release.",
         ));
     }
     Ok(())
@@ -838,7 +838,7 @@ fn open_read_only(path: &Path) -> Result<Connection> {
             ErrorCode::StorageFailed,
             Stage::Store,
             format!("Database does not exist: {}", path.display()),
-            "Choose an existing FormatWright state database.",
+            "Choose an existing Anole state database.",
         ));
     }
     let connection = Connection::open_with_flags(
@@ -858,7 +858,7 @@ fn open_read_write_existing(path: &Path) -> Result<Connection> {
             ErrorCode::StorageFailed,
             Stage::Store,
             format!("Database does not exist: {}", path.display()),
-            "Choose an existing FormatWright state database.",
+            "Choose an existing Anole state database.",
         ));
     }
     let connection = Connection::open_with_flags(
@@ -1021,7 +1021,7 @@ fn remove_if_exists(path: &Path) -> Result<()> {
         Err(error) => Err(maintenance_error(
             ErrorCode::StorageFailed,
             format!("Cannot remove maintenance file: {}", path.display()),
-            "Close FormatWright and retry maintenance.",
+            "Close Anole and retry maintenance.",
             error,
         )),
     }
@@ -1101,7 +1101,7 @@ fn storage_error(error: rusqlite::Error) -> FormatWrightError {
         ErrorCode::StorageFailed,
         Stage::Store,
         "SQLite maintenance operation failed",
-        "Close other FormatWright processes, verify disk health, and retry.",
+        "Close other Anole processes, verify disk health, and retry.",
     )
     .with_diagnostic(error.to_string())
 }

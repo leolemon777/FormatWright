@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Direction C: "The Perch" — chubby lizard lying along the bottom edge,
+       cream belly down, paws over the edge, tail curling up the right side. -->
+  <defs>
+    <clipPath id="cC">
+      <path d="M 95 130 C 130 116 158 126 172 152 C 215 205 270 235 340 248
+               C 410 260 470 285 492 350 C 508 405 496 455 440 478
+               C 380 500 300 505 225 500 C 165 494 120 470 100 430
+               C 85 395 88 350 100 320 C 105 295 115 280 130 272
+               C 95 262 72 240 62 224 C 55 180 62 150 80 136
+               C 85 132 90 130 95 130 Z"/>
+    </clipPath>
+  </defs>
+
+  <!-- background -->
+  <rect width="512" height="512" fill="#232F4B"/>
+
+  <!-- body + head silhouette, head raised at the left -->
+  <path d="M 95 130 C 130 116 158 126 172 152 C 215 205 270 235 340 248
+           C 410 260 470 285 492 350 C 508 405 496 455 440 478
+           C 380 500 300 505 225 500 C 165 494 120 470 100 430
+           C 85 395 88 350 100 320 C 105 295 115 280 130 272
+           C 95 262 72 240 62 224 C 55 180 62 150 80 136
+           C 85 132 90 130 95 130 Z"
+        fill="#52AE7F"/>
+
+  <!-- cream belly: broad second color region -->
+  <ellipse cx="300" cy="440" rx="190" ry="95" fill="#F3EADA" clip-path="url(#cC)"/>
+
+  <!-- dorsal bumps along the back -->
+  <circle cx="302" cy="264" r="12" fill="#3F8F68"/>
+  <circle cx="360" cy="276" r="11" fill="#3F8F68"/>
+  <circle cx="418" cy="304" r="10" fill="#3F8F68"/>
+
+  <!-- spiral tail: big raised curl up the right edge, clear of the paws -->
+  <path d="M 468 440 C 514 424 524 320 480 292 C 448 272 424 296 440 318
+           C 452 334 472 328 470 312"
+        fill="none" stroke="#52AE7F" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- paws over the bottom edge -->
+  <circle cx="180" cy="492" r="24" fill="#3F8F68"/>
+  <circle cx="300" cy="500" r="26" fill="#3F8F68"/>
+
+  <!-- face: big glossy eyes looking up at the viewer -->
+  <circle cx="107" cy="196" r="24" fill="#FFFFFF"/>
+  <circle cx="150" cy="190" r="30" fill="#FFFFFF"/>
+  <circle cx="102" cy="200" r="10" fill="#2E3A33"/>
+  <circle cx="144" cy="194" r="13" fill="#2E3A33"/>
+  <circle cx="98" cy="196" r="4" fill="#FFFFFF"/>
+  <circle cx="140" cy="190" r="5" fill="#FFFFFF"/>
+
+  <!-- blush -->
+  <circle cx="96" cy="232" r="11" fill="#F49E93"/>
+  <circle cx="168" cy="228" r="12" fill="#F49E93"/>
+
+  <!-- tiny smile -->
+  <path d="M 92 240 Q 106 249 120 244"
+        fill="none" stroke="#2E3A33" stroke-width="6" stroke-linecap="round"/>
+</svg>

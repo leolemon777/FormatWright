@@ -1,6 +1,6 @@
-# FormatWright website
+# Anole website
 
-Landing page for the FormatWright project（对应 `docs/COMPETITIVE_GAP_ROADMAP.md` 的 G-05 条目）。这是一个**纯静态、单文件**站点：`index.html` 内联了全部 CSS 与 JS，无构建步骤、无外部字体、无 CDN 依赖，断网状态下可完整打开。
+Landing page for the Anole project（对应 `docs/COMPETITIVE_GAP_ROADMAP.md` 的 G-05 条目）。这是一个**纯静态、单文件**站点：`index.html` 内联了全部 CSS 与 JS，无构建步骤、无外部字体、无 CDN 依赖，断网状态下可完整打开。
 
 ## 本地预览
 

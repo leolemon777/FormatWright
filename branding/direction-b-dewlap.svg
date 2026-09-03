@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Direction B: "The Dewlap" — proud anole puffing its red throat fan.
+       Concrete-cute style: bezier silhouette, casque, spiral tail, big glossy eyes,
+       blush, mitten feet, dorsal bumps. -->
+  <defs>
+    <clipPath id="cB">
+      <path d="M 300 112 C 332 118 354 148 358 184 C 402 212 450 242 470 300
+               C 492 352 505 396 498 432 C 478 482 398 502 328 496
+               C 258 490 214 448 200 400 C 190 360 192 330 205 305
+               C 172 296 146 288 138 270 C 116 242 110 202 130 172
+               C 148 152 178 136 208 130 C 242 122 282 104 300 112 Z"/>
+    </clipPath>
+  </defs>
+
+  <!-- background -->
+  <rect width="512" height="512" fill="#20392F"/>
+
+  <!-- body + head, one smooth silhouette with casque bump -->
+  <path d="M 300 112 C 332 118 354 148 358 184 C 402 212 450 242 470 300
+           C 492 352 505 396 498 432 C 478 482 398 502 328 496
+           C 258 490 214 448 200 400 C 190 360 192 330 205 305
+           C 172 296 146 288 138 270 C 116 242 110 202 130 172
+           C 148 152 178 136 208 130 C 242 122 282 104 300 112 Z"
+        fill="#5FC28E"/>
+
+  <!-- soft shading along the lower body -->
+  <circle cx="420" cy="500" r="170" fill="#46A674" clip-path="url(#cB)"/>
+
+  <!-- dorsal bumps along the back -->
+  <circle cx="402" cy="252" r="12" fill="#46A674"/>
+  <circle cx="428" cy="288" r="10" fill="#46A674"/>
+  <circle cx="452" cy="326" r="9" fill="#46A674"/>
+
+  <!-- spiral tail hugging the right edge -->
+  <path d="M 462 442 C 516 428 524 328 476 306 C 446 292 434 326 454 338
+           C 466 344 472 330 462 326"
+        fill="none" stroke="#5FC28E" stroke-width="30" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- red dewlap: teardrop fan hanging from the chin, wider than it is round -->
+  <path d="M 190 296 C 160 306 130 330 122 366 C 116 398 140 420 172 420
+           C 204 420 222 396 222 368 C 222 336 206 310 190 296 Z" fill="#E85B47"/>
+  <path d="M 140 350 Q 172 398 208 380" fill="none" stroke="#D94E3C" stroke-width="8" stroke-linecap="round"/>
+
+  <!-- mitten feet under the belly -->
+  <circle cx="258" cy="446" r="24" fill="#46A674"/>
+  <circle cx="334" cy="458" r="27" fill="#46A674"/>
+
+  <!-- face: big glossy eyes -->
+  <circle cx="248" cy="200" r="27" fill="#FFFFFF"/>
+  <circle cx="178" cy="218" r="34" fill="#FFFFFF"/>
+  <circle cx="240" cy="203" r="12" fill="#2E3A33"/>
+  <circle cx="168" cy="222" r="15" fill="#2E3A33"/>
+  <circle cx="236" cy="198" r="4" fill="#FFFFFF"/>
+  <circle cx="163" cy="216" r="5" fill="#FFFFFF"/>
+
+  <!-- blush -->
+  <circle cx="152" cy="260" r="13" fill="#F49E93"/>
+  <circle cx="272" cy="228" r="11" fill="#F49E93"/>
+
+  <!-- tiny proud smile -->
+  <path d="M 150 264 Q 166 274 182 268"
+        fill="none" stroke="#2E3A33" stroke-width="6" stroke-linecap="round"/>
+</svg>

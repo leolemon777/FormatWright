@@ -11,7 +11,7 @@
 identify → inspect → plan → remux → independent inspect → validate → commit
 ~~~
 
-The harness samples only the FormatWright parent process for the control-plane gate. Engine memory is a separate metric and must be bounded per certified engine profile.
+The harness samples only the Anole parent process for the control-plane gate. Engine memory is a separate metric and must be bounded per certified engine profile.
 
 Run:
 

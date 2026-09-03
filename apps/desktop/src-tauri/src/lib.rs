@@ -2276,7 +2276,7 @@ fn apply_pending_restore(database_path: &Path) -> (Option<Uuid>, Option<String>)
                 formatwright_core::ErrorCode::InputInvalid,
                 formatwright_core::Stage::Store,
                 "Pending desktop restore request uses an unsupported version",
-                "Update FormatWright and schedule the restore again.",
+                "Update Anole and schedule the restore again.",
             ));
         }
         let current_size = std::fs::metadata(&request.bundle_path)
@@ -2394,7 +2394,7 @@ fn persist_pending_restore(
             formatwright_core::ErrorCode::OutputConflict,
             formatwright_core::Stage::Store,
             "A desktop state restore is already scheduled",
-            "Restart FormatWright before scheduling another restore.",
+            "Restart Anole before scheduling another restore.",
         ));
     }
     std::fs::rename(&partial, path).map_err(|error| {
@@ -2699,7 +2699,7 @@ pub fn run() {
             save_desktop_settings,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running FormatWright desktop");
+        .expect("error while running Anole desktop");
 }
 
 #[cfg(test)]

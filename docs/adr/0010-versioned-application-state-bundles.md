@@ -5,7 +5,7 @@
 
 ## Context
 
-SQLite online backup alone cannot migrate a long-lived FormatWright installation. Presets, UI settings, engine-registry identities, and ValidationReports live beside the database. Copying that directory while WAL writes or atomic file replacements are active can produce a mixed snapshot, and extracting an untrusted ZIP directly into application data creates traversal, link, size-amplification, overwrite, and partial-restore risks.
+SQLite online backup alone cannot migrate a long-lived Anole installation. Presets, UI settings, engine-registry identities, and ValidationReports live beside the database. Copying that directory while WAL writes or atomic file replacements are active can produce a mixed snapshot, and extracting an untrusted ZIP directly into application data creates traversal, link, size-amplification, overwrite, and partial-restore risks.
 
 ## Decision
 
@@ -24,7 +24,7 @@ SQLite online backup alone cannot migrate a long-lived FormatWright installation
 
 - Backup and restore remain local and network-free, have explicit limits, and never overwrite a selected bundle destination.
 - The recovery protocol can return to a consistent old state after interruption and retains an operator-visible safety bundle after successful replacement of existing state.
-- Full bundle restore must run without queue workers or other FormatWright processes; a future server mode needs a cross-process maintenance lease.
+- Full bundle restore must run without queue workers or other Anole processes; a future server mode needs a cross-process maintenance lease.
 - Missing third-party engine paths require re-import on a new machine.
 
 ## Evidence

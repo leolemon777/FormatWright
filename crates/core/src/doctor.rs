@@ -393,7 +393,7 @@ pub(crate) fn register_engine_pack_paths_with_provenance(
                 ErrorCode::Internal,
                 Stage::Doctor,
                 "Engine registry lock was poisoned",
-                "Restart FormatWright and import the engine pack again.",
+                "Restart Anole and import the engine pack again.",
             )
         })?;
     for (name, path) in executables {
@@ -415,7 +415,7 @@ pub(crate) fn register_engine_pack_paths_with_provenance(
                 ErrorCode::EngineIncompatible,
                 Stage::Doctor,
                 format!("Engine executable name is already claimed: {name}"),
-                "Keep one verified pack for each executable name, then restart FormatWright.",
+                "Keep one verified pack for each executable name, then restart Anole.",
             ));
         }
     }
@@ -498,8 +498,8 @@ pub async fn inspect_builtin_engine(engine_id: &str) -> Result<EngineIdentity> {
         FormatWrightError::new(
             ErrorCode::EngineIncompatible,
             Stage::Doctor,
-            "Unable to locate the FormatWright executable",
-            "Restart FormatWright and run doctor again.",
+            "Unable to locate the Anole executable",
+            "Restart Anole and run doctor again.",
         )
         .with_diagnostic(error.to_string())
     })?;

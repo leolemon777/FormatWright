@@ -1122,7 +1122,7 @@ export default function App() {
       const selected = await save({
         defaultPath: `formatwright-state-${new Date().toISOString().slice(0, 10)}.fwstate`,
         title: copy.backupState,
-        filters: [{ name: "FormatWright state bundle", extensions: ["fwstate"] }],
+        filters: [{ name: "Anole state bundle", extensions: ["fwstate"] }],
       });
       if (typeof selected !== "string") return;
       const result = await invoke<StateBundleBackupReport>("backup_desktop_state", {
@@ -1162,7 +1162,7 @@ export default function App() {
         directory: false,
         multiple: false,
         title: copy.restoreState,
-        filters: [{ name: "FormatWright state bundle", extensions: ["fwstate"] }],
+        filters: [{ name: "Anole state bundle", extensions: ["fwstate"] }],
       });
       if (typeof selected !== "string") return;
       const result = await invoke<StateBundlePreflightReport>("preflight_desktop_state_restore", {
@@ -1384,7 +1384,7 @@ export default function App() {
         directory: false,
         multiple: false,
         title: copy.importPresets,
-        filters: [{ name: "FormatWright preset library", extensions: ["json"] }],
+        filters: [{ name: "Anole preset library", extensions: ["json"] }],
       });
       if (typeof selected !== "string") return;
       const result = await invoke<PresetImportResult>("import_desktop_presets", {
@@ -1406,7 +1406,7 @@ export default function App() {
       const selected = await save({
         defaultPath: "formatwright-presets.json",
         title: copy.exportPresets,
-        filters: [{ name: "FormatWright preset library", extensions: ["json"] }],
+        filters: [{ name: "Anole preset library", extensions: ["json"] }],
       });
       if (typeof selected !== "string") return;
       const count = await invoke<number>("export_desktop_presets", {
@@ -1440,7 +1440,7 @@ export default function App() {
       const selected = await save({
         defaultPath: `formatwright-report-${report.job_id}.json`,
         title: copy.exportReport,
-        filters: [{ name: "FormatWright ValidationReport", extensions: ["json"] }],
+        filters: [{ name: "Anole ValidationReport", extensions: ["json"] }],
       });
       if (typeof selected !== "string") return;
       await invoke<number>("export_desktop_report", {
@@ -1465,7 +1465,7 @@ export default function App() {
       const selected = await save({
         defaultPath: `formatwright-recipe-${report.job_id}.json`,
         title: copy.exportRecipe,
-        filters: [{ name: "FormatWright job recipe", extensions: ["json"] }],
+        filters: [{ name: "Anole job recipe", extensions: ["json"] }],
       });
       if (typeof selected !== "string") return;
       await invoke<number>("export_desktop_recipe", {
@@ -1532,7 +1532,7 @@ export default function App() {
         directory: false,
         multiple: false,
         title: copy.importEnginePack,
-        filters: [{ name: "FormatWright engine manifest", extensions: ["json"] }],
+        filters: [{ name: "Anole engine manifest", extensions: ["json"] }],
       });
       if (typeof selected !== "string") return;
       setEngineBusy(true);

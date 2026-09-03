@@ -517,7 +517,7 @@ enum MaintenanceCommand {
         #[arg(long, help = "Include bounded ValidationReport JSON files")]
         include_reports: bool,
     },
-    /// Run full `SQLite`, foreign-key, and `FormatWright` queue-invariant checks.
+    /// Run full `SQLite`, foreign-key, and `Anole` queue-invariant checks.
     IntegrityCheck,
     /// Validate a backup on a migrated temporary copy; pass --yes to restore it.
     Restore {
@@ -1159,7 +1159,7 @@ async fn run(cli: Cli) -> Result<(), FormatWrightError> {
                         ErrorCode::PolicyBlocked,
                         formatwright_core::Stage::Doctor,
                         format!("engine signature is not trusted: {trust:?}"),
-                        "Import a pack signed by a current FormatWright release key (ADR-0011).",
+                        "Import a pack signed by a current Anole release key (ADR-0011).",
                     ));
                 }
                 if cli.json {

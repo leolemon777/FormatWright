@@ -179,11 +179,11 @@ def main() -> int:
         "spdxVersion": "SPDX-2.3",
         "dataLicense": "CC0-1.0",
         "SPDXID": "SPDXRef-DOCUMENT",
-        "name": "FormatWright-application-SBOM",
+        "name": "Anole-application-SBOM",
         "documentNamespace": f"https://formatwright.local/spdx/{lock_digest}",
         "creationInfo": {
             "created": creation_time(),
-            "creators": ["Tool: FormatWright scripts/generate_sbom.py"],
+            "creators": ["Tool: Anole scripts/generate_sbom.py"],
         },
         "packages": packages,
         "relationships": sorted(

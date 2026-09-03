@@ -7,11 +7,11 @@
 
 ## Purpose
 
-Prove the shipped installer works on a machine that has **no** conversion engines, **no** FormatWright development caches, a **deliberately polluted PATH**, and (for the manual steps) **no network**. Local host evidence can never substitute: this machine has system engines and development state everywhere.
+Prove the shipped installer works on a machine that has **no** conversion engines, **no** Anole development caches, a **deliberately polluted PATH**, and (for the manual steps) **no network**. Local host evidence can never substitute: this machine has system engines and development state everywhere.
 
 ## VM preparation checklist
 
-1. Windows 11 x64 VM, fresh image, no snapshots of prior FormatWright testing.
+1. Windows 11 x64 VM, fresh image, no snapshots of prior Anole testing.
 2. Do **not** install FFmpeg, Poppler, LibreOffice, Pandoc, libvips, or any codec pack.
 3. Install PowerShell 7, Node.js (for the CDP driver), and Python (optional, for checksum tooling) — nothing else.
 4. Copy in from the host: the standard NSIS installer, the e2e-overlay desktop binary (`tauri build --no-bundle --config src-tauri/tauri.release-e2e.conf.json` output), and a real multi-page PDF.
@@ -24,7 +24,7 @@ From an elevated-or-normal pwsh inside the VM:
 
 ~~~text
 pwsh -File scripts/test_clean_vm_certification.ps1 `
-    -Installer <FormatWright_0.1.0_x64-setup.exe> `
+    -Installer <Anole_0.1.0_x64-setup.exe> `
     -E2EBinary <formatwright-desktop.exe> `
     -SourcePdf <real.pdf>
 ~~~
@@ -35,7 +35,7 @@ The suite asserts, in order:
 - Silent `/S` install succeeds; the installed standard binary does **not** embed the test DevTools argument.
 - First launch of the **installed** app installs both Starter packs from embedded resources while hostile `.cmd` wrappers sit earlier on PATH (Release must resolve exact pack paths, never PATH).
 - Real UI PDF→PNG and PDF→JPEG conversions pass through `scripts/test_desktop_release_conversion.ps1` with per-format isolated processes (evidence under `.artifacts/clean-vm-certification/vm-*/ui-conversions/`).
-- `uninstall.exe /S` removes the install root, both app-state roots, and FormatWright's owned shell keys (`FormatWright` Open-in plus the 17 generated Convert verbs). It must **not** look for the obsolete `FormatWrightConvert` name.
+- `uninstall.exe /S` removes the install root, both app-state roots, and Anole's owned shell keys (`FormatWright` Open-in plus the 17 generated Convert verbs). It must **not** look for the obsolete `FormatWrightConvert` name.
 
 ## Manual checklist (not yet automated — record screenshots + notes)
 
@@ -43,7 +43,7 @@ The suite asserts, in order:
 - [ ] A JSON→YAML structured conversion from the installed UI (Core built-in path).
 - [ ] One audio/video conversion (Media pack) from the installed UI.
 - [ ] Unicode/space/long-path (>260 chars) files through the UI.
-- [ ] Windows Explorer **Open in FormatWright** on a file and a directory (cold and hot instance).
+- [ ] Windows Explorer **Open in Anole** on a file and a directory (cold and hot instance).
 - [ ] Cancel a long conversion mid-run; no partial output is committed.
 - [ ] Force-kill the app during a queued batch; relaunch; the recovery banner appears and jobs resume/retry correctly (engine fallback notice path from ADR-0011 B3 is visible if a pack breaks).
 - [ ] Upgrade: install a newer RC over this one; state migrates; downgrade attempt is refused or clean.

@@ -73,7 +73,7 @@ On launch with interrupted jobs:
 - Show a non-modal recovery banner.
 - Categorize resumable batch, restart-current-file, validation-only, blocked, and cleanup-needed.
 - Default safe action is resume completed-state reconciliation and restart interrupted current files.
-- Never auto-overwrite a destination created outside FormatWright.
+- Never auto-overwrite a destination created outside Anole.
 
 ## 7. Large batch UX
 

@@ -2,7 +2,7 @@
 
 - Status: Proposed
 - Date: YYYY-MM-DD
-- Owners: FormatWright maintainers
+- Owners: Anole maintainers
 - Related requirements: FW-FR-NNN
 
 ## Context

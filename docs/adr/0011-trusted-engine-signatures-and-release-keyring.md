@@ -2,12 +2,12 @@
 
 - Status: Accepted
 - Date: 2026-08-15
-- Owners: FormatWright maintainers
+- Owners: Anole maintainers
 - Related requirements: FW-FR-051, FW-FR-052, FW-FR-053, SPEC_PLAN §9.4, `docs/security/ENGINE_SUPPLY_CHAIN.md`, R-008/R-009 closure path
 
 ## Context
 
-Every engine pack file is already hash-pinned by its manifest and re-verified before and after atomic installation. Nothing, however, proves that a *manifest itself* was produced by FormatWright: `signature` on `EngineManifest` and `signature_present` on `VerifiedEnginePack` are informational only, so a hand-crafted or attacker-modified manifest with self-consistent hashes still verifies. The Public Beta gate (`docs/MASTER_EXECUTION_PLAN.md` Gate 3) requires trusted signature verification, a release keyring with revocation, downgrade blocking, and activation rollback.
+Every engine pack file is already hash-pinned by its manifest and re-verified before and after atomic installation. Nothing, however, proves that a *manifest itself* was produced by Anole: `signature` on `EngineManifest` and `signature_present` on `VerifiedEnginePack` are informational only, so a hand-crafted or attacker-modified manifest with self-consistent hashes still verifies. The Public Beta gate (`docs/MASTER_EXECUTION_PLAN.md` Gate 3) requires trusted signature verification, a release keyring with revocation, downgrade blocking, and activation rollback.
 
 The engine store already keeps content-addressed copies per `(engine_id, version, manifest_sha256)`, so multiple versions physically coexist. The desktop registry, however, keeps exactly one active entry per engine and deletes superseded entries, and startup activation failures are ignored silently — there is no rollback path and no failure evidence.
 

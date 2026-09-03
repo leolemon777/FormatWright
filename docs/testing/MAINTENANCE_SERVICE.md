@@ -17,7 +17,7 @@ formatwright --state-db PATH maintenance restore BACKUP --yes
 formatwright --state-db PATH maintenance compact
 ~~~
 
-Restore without `--yes` is preflight-only and does not change live data. Confirmed restore should be run only after queue execution is stopped and other FormatWright processes are closed.
+Restore without `--yes` is preflight-only and does not change live data. Confirmed restore should be run only after queue execution is stopped and other Anole processes are closed.
 
 ## Direct automated assertions
 

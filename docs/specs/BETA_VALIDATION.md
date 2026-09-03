@@ -87,7 +87,7 @@ Every report requests:
 
 - Workflow and requirement ID.
 - Platform.
-- FormatWright version.
+- Anole version.
 - Engine manifest identity.
 - Redacted Plan and ValidationReport.
 - Reproduction using a redistributable sample where possible.

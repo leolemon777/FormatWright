@@ -1,4 +1,4 @@
-//! Local `REST` API service for `FormatWright` (roadmap G-33).
+//! Local `REST` API service for `Anole` (roadmap G-33).
 //!
 //! Thin HTTP surface over the shared application-layer services in
 //! `formatwright-core`: every conversion response carries the full

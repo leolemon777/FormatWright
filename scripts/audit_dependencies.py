@@ -14,7 +14,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 # Reviewed exemptions. RUSTSEC-2026-0245 (sevenz-rust path traversal in
-# decompress_impl) writes files to disk during extraction; FormatWright only
+# decompress_impl) writes files to disk during extraction; Anole only
 # reads 7z entries into memory for in-memory repacking and never calls the
 # affected file-writing path.
 IGNORED_ADVISORIES = ["RUSTSEC-2026-0245"]

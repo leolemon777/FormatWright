@@ -1,4 +1,4 @@
-# FormatWright Test Corpus
+# Anole Test Corpus
 
 The repository stores manifests and generation scripts, not large or ambiguously licensed user files.
 

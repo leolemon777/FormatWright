@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:formatwright:schema:validation-report:v1",
-  "title": "FormatWright Validation Report v1",
+  "title": "Anole Validation Report v1",
   "type": "object",
   "additionalProperties": false,
   "required": [

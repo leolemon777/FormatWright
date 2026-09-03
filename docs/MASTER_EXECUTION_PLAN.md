@@ -1,4 +1,4 @@
-# FormatWright 完成清单、待完成清单与总执行计划
+# Anole 完成清单、待完成清单与总执行计划
 
 - 状态：持续维护的执行主表
 - 版本：0.7
@@ -21,7 +21,7 @@
 - **未开始**：只有规格或方向，没有可运行实现。
 - **发布阻断**：不完成就不能发布 Public Beta；不是一般优化项。
 
-当前产品结论：**FormatWright 已具备 Windows 自包含开发候选：Release 内嵌并首次启动安装 PDF/Media Starter，生产只解析激活 pack 的精确路径，UI 与后端共同按 capability snapshot 门控；真实 PDF→PNG/JPG、GIF 与结构化链路已在本机通过；R-001 至 R-007 与 R-010 已关闭；SQLite MaintenanceService、可校验应用状态整包、v5 持久批次/幂等键/稳定 Selection/Bulk Action/追加式 Revalidation 审计、共享 ConversionService/ReportService，以及 CLI/Desktop 批量入口已完成；Desktop 已具备启动恢复摘要、精确 partial 清理、SQLite 状态/路径/批次筛选、100 条硬边界分页和离屏渲染隔离、真实阶段/调度等待原因（不伪造速度/ETA）、Windows Explorer 经典右键入口与单实例路径转发，以及与执行互斥的状态/完整性/整包备份/压缩/下次启动恢复中心；四进程原子认领、公平批次窗口、真实强退恢复，以及 10,000 项结构化/图片/媒体混合公平性/P50/P95/RSS/WAL 门禁已通过。** 但这仍不是 Public Beta：R-008/R-009 尚缺离线干净虚拟机、完整引擎 SBOM/许可证与源码义务、可信签名/吊销、升级回滚和正式代码签名证据；Gate 1 尚缺高分辨率/PDF/Office 扩展、长时掉电与跨平台认证，Gate 2–5 仍未完成。不得用于唯一副本或不可替代数据，也不得宣称“已认证”或“正式发布”。
+当前产品结论：**Anole 已具备 Windows 自包含开发候选：Release 内嵌并首次启动安装 PDF/Media Starter，生产只解析激活 pack 的精确路径，UI 与后端共同按 capability snapshot 门控；真实 PDF→PNG/JPG、GIF 与结构化链路已在本机通过；R-001 至 R-007 与 R-010 已关闭；SQLite MaintenanceService、可校验应用状态整包、v5 持久批次/幂等键/稳定 Selection/Bulk Action/追加式 Revalidation 审计、共享 ConversionService/ReportService，以及 CLI/Desktop 批量入口已完成；Desktop 已具备启动恢复摘要、精确 partial 清理、SQLite 状态/路径/批次筛选、100 条硬边界分页和离屏渲染隔离、真实阶段/调度等待原因（不伪造速度/ETA）、Windows Explorer 经典右键入口与单实例路径转发，以及与执行互斥的状态/完整性/整包备份/压缩/下次启动恢复中心；四进程原子认领、公平批次窗口、真实强退恢复，以及 10,000 项结构化/图片/媒体混合公平性/P50/P95/RSS/WAL 门禁已通过。** 但这仍不是 Public Beta：R-008/R-009 尚缺离线干净虚拟机、完整引擎 SBOM/许可证与源码义务、可信签名/吊销、升级回滚和正式代码签名证据；Gate 1 尚缺高分辨率/PDF/Office 扩展、长时掉电与跨平台认证，Gate 2–5 仍未完成。不得用于唯一副本或不可替代数据，也不得宣称“已认证”或“正式发布”。
 
 ### 1.1 近期进度快照（2026-08-12）
 
@@ -660,7 +660,7 @@ API 不直接接受宿主任意路径。请求引用预先授权的 workspace/ro
 | Desktop | production build、组件/模型测试 | native startup/UIA | screen reader、高 DPI、clean machine |
 | 包 | 配置/schema check | unsigned smoke | signed install/upgrade/rollback/uninstall |
 
-失败证据必须包含 requirement/GW ID、平台、FormatWright 版本、engine identity、redacted Plan/Report、fixture hash 和可复现命令。
+失败证据必须包含 requirement/GW ID、平台、Anole 版本、engine identity、redacted Plan/Report、fixture hash 和可复现命令。
 
 ## 13. v0.1 Definition of Done 对照
 
@@ -703,7 +703,7 @@ API 不直接接受宿主任意路径。请求引用预先授权的 workspace/ro
 
 ## 15. 需要项目负责人确认的决策
 
-- [ ] FormatWright 名称、域名、GitHub org、crates/npm 包名是否正式冻结。
+- [ ] Anole 名称、域名、GitHub org、crates/npm 包名是否正式冻结。
 - [ ] Public Beta 的最低 Windows/macOS/Ubuntu 版本。
 - [ ] Windows Authenticode 与 Apple Developer 账户/预算。
 - [ ] 官方引擎包：安装时选择、独立离线包，还是首次用户主动下载。

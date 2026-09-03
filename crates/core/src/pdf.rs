@@ -944,7 +944,7 @@ fn invalid_plan(name: &str) -> FormatWrightError {
         ErrorCode::PolicyBlocked,
         Stage::Validate,
         format!("PDF Plan contains an invalid or missing {name}"),
-        "Create a new Plan with the installed FormatWright version.",
+        "Create a new Plan with the installed Anole version.",
     )
 }
 

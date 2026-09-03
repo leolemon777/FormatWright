@@ -2,7 +2,7 @@
 
 - Status: Accepted; amended after Windows release usability audit on 2026-08-12
 - Date: 2026-08-10
-- Owners: FormatWright maintainers
+- Owners: Anole maintainers
 - Related requirements: FW-FR-050 through FW-FR-053
 
 ## Context
@@ -11,7 +11,7 @@ Conversion engines are large and carry different licenses, codecs, patent consid
 
 ## Decision
 
-FormatWright treats certified engine packs as a separate trust and versioning boundary even when a Starter pack is embedded in, or shipped beside, the desktop installer. A pack contains a signed manifest, hashes, platform and architecture, source URL, source-offer information when required, build configuration, license notices, capabilities, and compatibility range.
+Anole treats certified engine packs as a separate trust and versioning boundary even when a Starter pack is embedded in, or shipped beside, the desktop installer. A pack contains a signed manifest, hashes, platform and architecture, source URL, source-offer information when required, build configuration, license notices, capabilities, and compatibility range.
 
 Network downloads are always user initiated. Offline import and same-media Starter delivery are supported. Production Release resolves only exact binaries from an activated, verified pack; unknown system engines, ambient PATH, `.cmd` and `.bat` wrappers are never executed, including in expert mode. Development builds may discover system engines as explicit import candidates.
 
