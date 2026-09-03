@@ -1106,14 +1106,28 @@ where
         .arg("--disable-extensions")
         .arg("--disable-background-networking")
         .arg("--disable-sync")
-        .arg(format!("--user-data-dir={}", profile_target.display()))
         .arg("--host-resolver-rules=MAP * ~NOTFOUND")
+        .arg("--run-all-compositor-stages-before-draw")
+        .arg("--virtual-time-budget=10000")
         .arg("--print-to-pdf-no-header")
         .arg(format!("--print-to-pdf={}", print_target.display()))
         .arg(&input_url)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
+    // Windows Edge honors --user-data-dir for profile isolation. On Linux,
+    // Chromium-family builds (notably Chrome for Testing 152) hang on
+    // print-to-pdf whenever --user-data-dir is set, so the same isolation
+    // is achieved by pointing HOME/XDG_CONFIG_HOME at the staged profile
+    // directory instead.
+    #[cfg(windows)]
+    command.arg(format!("--user-data-dir={}", profile_target.display()));
+    #[cfg(unix)]
+    {
+        command
+            .env("HOME", &profile_directory)
+            .env("XDG_CONFIG_HOME", profile_directory.join(".config"));
+    }
     #[cfg(unix)]
     command.process_group(0);
     tracing::info!(
