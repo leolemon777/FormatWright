@@ -76,6 +76,19 @@ pub async fn prepare_conversion(
         let plan = plan_docx_markup_export(&probe, output, &pandoc, &target)?;
         return Ok((probe, plan, pandoc));
     }
+    // EML 邮件导出到 txt/html：纯 Rust 内置适配器，无外部引擎。
+    if matches!(target.as_str(), "txt" | "html")
+        && input
+            .extension()
+            .and_then(|value| value.to_str())
+            .is_some_and(|value| value.eq_ignore_ascii_case("eml"))
+    {
+        let probe = inspect_document(input).await?;
+        let engine = inspect_builtin_engine(crate::eml::EML_ENGINE_ID).await?;
+        let output = required_output(request, "EML export")?;
+        let plan = crate::eml::plan_eml_export(&probe, output, &engine, &target)?;
+        return Ok((probe, plan, engine));
+    }
     if target == "txt" && is_raster_image_path(input) {
         // Operation-free OCR lane: a raster image routes to tesseract.
         let ffprobe = inspect_engine("ffprobe").await?;

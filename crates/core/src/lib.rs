@@ -4,9 +4,11 @@ pub mod application;
 pub mod application_state;
 mod archive;
 pub mod capabilities;
+pub mod chain;
 pub mod doctor;
 mod document;
 pub mod domain;
+pub mod eml;
 pub mod engine_pack;
 pub mod engine_registry;
 pub use engine_registry::{EngineFallback, EngineRecovery, EngineRegistry, InstalledEngineVersion};
@@ -44,6 +46,7 @@ pub use archive::{archive_format_hint, inspect_archive, plan_archive_conversion}
 pub use capabilities::{
     CapabilitySnapshot, RouteAvailability, capability_snapshot_for_input, ensure_route_available,
 };
+pub use chain::{ChainHop, ConversionChain, execute_conversion_chain, find_conversion_chain};
 pub use doctor::{
     EngineDiscoveryPolicy, doctor, doctor_with_policy, find_executable, inspect_builtin_engine,
     inspect_engine, inspect_engine_with_policy,
@@ -58,6 +61,7 @@ pub use domain::{
     ReportRedaction, StreamKind, StreamProbe, ValidationCheck, ValidationReport, ValidationStatus,
 };
 pub use edge_pdf::plan_edge_print_to_pdf;
+pub use eml::{EML_ENGINE_ID, parse_eml_bytes, parse_eml_file, plan_eml_export};
 pub use engine_pack::{
     ENGINE_PROTOCOL_VERSION, VerifiedEnginePack, activate_engine_pack, embedded_release_keyring,
     install_engine_pack, load_release_keyring, verify_engine_pack, verify_engine_pack_with_keyring,

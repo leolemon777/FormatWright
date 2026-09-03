@@ -176,6 +176,25 @@ where
         )
         .await;
     }
+    if step.engine.engine_id == "formatwright.eml" {
+        let (path, mut report) = crate::eml::execute_eml_export(input, plan).await?;
+        let _ = observer(ExecutionMilestone::EngineFinished);
+        if report.status == ValidationStatus::Fail {
+            cleanup_partial(&path);
+            return Err(FormatWrightError::new(
+                ErrorCode::ValidationFailed,
+                Stage::Validate,
+                "EML export failed validation",
+                "Inspect the validation report and adjust the source.",
+            )
+            .with_diagnostic(serde_json::to_string(&report).unwrap_or_default()));
+        }
+        report.output.display_path = Some(output_path.to_string_lossy().into_owned());
+        return Ok(ExecutionResult {
+            output_path: path,
+            report,
+        });
+    }
     if step.engine.engine_id == "formatwright.archive" {
         return execute_archive_plan(
             input,

@@ -11,12 +11,13 @@ use formatwright_core::{
     ApplicationStateService, BulkJobAction, BulkJobService, ConversionService, EngineIdentity,
     ErrorCode, ExecutionMilestone, FormatWrightError, JobCreateRequest, JobExecutionService,
     JobRecord, JobSelectionQuery, JobState, MaintenanceService, Plan, PlanRequest, Probe,
-    QueueWindowControl, ReportService, SqliteJobStore, StateBundleOptions, cleanup_staged_output,
-    doctor, execute_plan_observed, identify_artifact, inspect_document, inspect_engine,
-    inspect_media, inspect_office, inspect_pdf, inspect_structured, load_release_keyring,
-    office_format_hint, pdf_format_hint, plan_conversion, plan_metadata_clean, prepare_conversion,
-    resolve_output_path, staged_output_candidates, structured_format_hint, verify_engine_pack,
-    verify_engine_pack_with_keyring,
+    QueueWindowControl, ReportService, SqliteJobStore, StateBundleOptions,
+    chain::{ConversionChain, execute_conversion_chain, find_conversion_chain},
+    cleanup_staged_output, doctor, execute_plan_observed, identify_artifact, inspect_document,
+    inspect_engine, inspect_media, inspect_office, inspect_pdf, inspect_structured,
+    load_release_keyring, office_format_hint, pdf_format_hint, plan_conversion,
+    plan_metadata_clean, prepare_conversion, resolve_output_path, staged_output_candidates,
+    structured_format_hint, verify_engine_pack, verify_engine_pack_with_keyring,
 };
 use serde::Serialize;
 use tokio_util::sync::CancellationToken;
@@ -678,7 +679,19 @@ async fn run(cli: Cli) -> Result<(), FormatWrightError> {
                 metadata_title: None,
                 metadata_author: None,
             };
-            let (_, plan, _) = prepare_conversion(&input, &request).await?;
+            let (_, plan, _) = match prepare_conversion(&input, &request).await {
+                Ok(prepared) => prepared,
+                Err(error) => {
+                    if let Some(chain) = conversion_chain_fallback(&input, &request) {
+                        if cli.json {
+                            return print_chain_json(&chain);
+                        }
+                        print_chain(&chain);
+                        return Ok(());
+                    }
+                    return Err(error);
+                }
+            };
             if cli.json {
                 print_json(&plan)
             } else {
@@ -748,7 +761,33 @@ async fn run(cli: Cli) -> Result<(), FormatWrightError> {
                 metadata_title,
                 metadata_author,
             };
-            let (probe, plan, validation_engine) = prepare_conversion(&input, &request).await?;
+            let (probe, plan, validation_engine) = match prepare_conversion(&input, &request).await {
+                Ok(prepared) => prepared,
+                Err(error) => {
+                    let Some(chain) = conversion_chain_fallback(&input, &request) else {
+                        return Err(error);
+                    };
+                    if dry_run {
+                        if cli.json {
+                            return print_chain_json(&chain);
+                        }
+                        print_chain(&chain);
+                        return Ok(());
+                    }
+                    if queue_only {
+                        // 链暂不支持持久化队列：保留原始 Unsupported 错误。
+                        return Err(error);
+                    }
+                    return execute_chain_stored(
+                        &input,
+                        &request,
+                        &chain,
+                        timeout_seconds,
+                        cli.json,
+                    )
+                    .await;
+                }
+            };
             if dry_run && queue_only {
                 return Err(FormatWrightError::new(
                     ErrorCode::InputInvalid,
@@ -788,6 +827,20 @@ async fn run(cli: Cli) -> Result<(), FormatWrightError> {
                     cli.state_db,
                     cli.json,
                 );
+            }
+
+            // 内置 EML 导出（formatwright.eml）在 runner 的外部引擎分派之外，
+            // 由进程内适配器直接写出 + 验收。
+            if validation_engine.engine_id == formatwright_core::eml::EML_ENGINE_ID {
+                let (output_path, report) =
+                    formatwright_core::eml::execute_eml_export(&probe, &plan).await?;
+                if cli.json {
+                    return print_json(&report);
+                }
+                println!("output: {}", output_path.display());
+                println!("validation: {:?}", report.status);
+                println!("plan: {}", report.plan_hash);
+                return Ok(());
             }
 
             execute_stored_plan(
@@ -1335,6 +1388,100 @@ fn queue_stored_plan(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// 直接路由 Unsupported 时回落到两段转换链；操作型请求不走链。
+fn conversion_chain_fallback(input: &Path, request: &PlanRequest) -> Option<ConversionChain> {
+    if request.operation.is_some() {
+        return None;
+    }
+    find_conversion_chain(input, &request.target_format)
+}
+
+fn print_chain(chain: &ConversionChain) {
+    println!("chain: {}", chain.description());
+    for (index, hop) in chain.hops().iter().enumerate() {
+        println!(
+            "hop {}: {} -> {} (engines: {})",
+            index + 1,
+            hop.from,
+            hop.to,
+            if hop.required_engines.is_empty() {
+                "built-in".to_owned()
+            } else {
+                hop.required_engines.join(", ")
+            }
+        );
+    }
+}
+
+fn print_chain_json(chain: &ConversionChain) -> Result<(), FormatWrightError> {
+    #[derive(serde::Serialize)]
+    struct ChainJson {
+        chained: bool,
+        description: String,
+        hops: Vec<HopJson>,
+    }
+    #[derive(serde::Serialize)]
+    struct HopJson {
+        from: String,
+        to: String,
+        required_engines: Vec<String>,
+    }
+    print_json(&ChainJson {
+        chained: true,
+        description: chain.description(),
+        hops: chain
+            .hops()
+            .iter()
+            .map(|hop| HopJson {
+                from: hop.from.clone(),
+                to: hop.to.clone(),
+                required_engines: hop.required_engines.clone(),
+            })
+            .collect(),
+    })
+}
+
+/// 直接执行一条转换链（CLI 即时执行路径；链暂不入 durable 队列）。
+async fn execute_chain_stored(
+    input: &Path,
+    request: &PlanRequest,
+    chain: &ConversionChain,
+    timeout_seconds: Option<u64>,
+    json: bool,
+) -> Result<(), FormatWrightError> {
+    let cancellation = CancellationToken::new();
+    let signal_token = cancellation.clone();
+    tokio::spawn(async move {
+        if tokio::signal::ctrl_c().await.is_ok() {
+            signal_token.cancel();
+        }
+    });
+    if let Some(seconds) = timeout_seconds {
+        let timeout_token = cancellation.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(seconds)).await;
+            timeout_token.cancel();
+        });
+    }
+    if !json {
+        println!("chain: {}", chain.description());
+    }
+    let result = execute_conversion_chain(input, request, chain, cancellation).await;
+    match result {
+        Ok(result) => {
+            if json {
+                print_json(&result.report)?;
+            } else {
+                println!("output: {}", result.output_path.display());
+                println!("validation: {:?}", result.report.status);
+                println!("chain: {}", chain.description());
+            }
+            Ok(())
+        }
+        Err(error) => Err(error),
+    }
+}
+
 async fn execute_stored_plan(
     probe: &Probe,
     plan: &Plan,

@@ -47,6 +47,7 @@ pub async fn inspect_document(path: impl AsRef<Path>) -> Result<Probe> {
             || (format == "markdown" && matches!(extension, "md" | "markdown"))
             || (format == "html" && matches!(extension, "html" | "htm"))
             || (format == "plain" && matches!(extension, "txt" | "text"))
+            || (format == "eml" && extension == "eml")
     });
     Ok(Probe {
         schema_version: SCHEMA_VERSION,
@@ -59,6 +60,7 @@ pub async fn inspect_document(path: impl AsRef<Path>) -> Result<Probe> {
                     "markdown" => "text/markdown",
                     "html" => "text/html",
                     "plain" => "text/plain",
+                    "eml" => "message/rfc822",
                     "svg" => "image/svg+xml",
                     "epub" => "application/epub+zip",
                     "docx" => {
@@ -750,12 +752,16 @@ fn document_format_hint(path: &Path) -> Result<&'static str> {
         Some("html" | "htm") => Ok("html"),
         Some("svg") => Ok("svg"),
         Some("docx") => Ok("docx"),
+        Some("eml") => Ok("eml"),
         Some("epub") => Ok("epub"),
         _ => Err(unsupported("Document format is not recognized")),
     }
 }
 
 fn inspect_document_properties(path: &Path, format: &str) -> Result<BTreeMap<String, Value>> {
+    if format == "eml" {
+        return crate::eml::inspect_eml_properties(path);
+    }
     if format == "docx" {
         return inspect_docx_properties(path);
     }
@@ -919,7 +925,7 @@ fn inspect_epub_properties(path: &Path) -> Result<BTreeMap<String, Value>> {
     Ok(properties)
 }
 
-fn html_text(source: &str) -> Result<String> {
+pub(crate) fn html_text(source: &str) -> Result<String> {
     let mut reader = Reader::from_str(source);
     reader.config_mut().trim_text(false);
     // HTML void elements (`<meta>`, `<br>`, `<img>`) never close, so XML-style

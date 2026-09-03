@@ -175,7 +175,7 @@ pub async fn ensure_route_available(
     ))
 }
 
-fn supported_targets(input: Option<&str>) -> BTreeSet<&'static str> {
+pub(crate) fn supported_targets(input: Option<&str>) -> BTreeSet<&'static str> {
     let values: &[&str] = match input.unwrap_or_default() {
         "csv" | "json" | "yaml" | "yml" | "xml" => &["csv", "json", "yaml", "xml"],
         "pdf" | "heic" | "heif" => &["jpg", "png"],
@@ -184,6 +184,9 @@ fn supported_targets(input: Option<&str>) -> BTreeSet<&'static str> {
         "pptx" | "xlsx" | "ods" | "odp" | "rtf" | "svg" => &["pdf"],
         "md" | "markdown" | "html" | "htm" | "txt" | "text" => &["pdf", "docx", "epub"],
         "zip" => &["tar.gz", "7z"],
+        // EML 邮件导出走内置 formatwright.eml 适配器（txt/html）；
+        // pdf 由主链路经 html→pdf 完成，不在此声明。
+        "eml" => &["txt", "html"],
         "tar.gz" => &["zip", "7z"],
         "7z" => &["zip", "tar.gz"],
         "png" | "jpg" | "jpeg" => &["webp", "avif", "pdf", "txt"],
@@ -215,7 +218,7 @@ fn browser_print_lane() -> Vec<String> {
     engine_names(&["msedge", "pdfinfo", "pdftoppm", "pdftotext", "pdffonts"])
 }
 
-fn required_engines(input: Option<&str>, target: &str) -> Vec<String> {
+pub(crate) fn required_engines(input: Option<&str>, target: &str) -> Vec<String> {
     let target = normalize_target(target);
     let input = input.unwrap_or_default();
     if matches!(input, "csv" | "json" | "yaml" | "yml" | "xml")
@@ -226,6 +229,9 @@ fn required_engines(input: Option<&str>, target: &str) -> Vec<String> {
     if matches!(input, "zip" | "tar.gz" | "7z")
         && matches!(target.as_str(), "zip" | "tar.gz" | "7z")
     {
+        return Vec::new();
+    }
+    if input == "eml" && matches!(target.as_str(), "txt" | "html") {
         return Vec::new();
     }
     if input == "pdf" && matches!(target.as_str(), "jpg" | "png") {
@@ -280,7 +286,7 @@ fn input_extension(path: &Path) -> Option<String> {
         .map(str::to_ascii_lowercase)
 }
 
-fn normalize_target(target: &str) -> String {
+pub(crate) fn normalize_target(target: &str) -> String {
     match target
         .trim()
         .trim_start_matches('.')
