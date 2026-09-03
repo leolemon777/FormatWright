@@ -59,9 +59,9 @@ jobs:
             Write-Output 'No dev key variable set; skipping updater artifact signing setup.'
             exit 0
           }
-          $dev = Join-Path $env:RUNNER_TEMP 'fw-dev-updater.key'
-          Set-Content -LiteralPath $dev -Value $key
-          echo "TAURI_SIGNING_PRIVATE_KEY_PATH=$dev" >> $env:GITHUB_ENV
+          # Tauri's minisign loader is picky about file encoding; passing the
+          # key content directly as the env var value avoids the file layer.
+          echo "TAURI_SIGNING_PRIVATE_KEY=$key" >> $env:GITHUB_ENV
       - name: Build offline NSIS candidate
         run: pnpm --filter @formatwright/desktop tauri build --bundles nsis
       - name: Generate checksums
