@@ -45,16 +45,33 @@ jobs:
             throw "starter pack looks incomplete: only $($entries.Count) files under $root"
           }
           Write-Output "starter pack verified: $($entries.Count) files, bundle.json present"
+      - name: Stage dev updater key for the unsigned rehearsal
+        env:
+          DEV_KEY: ${{ secrets.TAURI_DEV_UPDATER_KEY }}
+        shell: pwsh
+        run: |
+          # Unsigned Alpha rehearsals have no release key; the dev keypair
+          # (test-only, never for a published channel) lives in the
+          # TAURI_DEV_UPDATER_KEY repo variable so the private half never
+          # enters the repository.
+          $key = $env:DEV_KEY
+          if ([string]::IsNullOrWhiteSpace($key)) {
+            Write-Output 'No dev key variable set; skipping updater artifact signing setup.'
+            exit 0
+          }
+          $dev = Join-Path $env:RUNNER_TEMP 'fw-dev-updater.key'
+          Set-Content -LiteralPath $dev -Value $key
+          echo "TAURI_SIGNING_PRIVATE_KEY_PATH=$dev" >> $env:GITHUB_ENV
       - name: Build offline NSIS candidate
         run: pnpm --filter @formatwright/desktop tauri build --bundles nsis
       - name: Generate checksums
-        run: python scripts/generate_checksums.py target/release/formatwright-desktop.exe target/release/bundle/nsis/FormatWright_0.1.0_x64-setup.exe
+        run: python scripts/generate_checksums.py target/release/formatwright-desktop.exe target/release/bundle/nsis/Anole_0.1.0_x64-setup.exe
       - name: Reject accidental signed-release claim
         shell: pwsh
         run: |
           $files = @(
             'target/release/formatwright-desktop.exe',
-            'target/release/bundle/nsis/FormatWright_0.1.0_x64-setup.exe'
+            'target/release/bundle/nsis/Anole_0.1.0_x64-setup.exe'
           )
           foreach ($file in $files) {
             $status = (Get-AuthenticodeSignature -LiteralPath $file).Status.ToString()
@@ -68,6 +85,6 @@ jobs:
           if-no-files-found: error
           path: |
             target/release/formatwright-desktop.exe
-            target/release/bundle/nsis/FormatWright_0.1.0_x64-setup.exe
+            target/release/bundle/nsis/Anole_0.1.0_x64-setup.exe
             dist/SHA256SUMS
           retention-days: 14
