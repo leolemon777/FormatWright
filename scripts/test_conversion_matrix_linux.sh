@@ -34,6 +34,7 @@ with tarfile.open('/home/leo/linux-runs/FormatWright/fixtures/sample.tar.gz','w:
     tf.addfile(ti, io.BytesIO(d))
 from PIL import Image, ImageDraw
 img = Image.new('RGB',(1240,1754),'white'); ImageDraw.Draw(img).text((100,200),'MATRIX IMAGE 440010147700',fill='black'); img.save('/home/leo/linux-runs/FormatWright/fixtures/sample.png'); img.save('/home/leo/linux-runs/FormatWright/fixtures/sample.jpg',quality=90)
+img.save('/home/leo/linux-runs/FormatWright/fixtures/sample.tiff'); img.save('/home/leo/linux-runs/FormatWright/fixtures/sample.bmp')
 import matplotlib; matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
@@ -69,9 +70,12 @@ run sample.svg pdf
 # pdf -> image
 for t in jpg png; do run sample.pdf "$t"; done
 # raster
-for s in png jpg; do for t in webp avif; do run "sample.$s" "$t"; done; done
+for s in png jpg; do for t in webp avif tiff bmp; do run "sample.$s" "$t"; done; done
+for s in tiff bmp; do for t in webp avif png; do run "sample.$s" "$t"; done; done
 # OCR (engines available)
 run sample.png txt
+run sample.tiff txt
+run sample.bmp txt
 # audio
 FF="$HOME/miniforge/envs/ocr/bin/ffmpeg"
 "$FF" -y -f lavfi -i sine=frequency=440:duration=3 -c:a pcm_s16le "$FX/sample.wav" -loglevel error

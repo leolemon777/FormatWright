@@ -34,7 +34,7 @@ pub fn plan_conversion(
             plan_audio_conversion(probe, request, ffmpeg, &target)
         }
         "gif" => plan_gif_conversion(probe, request, ffmpeg),
-        "jpg" | "jpeg" | "png" | "webp" | "avif" => {
+        "jpg" | "jpeg" | "png" | "webp" | "avif" | "tiff" | "bmp" => {
             plan_image_conversion(probe, request, ffmpeg, &target)
         }
         _ => Err(FormatWrightError::new(
@@ -351,7 +351,7 @@ fn plan_image_conversion(
             ErrorCode::Unsupported,
             Stage::Plan,
             "Image conversion requires a still-image input",
-            "Choose a PNG, JPEG, WebP, AVIF, HEIC, or HEIF image.",
+            "Choose a PNG, JPEG, WebP, AVIF, TIFF, BMP, HEIC, or HEIF image.",
         ));
     }
     let image = probe
@@ -381,7 +381,7 @@ fn plan_image_conversion(
             "Choose a supported --width value.",
         ));
     }
-    let lossy = target != "png";
+    let lossy = matches!(target, "jpeg" | "webp" | "avif");
     let quality = if lossy {
         let quality = request.quality.unwrap_or(85);
         if !(1..=100).contains(&quality) {
@@ -398,7 +398,10 @@ fn plan_image_conversion(
             return Err(FormatWrightError::new(
                 ErrorCode::InputInvalid,
                 Stage::Plan,
-                "PNG output is lossless and does not accept --quality",
+                format!(
+                    "{} output is lossless and does not accept --quality",
+                    target.to_uppercase()
+                ),
                 "Remove --quality or choose JPEG, WebP, or AVIF.",
             ));
         }
@@ -409,12 +412,12 @@ fn plan_image_conversion(
         .get("pix_fmt")
         .and_then(serde_json::Value::as_str)
         .is_some_and(pixel_format_has_alpha);
-    if target == "jpeg" && source_alpha {
+    if source_alpha && matches!(target, "jpeg" | "bmp") {
         return Err(FormatWrightError::new(
             ErrorCode::PolicyBlocked,
             Stage::Plan,
-            "JPEG cannot preserve the input alpha channel",
-            "Choose PNG/WebP/AVIF, or wait for an explicit background-composite policy.",
+            "JPEG and BMP cannot preserve the input alpha channel",
+            "Choose PNG/WebP/AVIF/TIFF, or wait for an explicit background-composite policy.",
         ));
     }
     let (codec, muxer) = match target {
@@ -422,6 +425,8 @@ fn plan_image_conversion(
         "png" => ("png", "image2"),
         "webp" => ("libwebp", "webp"),
         "avif" => ("libaom-av1", "avif"),
+        "tiff" => ("tiff", "image2"),
+        "bmp" => ("bmp", "image2"),
         _ => unreachable!("image target dispatch is exhaustive"),
     };
     let mut arguments = BTreeMap::from([
@@ -1528,6 +1533,45 @@ mod tests {
         let error = plan_conversion(&image_probe(true), &image_request, &engine())
             .expect_err("JPEG must not silently drop alpha");
         assert_eq!(error.code, crate::ErrorCode::PolicyBlocked);
+    }
+
+    #[test]
+    fn tiff_plan_is_lossless_and_rejects_quality() {
+        let mut image_request = request();
+        image_request.target_format = "tiff".to_owned();
+        image_request.quality = Some(80);
+        let error = plan_conversion(&image_probe(false), &image_request, &engine())
+            .expect_err("TIFF is lossless and must reject --quality");
+        assert_eq!(error.code, crate::ErrorCode::InputInvalid);
+
+        image_request.quality = None;
+        let plan = plan_conversion(&image_probe(false), &image_request, &engine())
+            .expect("TIFF image plan");
+        assert_eq!(plan.target_format, "tiff");
+        assert_eq!(plan.steps[0].arguments["codec"], "tiff");
+        assert_eq!(plan.steps[0].arguments["muxer"], "image2");
+        assert_eq!(
+            plan.steps[0].loss_class,
+            formatwright_engine_sdk::LossClass::Lossless
+        );
+        assert_eq!(plan.steps[0].arguments["quality"], "lossless");
+    }
+
+    #[test]
+    fn bmp_plan_blocks_alpha_sources_but_accepts_opaque_pixels() {
+        let mut image_request = request();
+        image_request.target_format = "bmp".to_owned();
+        let error = plan_conversion(&image_probe(true), &image_request, &engine())
+            .expect_err("BMP must not silently drop alpha");
+        assert_eq!(error.code, crate::ErrorCode::PolicyBlocked);
+
+        let plan = plan_conversion(&image_probe(false), &image_request, &engine())
+            .expect("opaque BMP plan");
+        assert_eq!(plan.steps[0].arguments["codec"], "bmp");
+        assert_eq!(
+            plan.steps[0].loss_class,
+            formatwright_engine_sdk::LossClass::Lossless
+        );
     }
 
     #[test]

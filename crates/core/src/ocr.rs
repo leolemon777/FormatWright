@@ -30,11 +30,14 @@ fn ensure_tesseract(tesseract: &EngineIdentity) -> Result<()> {
 }
 
 fn ensure_image_probe(probe: &Probe) -> Result<()> {
-    if !matches!(probe.format.id.as_str(), "png" | "jpg" | "jpeg") {
+    if !matches!(
+        probe.format.id.as_str(),
+        "png" | "jpg" | "jpeg" | "tiff" | "bmp"
+    ) {
         return Err(FormatWrightError::new(
             ErrorCode::Unsupported,
             Stage::Plan,
-            "Image OCR needs a PNG or JPEG input",
+            "Image OCR needs a PNG, JPEG, TIFF, or BMP input",
             "Retry with a raster image file.",
         ));
     }

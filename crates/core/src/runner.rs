@@ -476,7 +476,7 @@ where
         step,
         "source_format",
         &[
-            "docx", "pptx", "xlsx", "odt", "ods", "odp", "rtf", "png", "jpeg",
+            "docx", "pptx", "xlsx", "odt", "ods", "odp", "rtf", "png", "jpeg", "tiff", "bmp",
         ],
     )?;
     checked_argument(step, "target_format", &["pdf"])?;
@@ -522,7 +522,7 @@ where
         "docx" | "odt" | "rtf" => "pdf:writer_pdf_Export",
         "pptx" | "odp" => "pdf:impress_pdf_Export",
         "xlsx" | "ods" => "pdf:calc_pdf_Export",
-        "png" | "jpeg" => "pdf:draw_pdf_Export",
+        "png" | "jpeg" | "tiff" | "bmp" => "pdf:draw_pdf_Export",
         _ => unreachable!("checked source format"),
     };
     let output_parent = output_path
@@ -3861,13 +3861,15 @@ fn configure_ffmpeg_output(
                 .arg("-f")
                 .arg("gif");
         }
-        "jpeg" | "png" | "webp" | "avif" => {
+        "jpeg" | "png" | "webp" | "avif" | "tiff" | "bmp" => {
             let stream_index = checked_u32_argument(step, "video_stream_index", 0, u32::MAX)?;
             let (allowed_codec, expected_muxer) = match plan.target_format.as_str() {
                 "jpeg" => ("mjpeg", "image2"),
                 "png" => ("png", "image2"),
                 "webp" => ("libwebp", "webp"),
                 "avif" => ("libaom-av1", "avif"),
+                "tiff" => ("tiff", "image2"),
+                "bmp" => ("bmp", "image2"),
                 _ => unreachable!("outer match is exhaustive"),
             };
             let codec = checked_argument(step, "codec", &[allowed_codec])?;
@@ -3921,6 +3923,9 @@ fn configure_ffmpeg_output(
                         .arg("-still-picture")
                         .arg("1");
                 }
+                // TIFF/BMP are lossless with no quality knob; the encoders'
+                // defaults are deterministic enough for acceptance evidence.
+                "tiff" | "bmp" => {}
                 _ => unreachable!("outer match is exhaustive"),
             }
             command.arg("-f").arg(muxer);

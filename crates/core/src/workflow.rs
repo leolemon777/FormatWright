@@ -241,7 +241,12 @@ fn normalized_target(target: &str) -> String {
 fn is_raster_image_path(path: &Path) -> bool {
     path.extension()
         .and_then(|value| value.to_str())
-        .is_some_and(|value| matches!(value.to_ascii_lowercase().as_str(), "png" | "jpg" | "jpeg"))
+        .is_some_and(|value| {
+            matches!(
+                value.to_ascii_lowercase().as_str(),
+                "png" | "jpg" | "jpeg" | "tiff" | "tif" | "bmp"
+            )
+        })
 }
 
 fn is_structured_target(target: &str) -> bool {

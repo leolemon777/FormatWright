@@ -498,8 +498,10 @@ pub fn plan_image_to_pdf(
     pdfinfo: &EngineIdentity,
     pdftoppm: &EngineIdentity,
 ) -> Result<Plan> {
-    if !matches!(probe.format.id.as_str(), "png" | "jpeg") {
-        return Err(unsupported("Image-to-PDF accepts PNG or JPEG input"));
+    if !matches!(probe.format.id.as_str(), "png" | "jpeg" | "tiff" | "bmp") {
+        return Err(unsupported(
+            "Image-to-PDF accepts PNG, JPEG, TIFF, or BMP input",
+        ));
     }
     if soffice.engine_id != "soffice"
         || pdfinfo.engine_id != "pdfinfo"

@@ -6,9 +6,9 @@ use serde::{Deserialize, Serialize};
 use crate::doctor::{EngineDiscoveryPolicy, inspect_engine_with_policy};
 use crate::error::{ErrorCode, FormatWrightError, Result, Stage};
 
-const KNOWN_TARGETS: [&str; 23] = [
-    "jpg", "png", "webp", "avif", "mp4", "mp3", "m4a", "wav", "gif", "pdf", "docx", "epub", "json",
-    "csv", "yaml", "xml", "zip", "tar.gz", "md", "txt", "odt", "7z", "html",
+const KNOWN_TARGETS: [&str; 25] = [
+    "jpg", "png", "webp", "avif", "tiff", "bmp", "mp4", "mp3", "m4a", "wav", "gif", "pdf", "docx",
+    "epub", "json", "csv", "yaml", "xml", "zip", "tar.gz", "md", "txt", "odt", "7z", "html",
 ];
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -212,7 +212,11 @@ pub(crate) fn supported_targets(input: Option<&str>) -> BTreeSet<&'static str> {
         "eml" => &["txt", "html"],
         "tar.gz" => &["zip", "7z"],
         "7z" => &["zip", "tar.gz"],
-        "png" | "jpg" | "jpeg" => &["webp", "avif", "pdf", "txt"],
+        "png" | "jpg" | "jpeg" => &["webp", "avif", "tiff", "bmp", "pdf", "txt"],
+        // C1 图像长尾：TIFF/BMP 输入复用 png/jpg 家族的引擎路线
+        // （ffmpeg 图像转码、soffice 图转 PDF、tesseract OCR），
+        // png 作为无损目标对带 alpha 的源最安全。
+        "tiff" | "tif" | "bmp" => &["webp", "avif", "png", "pdf", "txt"],
         "mov" | "mkv" | "avi" | "webm" | "mp4" => &["mp4", "gif", "mp3"],
         "wav" | "flac" | "aac" | "m4a" | "ogg" | "opus" | "mp3" => &["m4a", "mp3", "wav"],
         _ => &[],
@@ -285,13 +289,13 @@ pub(crate) fn required_engines(input: Option<&str>, target: &str) -> Vec<String>
     if matches!(input, "md" | "markdown" | "txt" | "text") && target == "pdf" {
         return engine_names(&["pandoc", "soffice", "pdfinfo", "pdftoppm"]);
     }
-    if matches!(input, "png" | "jpg" | "jpeg") && target == "pdf" {
+    if matches!(input, "png" | "jpg" | "jpeg" | "tiff" | "tif" | "bmp") && target == "pdf" {
         return engine_names(&["soffice", "pdfinfo", "pdftoppm"]);
     }
     if matches!(input, "heic" | "heif") && matches!(target.as_str(), "jpg" | "png") {
         return engine_names(&["ffprobe", "heif-dec"]);
     }
-    if matches!(input, "png" | "jpg" | "jpeg") && target == "txt" {
+    if matches!(input, "png" | "jpg" | "jpeg" | "tiff" | "tif" | "bmp") && target == "txt" {
         return engine_names(&["ffprobe", "tesseract"]);
     }
     engine_names(&["ffprobe", "ffmpeg"])
@@ -445,6 +449,41 @@ mod tests {
         assert!(targets.contains("pdf"));
         assert!(targets.contains("docx"));
         assert!(!targets.contains("epub"));
+    }
+
+    #[test]
+    fn tiff_and_bmp_inputs_reuse_the_raster_family_lanes() {
+        for input in ["tiff", "tif", "bmp"] {
+            let targets = supported_targets(Some(input));
+            for target in ["webp", "avif", "png", "pdf", "txt"] {
+                assert!(targets.contains(target), "{input} -> {target}");
+            }
+        }
+        assert_eq!(
+            required_engines(Some("tiff"), "pdf"),
+            ["soffice", "pdfinfo", "pdftoppm"],
+            "tiff -> pdf rides the soffice draw lane"
+        );
+        assert_eq!(
+            required_engines(Some("bmp"), "txt"),
+            ["ffprobe", "tesseract"],
+            "bmp -> txt rides the OCR lane"
+        );
+        assert_eq!(
+            required_engines(Some("tiff"), "png"),
+            ["ffprobe", "ffmpeg"],
+            "tiff -> png rides the default ffmpeg image lane"
+        );
+    }
+
+    #[test]
+    fn png_family_gains_lossless_tiff_and_bmp_targets() {
+        for input in ["png", "jpg", "jpeg"] {
+            let targets = supported_targets(Some(input));
+            assert!(targets.contains("tiff"), "{input} -> tiff");
+            assert!(targets.contains("bmp"), "{input} -> bmp");
+        }
+        assert_eq!(required_engines(Some("jpg"), "tiff"), ["ffprobe", "ffmpeg"]);
     }
 
     #[tokio::test]

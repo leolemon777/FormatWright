@@ -435,7 +435,7 @@ fn expected_scaled_width_dimensions(
 }
 
 fn is_image_target(target: &str) -> bool {
-    matches!(target, "jpeg" | "png" | "webp" | "avif")
+    matches!(target, "jpeg" | "png" | "webp" | "avif" | "tiff" | "bmp")
 }
 
 fn expected_image_codec(target: &str) -> Option<&'static str> {
@@ -444,6 +444,8 @@ fn expected_image_codec(target: &str) -> Option<&'static str> {
         "png" => Some("png"),
         "webp" => Some("webp"),
         "avif" => Some("av1"),
+        "tiff" => Some("tiff"),
+        "bmp" => Some("bmp"),
         _ => None,
     }
 }

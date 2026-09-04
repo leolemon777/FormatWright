@@ -123,6 +123,7 @@ fn sniff_demuxer_prefix(prefix: &[u8]) -> Option<&'static str> {
     sniff_header_prefix(prefix).map(|hint| hint.demuxer)
 }
 
+#[allow(clippy::too_many_lines)]
 fn sniff_header_prefix(prefix: &[u8]) -> Option<HeaderHint> {
     if prefix.starts_with(&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]) {
         return Some(HeaderHint {
@@ -146,6 +147,23 @@ fn sniff_header_prefix(prefix: &[u8]) -> Option<HeaderHint> {
         return Some(HeaderHint {
             demuxer: "matroska",
             format_id: None,
+        });
+    }
+    // TIFF byte-order marks: "II*\0" (little-endian) and "MM\0*" (big-endian).
+    if prefix.starts_with(&[0x49, 0x49, 0x2a, 0x00])
+        || prefix.starts_with(&[0x4d, 0x4d, 0x00, 0x2a])
+    {
+        return Some(HeaderHint {
+            demuxer: "tiff_pipe",
+            format_id: Some("tiff"),
+        });
+    }
+    // "BM" is weak on its own, but the reserved field plus the planar DIB size
+    // word keep false positives rare for real files.
+    if prefix.starts_with(b"BM") && prefix.get(14..18).is_some_and(|rsv| rsv == [0; 4]) {
+        return Some(HeaderHint {
+            demuxer: "bmp_pipe",
+            format_id: Some("bmp"),
         });
     }
     if prefix.get(4..8) == Some(b"ftyp") {
@@ -455,8 +473,23 @@ fn normalized_format_id(format_name: &str, extension: &str) -> String {
     {
         return "jpeg".to_owned();
     }
+    // ffprobe demuxes BMP files (and sometimes TIFF) with the generic
+    // image2 demuxer instead of the *_pipe probe demuxers; the extension
+    // disambiguates the raster family the same way it does for JPEG.
+    if format_name.contains("image2") && extension == "bmp" {
+        return "bmp".to_owned();
+    }
+    if format_name.contains("image2") && matches!(extension, "tiff" | "tif") {
+        return "tiff".to_owned();
+    }
     if format_name.contains("webp_pipe") {
         return "webp".to_owned();
+    }
+    if format_name.contains("tiff_pipe") {
+        return "tiff".to_owned();
+    }
+    if format_name.contains("bmp_pipe") {
+        return "bmp".to_owned();
     }
     if format_name.contains("matroska") || format_name.contains("webm") {
         return if extension == "webm" { "webm" } else { "mkv" }.to_owned();
@@ -487,6 +520,8 @@ fn extension_matches_detected(extension: &str, format_name: &str, format_id: &st
         "webp" => extension == "webp",
         "avif" => extension == "avif",
         "heic" => matches!(extension, "heic" | "heif"),
+        "tiff" => matches!(extension, "tiff" | "tif"),
+        "bmp" => extension == "bmp",
         "gif" => extension == "gif",
         _ => extension_matches_format(extension, format_name),
     }
@@ -508,7 +543,10 @@ fn extension_matches_format(extension: &str, format_name: &str) -> bool {
 }
 
 fn classify_kind(streams: &[StreamProbe], format_id: &str) -> FormatKind {
-    if matches!(format_id, "png" | "jpeg" | "webp" | "avif" | "heic" | "gif") {
+    if matches!(
+        format_id,
+        "png" | "jpeg" | "webp" | "avif" | "heic" | "gif" | "tiff" | "bmp"
+    ) {
         FormatKind::Image
     } else if streams
         .iter()
@@ -556,6 +594,28 @@ mod tests {
         assert_eq!(
             normalized_format_id("mov,mp4,m4a,3gp,3g2,mj2", "mp4"),
             "mp4".to_owned()
+        );
+        assert_eq!(normalized_format_id("tiff_pipe", "tiff"), "tiff".to_owned());
+        assert_eq!(normalized_format_id("tiff_pipe", "tif"), "tiff".to_owned());
+        assert_eq!(normalized_format_id("bmp_pipe", "bmp"), "bmp".to_owned());
+    }
+
+    #[test]
+    fn sniffs_tiff_and_bmp_headers() {
+        assert_eq!(
+            sniff_demuxer_prefix(&[0x49, 0x49, 0x2a, 0x00, 0x00, 0x00]),
+            Some("tiff_pipe")
+        );
+        assert_eq!(
+            sniff_demuxer_prefix(&[0x4d, 0x4d, 0x00, 0x2a, 0x00, 0x00]),
+            Some("tiff_pipe")
+        );
+        assert_eq!(
+            sniff_demuxer_prefix(&[
+                0x42, 0x4d, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x00, 0x00
+            ]),
+            Some("bmp_pipe")
         );
     }
 
