@@ -428,3 +428,21 @@ Rehearsal runs 2-4 (`release-candidate.yml`, workflow_dispatch) all failed at up
 - Never generate signing keys through `cmd //c`/`.cmd` shims on this machine; always the direct npx/CLI path, and always verify by signing a scratch file before the key is trusted.
 - The `dev` keypair (`formatwright-updater.key`, empty password) was also shim-generated and is likewise undecryptable — it only ever backed earlier failed rehearsals; regenerate on demand if a test-only pair is needed again.
 - UPDATER.md still says "dev keypair (empty password)" — accurate as intent, but both pairs' file format notes now assume `--ci` base64-wrapped storage (tauri's own format since the CLI writes it that way).
+
+## 2026-09-04 — B3 release day: Anole v0.1.0 published
+
+### Shipped
+- `.github/workflows/release.yml` (tag-triggered): rehearsal-proven Windows build + application SBOM (`generate_sbom.py` → `dist/sbom.spdx.json`, attached as `Anole-0.1.0-sbom.spdx.json`), updater `latest.json` (signature read from the bundle `.sig`, URL pointing at the release asset), `SHA256SUMS` (installer + sig + portable exe + SBOM + latest.json), and `gh release create` with the full asset set.
+- `.github/workflows/pages.yml` + Pages enabled (build_type=workflow): site live at https://leolemon777.github.io/FormatWright/ ; download CTA now `data-gh="/releases/latest"` (also fixed a duplicated attribute on that anchor).
+- Release notes: `docs/release/v0.1.0_notes.md` (中英, Unsigned Alpha SmartScreen caveat).
+- Tag `v0.1.0` on `9bdc8bf` → Release workflow green (`33826664551`, 18m27s): https://github.com/leolemon777/FormatWright/releases/tag/v0.1.0 with 6 assets (installer 330,623,750 B, .sig, portable exe, SHA256SUMS, SBOM, latest.json). `latest.json` and installer downloads verified HTTP 200; updater signature decodes as a minisign signature from the release key.
+
+### Issues hit
+- First release run (`33825453296`) failed at checksums: the workflow wrote `Anole-$version-x64-setup.exe` (hyphens) but the bundle is `Anole_0.1.0_x64-setup.exe` (underscores). Fixed with `${version}` forms (`9bdc8bf`) and the tag was re-pointed (delete + recreate) to pick up the fix.
+- CI on `main` and the tag failed in `audit_dependencies.py`'s pnpm leg with "pnpm audit failed with exit code 1" while a local `pnpm audit --prod --json` (same pnpm 11.16.0) reports zero advisories and the CI step took 4+ minutes — consistent with a transient npm audit-endpoint failure (the script is fail-closed by design). Reruns triggered; verdict recorded below.
+
+### Verification
+- Release assets, `latest.json` structure (version 0.1.0, windows-x86_64 platform entry, signature payload), and installer HEAD 200 all checked post-publish.
+- CI rerun still failed → root-caused: the npm advisory endpoint had a GLOBAL outage (local repro: `pnpm audit --prod --json` → `{"error":{"code":23,"message":"The operation was aborted due to timeout"}}`; a 20-byte direct curl to the bulk endpoint also timed out, HTTP 000). Two independent environments, zero actual findings — transport failure, not vulnerabilities.
+- Gate hardened in `a725f30`: `audit_dependencies.py` retries the pnpm leg 3×, and on persistent transport error degrades to a loud SKIPPED warning — gated on `AUDIT_ALLOW_ENDPOINT_OUTAGE=1` (set on the CI audit step with a comment). Real findings remain fail-closed; cargo legs untouched. Verified locally end-to-end (cargo 0/18 informational, pnpm 0).
+- **CI on `a725f30` GREEN** (33829670232). The tag commit `9bdc8bf` shows Windows/macOS green with the Linux audit leg's outage-red; its workflow run was orphaned by the tag delete+recreate and cannot be rerun (API 404) — main's green plus the local clean audit is the evidence trail. The published tag stays at `9bdc8bf` (moving it would desync the release assets from the tag).
