@@ -189,6 +189,155 @@ pub fn plan_heic_conversion(
     Ok(plan)
 }
 
+/// Builds the development Plan for PSD/camera-RAW to `png`/`jpeg`/`tiff`
+/// through the discovered `ImageMagick` engine (single engine, flattened
+/// composite).
+///
+/// # Errors
+///
+/// Returns `Unsupported`/`EngineIncompatible` for non-magick inputs or a
+/// wrong engine, and `InputInvalid` for a `--quality` on lossless targets.
+#[allow(clippy::too_many_lines)]
+pub fn plan_magick_conversion(
+    probe: &Probe,
+    request: &PlanRequest,
+    magick: &EngineIdentity,
+) -> Result<Plan> {
+    if probe.format.kind != FormatKind::Image
+        || crate::inspect::magick_format_id(&probe.format.id).is_none()
+    {
+        return Err(FormatWrightError::new(
+            ErrorCode::Unsupported,
+            Stage::Plan,
+            "The ImageMagick lane requires a PSD or camera-RAW input",
+            "Choose a PSD, DNG, CR2/CR3, ARW, NEF, ORF, RW2, PEF, or RAF file.",
+        ));
+    }
+    if magick.engine_id != "magick" {
+        return Err(FormatWrightError::new(
+            ErrorCode::EngineIncompatible,
+            Stage::Plan,
+            "The ImageMagick Plan was given the wrong engine",
+            "Run doctor and use magick.",
+        ));
+    }
+    if request.width.is_some() {
+        return Err(FormatWrightError::new(
+            ErrorCode::Unsupported,
+            Stage::Plan,
+            "The ImageMagick lane does not combine decode with resize",
+            "Remove --width or convert to a raster target first.",
+        ));
+    }
+    let requested = request
+        .target_format
+        .trim()
+        .trim_start_matches('.')
+        .to_ascii_lowercase();
+    let target = match requested.as_str() {
+        "jpg" | "jpeg" => "jpeg",
+        "png" => "png",
+        "tiff" | "tif" => "tiff",
+        _ => {
+            return Err(FormatWrightError::new(
+                ErrorCode::Unsupported,
+                Stage::Plan,
+                "PSD/RAW conversion output must be PNG, JPEG, or TIFF",
+                "Choose png, jpg, or tiff.",
+            ));
+        }
+    };
+    let lossy = target == "jpeg";
+    let quality = if lossy {
+        let quality = request.quality.unwrap_or(92);
+        if !(1..=100).contains(&quality) {
+            return Err(FormatWrightError::new(
+                ErrorCode::InputInvalid,
+                Stage::Plan,
+                "JPEG quality must be between 1 and 100",
+                "Choose a supported --quality value.",
+            ));
+        }
+        Some(quality)
+    } else {
+        if request.quality.is_some() {
+            return Err(FormatWrightError::new(
+                ErrorCode::InputInvalid,
+                Stage::Plan,
+                format!(
+                    "{} output is lossless and does not accept --quality",
+                    target.to_uppercase()
+                ),
+                "Remove --quality or choose jpg.",
+            ));
+        }
+        None
+    };
+    let source = probe.format.id.clone();
+    let step = PlanStep {
+        step_id: "step-1".to_owned(),
+        capability_id: format!("imagemagick.{source}-to-{target}.discovered"),
+        engine: magick.clone(),
+        operation: Operation::Transcode,
+        loss_class: if lossy {
+            LossClass::Lossy
+        } else {
+            LossClass::Lossless
+        },
+        arguments: BTreeMap::from([
+            ("source_format".to_owned(), source),
+            ("target_format".to_owned(), target.to_owned()),
+            (
+                "quality".to_owned(),
+                quality.map_or_else(|| "lossless".to_owned(), |value| value.to_string()),
+            ),
+            ("layer_policy".to_owned(), "flattened-composite".to_owned()),
+            ("metadata".to_owned(), "drop".to_owned()),
+            ("raw_decode".to_owned(), "host-imagemagick".to_owned()),
+        ]),
+        estimated_temporary_bytes: Some(probe.artifact.size_bytes.saturating_mul(3)),
+    };
+    let mut plan = Plan {
+        schema_version: SCHEMA_VERSION,
+        plan_id: Uuid::new_v4(),
+        plan_hash: String::new(),
+        input_fingerprint: probe.artifact.fast_fingerprint.clone(),
+        target_format: target.to_owned(),
+        constraints: BTreeMap::from([
+            ("quality".to_owned(), json!(quality)),
+            ("metadata_policy".to_owned(), json!("drop")),
+            ("layer_policy".to_owned(), json!("flattened-composite")),
+        ]),
+        steps: vec![step],
+        changes: ChangeSet {
+            preserved: vec![
+                "flattened composite still-image dimensions".to_owned(),
+                "full decoded raster resolution".to_owned(),
+            ],
+            changed: vec![format!(
+                "{} pixels are decoded and encoded as {target}",
+                probe.format.id
+            )],
+            dropped: vec!["layer structure, adjustment data, and embedded metadata".to_owned()],
+            unknown: vec![
+                "RAW demosaic and color rendering follow the host ImageMagick build".to_owned(),
+            ],
+        },
+        validators: vec![
+            "media.output-opens".to_owned(),
+            "media.target-format".to_owned(),
+            "image.single-frame".to_owned(),
+            "image.dimensions".to_owned(),
+            "image.codec".to_owned(),
+        ],
+        network_policy: NetworkPolicy::Deny,
+        output_path: request.output_path.clone(),
+        estimated_output_bytes: None,
+    };
+    plan.plan_hash = deterministic_plan_hash(&plan)?;
+    Ok(plan)
+}
+
 /// Builds a metadata-clean Plan that preserves encoded payloads and retains
 /// structural or unknown metadata by default.
 ///
@@ -1571,6 +1720,54 @@ mod tests {
         assert_eq!(
             plan.steps[0].loss_class,
             formatwright_engine_sdk::LossClass::Lossless
+        );
+    }
+
+    #[test]
+    fn magick_plan_maps_psd_and_raw_targets_with_lossless_posture() {
+        let mut source = image_probe(false);
+        source.artifact.display_path = "input.psd".to_owned();
+        source.artifact.canonical_path = PathBuf::from("input.psd");
+        source.format.id = "psd".to_owned();
+        let mut magick_engine = engine();
+        magick_engine.engine_id = "magick".to_owned();
+
+        let mut magick_request = request();
+        magick_request.target_format = "png".to_owned();
+        let plan = super::plan_magick_conversion(&source, &magick_request, &magick_engine)
+            .expect("psd -> png magick plan");
+        assert_eq!(plan.target_format, "png");
+        assert_eq!(plan.steps[0].arguments["source_format"], "psd");
+        assert_eq!(
+            plan.steps[0].arguments["layer_policy"],
+            "flattened-composite"
+        );
+        assert_eq!(
+            plan.steps[0].loss_class,
+            formatwright_engine_sdk::LossClass::Lossless
+        );
+
+        magick_request.target_format = "jpg".to_owned();
+        magick_request.quality = Some(90);
+        let plan = super::plan_magick_conversion(&source, &magick_request, &magick_engine)
+            .expect("psd -> jpg magick plan");
+        assert_eq!(plan.target_format, "jpeg");
+        assert_eq!(plan.steps[0].arguments["quality"], "90");
+
+        magick_request.target_format = "tiff".to_owned();
+        magick_request.quality = Some(80);
+        let error = super::plan_magick_conversion(&source, &magick_request, &magick_engine)
+            .expect_err("TIFF lossless must reject --quality");
+        assert_eq!(error.code, crate::ErrorCode::InputInvalid);
+
+        source.format.id = "gif".to_owned();
+        magick_request.quality = None;
+        magick_request.target_format = "png".to_owned();
+        assert_eq!(
+            super::plan_magick_conversion(&source, &magick_request, &magick_engine)
+                .expect_err("non-magick input")
+                .code,
+            crate::ErrorCode::Unsupported
         );
     }
 

@@ -232,6 +232,19 @@ where
         )
         .await;
     }
+    if step.engine.engine_id == "magick" {
+        return execute_magick_plan(
+            input,
+            plan,
+            ffprobe,
+            job_id,
+            cancellation,
+            &output_path,
+            &partial_path,
+            &mut observer,
+        )
+        .await;
+    }
     if step.engine.engine_id == "pandoc" {
         if plan.target_format == "pdf" {
             return execute_markup_pdf_plan(
@@ -2017,6 +2030,194 @@ where
     }
     if let Err(error) = std::fs::remove_dir(partial_path) {
         tracing::warn!(partial = %partial_path.display(), %error, "committed HEIC output but could not remove empty workspace");
+    }
+    report.output.display_path = Some(output_path.to_string_lossy().into_owned());
+    Ok(ExecutionResult {
+        output_path: output_path.to_owned(),
+        report,
+    })
+}
+
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+async fn execute_magick_plan<F>(
+    input: &Probe,
+    plan: &Plan,
+    ffprobe: &EngineIdentity,
+    job_id: Uuid,
+    cancellation: CancellationToken,
+    output_path: &Path,
+    partial_path: &Path,
+    observer: &mut F,
+) -> Result<ExecutionResult>
+where
+    F: FnMut(ExecutionMilestone) -> Result<()>,
+{
+    if ffprobe.engine_id != "ffprobe" {
+        return Err(invalid_plan_argument("magick validation ffprobe"));
+    }
+    let step = plan
+        .steps
+        .first()
+        .filter(|step| step.engine.engine_id == "magick")
+        .ok_or_else(|| invalid_plan_argument("magick step"))?;
+    let source = checked_argument(
+        step,
+        "source_format",
+        &[
+            "psd", "dng", "cr2", "cr3", "arw", "nef", "orf", "rw2", "pef", "raf",
+        ],
+    )?
+    .to_owned();
+    let target = checked_argument(step, "target_format", &["jpeg", "png", "tiff"])?;
+    checked_argument(step, "layer_policy", &["flattened-composite"])?;
+    checked_argument(step, "metadata", &["drop"])?;
+    checked_argument(step, "raw_decode", &["host-imagemagick"])?;
+    if input.format.id != source {
+        return Err(invalid_plan_argument("magick source_format mismatch"));
+    }
+    std::fs::create_dir(partial_path).map_err(|error| {
+        FormatWrightError::new(
+            ErrorCode::StorageFailed,
+            Stage::Execute,
+            "Unable to create the staged ImageMagick workspace",
+            "Check destination permissions and storage health.",
+        )
+        .with_diagnostic(error.to_string())
+    })?;
+    let staged_output = partial_path.join(match target {
+        "jpeg" => "output.jpg",
+        "png" => "output.png",
+        _ => "output.tiff",
+    });
+    let mut command = Command::new(&step.engine.binary_path);
+    command.current_dir(partial_path);
+    if target == "jpeg" {
+        let quality = checked_u32_argument(step, "quality", 1, 100)?;
+        command.arg("-quality").arg(quality.to_string());
+    } else {
+        checked_argument(step, "quality", &["lossless"])?;
+    }
+    command
+        // [0] pins the flattened composite frame: a multi-layer PSD would
+        // otherwise fan out to output-0.png/output-1.png style side files.
+        .arg(format!("{}[0]", input.artifact.canonical_path.display()))
+        .arg(&staged_output)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    #[cfg(unix)]
+    command.process_group(0);
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            cleanup_partial(partial_path);
+            return Err(FormatWrightError::new(
+                ErrorCode::EngineIncompatible,
+                Stage::Execute,
+                "Unable to start ImageMagick",
+                "Run doctor and verify the ImageMagick engine.",
+            )
+            .with_diagnostic(error.to_string()));
+        }
+    };
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| invalid_plan_argument("magick stdout"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| invalid_plan_argument("magick stderr"))?;
+    let stdout_task = tokio::spawn(read_bounded_tail(stdout, MAX_STDERR_BYTES));
+    let stderr_task = tokio::spawn(read_bounded_tail(stderr, MAX_STDERR_BYTES));
+    let status = tokio::select! {
+        status = child.wait() => status.map_err(|error| {
+            FormatWrightError::new(
+                ErrorCode::ExecutionFailed,
+                Stage::Execute,
+                "Unable to wait for ImageMagick",
+                "Retry the conversion.",
+            )
+            .with_diagnostic(error.to_string())
+        })?,
+        () = cancellation.cancelled() => {
+            terminate_process_tree(&mut child).await;
+            cleanup_partial(partial_path);
+            return Err(FormatWrightError::new(
+                ErrorCode::Cancelled,
+                Stage::Execute,
+                "ImageMagick conversion was cancelled",
+                "Retry when ready.",
+            ));
+        }
+    };
+    let stdout = stdout_task
+        .await
+        .unwrap_or_else(|error| format!("stdout reader failed: {error}"));
+    let stderr = stderr_task
+        .await
+        .unwrap_or_else(|error| format!("stderr reader failed: {error}"));
+    if !status.success() {
+        cleanup_partial(partial_path);
+        return Err(FormatWrightError::new(
+            ErrorCode::ExecutionFailed,
+            Stage::Execute,
+            format!("ImageMagick exited with status {status}"),
+            "Inspect the input and ImageMagick RAW/PSD support.",
+        )
+        .with_diagnostic(format!("{stdout}\n{stderr}")));
+    }
+    if !staged_output.is_file() {
+        cleanup_partial(partial_path);
+        return Err(FormatWrightError::new(
+            ErrorCode::ExecutionFailed,
+            Stage::Execute,
+            "ImageMagick did not produce the staged output",
+            "Inspect the input and ImageMagick delegate availability.",
+        )
+        .with_diagnostic(format!("{stdout}\n{stderr}")));
+    }
+    if let Err(error) = observer(ExecutionMilestone::EngineFinished) {
+        cleanup_partial(partial_path);
+        return Err(error);
+    }
+    if let Err(error) = ensure_input_unchanged(input, Stage::Commit).await {
+        cleanup_partial(partial_path);
+        return Err(error);
+    }
+    let output_probe = match inspect_media(&staged_output, ffprobe).await {
+        Ok(probe) => probe,
+        Err(error) => {
+            cleanup_partial(partial_path);
+            return Err(error);
+        }
+    };
+    let mut report = validate_media_output(input, &output_probe, plan, job_id);
+    if report.status == ValidationStatus::Fail {
+        cleanup_partial(partial_path);
+        return Err(FormatWrightError::new(
+            ErrorCode::ValidationFailed,
+            Stage::Validate,
+            "ImageMagick output failed required validation",
+            "Inspect the validation report and choose another Plan.",
+        )
+        .with_diagnostic(serde_json::to_string(&report).unwrap_or_default()));
+    }
+    if output_path.exists() {
+        cleanup_partial(partial_path);
+        return Err(FormatWrightError::new(
+            ErrorCode::OutputConflict,
+            Stage::Commit,
+            "The destination appeared while conversion was running",
+            "Choose another output path.",
+        ));
+    }
+    if let Err(error) = commit_path_no_replace(&staged_output, output_path) {
+        cleanup_partial(partial_path);
+        return Err(error);
+    }
+    if let Err(error) = std::fs::remove_dir(partial_path) {
+        tracing::warn!(partial = %partial_path.display(), %error, "committed magick output but could not remove empty workspace");
     }
     report.output.display_path = Some(output_path.to_string_lossy().into_owned());
     Ok(ExecutionResult {

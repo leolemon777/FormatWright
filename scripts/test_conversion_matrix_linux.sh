@@ -76,6 +76,20 @@ for s in tiff bmp; do for t in webp avif png; do run "sample.$s" "$t"; done; don
 run sample.png txt
 run sample.tiff txt
 run sample.bmp txt
+# PSD / camera-RAW through the discovered ImageMagick engine (opt-in:
+# install ImageMagick user-level and export FORMATWRIGHT_ENGINE_MAGICK).
+if command -v magick >/dev/null 2>&1 || [ -n "${FORMATWRIGHT_ENGINE_MAGICK:-}" ]; then
+  "$PY" - <<'PYEOF2'
+from PIL import Image
+Image.new('RGB',(640,480),(30,90,200)).save('/home/leo/linux-runs/FormatWright/fixtures/sample.psd')
+PYEOF2
+  for t in png jpg tiff; do run sample.psd "$t"; done
+  for rawext in dng cr2; do
+    [ -f "$FX/sample.$rawext" ] || continue
+    for t in png jpg tiff; do run "sample.$rawext" "$t"; done
+    run "sample.$rawext" webp
+  done
+fi
 # audio
 FF="$HOME/miniforge/envs/ocr/bin/ffmpeg"
 "$FF" -y -f lavfi -i sine=frequency=440:duration=3 -c:a pcm_s16le "$FX/sample.wav" -loglevel error

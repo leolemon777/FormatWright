@@ -19,6 +19,16 @@ export FORMATWRIGHT_ENGINE_FFPROBE="$FFDIR/ffprobe.exe"
 # C1 long-tail fixtures: opaque TIFF/BMP generated on demand.
 [ -f "$FX/sample.tiff" ] || "$FFDIR/ffmpeg.exe" -y -f lavfi -i "testsrc2=size=320x240" -frames:v 1 -pix_fmt bgr24 -c:v tiff "$FX/sample.tiff" -loglevel error
 [ -f "$FX/sample.bmp" ] || "$FFDIR/ffmpeg.exe" -y -f lavfi -i "testsrc2=size=320x240" -frames:v 1 -pix_fmt bgr24 -c:v bmp "$FX/sample.bmp" -loglevel error
+# C1 wave 2: PSD/RAW via the discovered ImageMagick engine.
+MAGICK="E:\\DevCaches\\ImageMagick\\magick.exe"
+export FORMATWRIGHT_ENGINE_MAGICK="$MAGICK"
+[ -f "$FX/sample.psd" ] || "$MAGICK" -size 320x240 gradient:blue-red "$FX/sample.psd"
+# Real camera-RAW fixtures are large downloads; run those rows only when present.
+for rawext in dng cr2; do
+  if [ ! -f "$FX/sample.$rawext" ] && [ -f "/e/Desktop/FormatWright/target/c1-raw/sample.$rawext" ]; then
+    cp "/e/Desktop/FormatWright/target/c1-raw/sample.$rawext" "$FX/sample.$rawext"
+  fi
+done
 export FORMATWRIGHT_ENGINE_PANDOC="D:\\Anaconda3\\Library\\bin\\pandoc.exe"
 
 n=0; pass=0; fail=0
@@ -56,6 +66,14 @@ for t in jpg png; do run sample.pdf "$t"; done
 # raster images
 for s in png jpg; do for t in webp avif tiff bmp pdf; do run "sample.$s" "$t"; done; done
 for s in tiff bmp; do for t in webp avif png pdf; do run "sample.$s" "$t"; done; done
+# PSD / camera-RAW through the discovered ImageMagick engine
+for t in png jpg tiff; do run sample.psd "$t"; done
+for rawext in dng cr2; do
+  [ -f "$FX/sample.$rawext" ] || continue
+  for t in png jpg tiff; do run "sample.$rawext" "$t"; done
+  # one chain row: raw -> tiff -> webp proves the whitelisted TIFF pivot
+  run "sample.$rawext" webp
+done
 # video containers
 for s in mp4 webm; do for t in mp4 gif mp3; do run "sample.$s" "$t"; done; done
 # audio

@@ -29,10 +29,11 @@ const MAX_CHAIN_DEPTH: usize = 2;
 /// - png 是无损位图；jpg 虽是有损图像格式，但作为“渲染终点型”中间
 ///   格式（office→jpg→pdf）业界通行且损耗可控，故按规格纳入；
 /// - wav 是无损音频；
+/// - tiff 与 png 同为无损位图，且是 PSD/RAW 磁带出口（C1 后入列）；
 /// - mp3/mp4 等有损媒体、zip/7z 等归档容器不作中转（归档展开语义
 ///   与单文件转换不符）。
-const INTERMEDIATE_WHITELIST: [&str; 11] = [
-    "html", "png", "jpg", "pdf", "docx", "txt", "json", "csv", "yaml", "xml", "wav",
+const INTERMEDIATE_WHITELIST: [&str; 12] = [
+    "html", "png", "jpg", "tiff", "pdf", "docx", "txt", "json", "csv", "yaml", "xml", "wav",
 ];
 
 /// 一段转换边：from → to，附该边首选 lane 的引擎需求。

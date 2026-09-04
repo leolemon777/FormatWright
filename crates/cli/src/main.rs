@@ -620,6 +620,14 @@ async fn run(cli: Cli) -> Result<(), FormatWrightError> {
                 inspect_structured(input).await?
             } else if is_document_path(&input) {
                 inspect_document(input).await?
+            } else if input
+                .extension()
+                .and_then(|value| value.to_str())
+                .and_then(formatwright_core::inspect::magick_format_id)
+                .is_some()
+            {
+                let magick = inspect_engine("magick").await?;
+                formatwright_core::inspect::inspect_magick_image(input, &magick).await?
             } else {
                 let ffprobe = inspect_engine("ffprobe").await?;
                 inspect_media(input, &ffprobe).await?

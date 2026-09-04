@@ -171,6 +171,23 @@ pub async fn prepare_conversion(
         let plan = plan_markup_to_pdf(&probe, output, &pandoc, &soffice, &pdfinfo, &pdftoppm)?;
         return Ok((probe, plan, pdfinfo));
     }
+    if matches!(target.as_str(), "jpg" | "jpeg" | "png" | "tiff")
+        && input
+            .extension()
+            .and_then(|value| value.to_str())
+            .and_then(crate::inspect::magick_format_id)
+            .is_some()
+    {
+        // PSD/camera-RAW lane: ffprobe cannot demux these, so ImageMagick is
+        // both the decoder and the inspector (engine-as-prober). The tuple's
+        // validation engine stays ffprobe: the OUTPUT is a normal raster.
+        let magick = inspect_engine("magick").await?;
+        let ffprobe = inspect_engine("ffprobe").await?;
+        let probe = crate::inspect::inspect_magick_image(input, &magick).await?;
+        required_output(request, "PSD/RAW conversion")?;
+        let plan = crate::planner::plan_magick_conversion(&probe, request, &magick)?;
+        return Ok((probe, plan, ffprobe));
+    }
     if pdf_format_hint(input)? {
         let pdfinfo = inspect_engine("pdfinfo").await?;
         let pdftoppm = inspect_engine("pdftoppm").await?;

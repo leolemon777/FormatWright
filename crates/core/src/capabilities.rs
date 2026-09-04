@@ -217,6 +217,11 @@ pub(crate) fn supported_targets(input: Option<&str>) -> BTreeSet<&'static str> {
         // （ffmpeg 图像转码、soffice 图转 PDF、tesseract OCR），
         // png 作为无损目标对带 alpha 的源最安全。
         "tiff" | "tif" | "bmp" => &["webp", "avif", "png", "pdf", "txt"],
+        // C1 图像长尾第二波：PSD 与相机 RAW 经发现的 ImageMagick 引擎
+        // （Apache-2.0）转 png/jpg/tiff；其余目标经链（tiff 已入白名单）。
+        "psd" | "dng" | "cr2" | "cr3" | "arw" | "nef" | "orf" | "rw2" | "pef" | "raf" => {
+            &["png", "jpg", "tiff"]
+        }
         "mov" | "mkv" | "avi" | "webm" | "mp4" => &["mp4", "gif", "mp3"],
         "wav" | "flac" | "aac" | "m4a" | "ogg" | "opus" | "mp3" => &["m4a", "mp3", "wav"],
         _ => &[],
@@ -294,6 +299,13 @@ pub(crate) fn required_engines(input: Option<&str>, target: &str) -> Vec<String>
     }
     if matches!(input, "heic" | "heif") && matches!(target.as_str(), "jpg" | "png") {
         return engine_names(&["ffprobe", "heif-dec"]);
+    }
+    if matches!(
+        input,
+        "psd" | "dng" | "cr2" | "cr3" | "arw" | "nef" | "orf" | "rw2" | "pef" | "raf"
+    ) && matches!(target.as_str(), "jpg" | "png" | "tiff")
+    {
+        return engine_names(&["magick", "ffprobe"]);
     }
     if matches!(input, "png" | "jpg" | "jpeg" | "tiff" | "tif" | "bmp") && target == "txt" {
         return engine_names(&["ffprobe", "tesseract"]);
@@ -484,6 +496,23 @@ mod tests {
             assert!(targets.contains("bmp"), "{input} -> bmp");
         }
         assert_eq!(required_engines(Some("jpg"), "tiff"), ["ffprobe", "ffmpeg"]);
+    }
+
+    #[test]
+    fn magick_family_routes_psd_and_raw_through_imagemagick() {
+        for input in [
+            "psd", "dng", "cr2", "cr3", "arw", "nef", "orf", "rw2", "pef", "raf",
+        ] {
+            let targets = supported_targets(Some(input));
+            for target in ["png", "jpg", "tiff"] {
+                assert!(targets.contains(target), "{input} -> {target}");
+            }
+            assert_eq!(
+                required_engines(Some(input), "png"),
+                ["magick", "ffprobe"],
+                "{input} -> png rides the discovered ImageMagick lane"
+            );
+        }
     }
 
     #[tokio::test]

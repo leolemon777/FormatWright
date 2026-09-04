@@ -62,6 +62,7 @@ pub async fn doctor_with_policy(policy: EngineDiscoveryPolicy) -> DoctorReport {
         "ffprobe",
         "vips",
         "heif-dec",
+        "magick",
         "pandoc",
         "soffice",
         "pdftoppm",

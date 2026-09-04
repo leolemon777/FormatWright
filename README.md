@@ -8,7 +8,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="License: Apache-2.0" /></a>
   <a href="https://leolemon777.github.io/FormatWright/"><img src="https://img.shields.io/badge/website-leolemon777.github.io%2FFormatWright-2ea44f" alt="Website" /></a>
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux-9cf" alt="Platforms: Windows, Linux" />
-  <img src="https://img.shields.io/badge/routes-172%20canonical-orange" alt="172 canonical reachable conversion routes" />
+  <img src="https://img.shields.io/badge/routes-252%20canonical-orange" alt="252 canonical reachable conversion routes" />
 </p>
 
 **File conversion you can verify.**
@@ -17,7 +17,7 @@ Anole (formerly FormatWright) is an open-source, local-first file conversion pla
 
 ## Status
 
-**v0.1.0 Public Beta (Unsigned Alpha) — released 2026-09-04.** Download the Windows x64 installer from the [latest release](https://github.com/leolemon777/FormatWright/releases/latest) (see `SHA256SUMS`; the installer is unsigned, so SmartScreen will warn), or browse the [website](https://leolemon777.github.io/FormatWright/). What shipped: 172 canonical reachable conversion routes (103 direct + 69 chained, counted by `scripts/count_routes.py`; TIFF/BMP joined the raster family post-release), every hop with validation receipts, durable SQLite queue with crash recovery, plan-first approval, sandboxed inputs, CLI + desktop GUI + REST API, tri-platform CI, and a 10,000-job soak evidence trail. Known gaps: no code-signing certificate yet (v0.1.1 will be signed), OCR needs a host Tesseract on Windows, clean-VM certification evidence is still pending, and macOS has CI coverage only.
+**v0.1.0 Public Beta (Unsigned Alpha) — released 2026-09-04.** Download the Windows x64 installer from the [latest release](https://github.com/leolemon777/FormatWright/releases/latest) (see `SHA256SUMS`; the installer is unsigned, so SmartScreen will warn), or browse the [website](https://leolemon777.github.io/FormatWright/). What shipped: 252 canonical reachable conversion routes (133 direct + 119 chained, counted by `scripts/count_routes.py`; TIFF/BMP/PSD and camera-RAW (DNG/CR2/...) joined the raster family post-release through ffmpeg and the discovered ImageMagick engine), every hop with validation receipts, durable SQLite queue with crash recovery, plan-first approval, sandboxed inputs, CLI + desktop GUI + REST API, tri-platform CI, and a 10,000-job soak evidence trail. Known gaps: no code-signing certificate yet (v0.1.1 will be signed), OCR needs a host Tesseract on Windows, clean-VM certification evidence is still pending, and macOS has CI coverage only.
 
 - Product scope and release gates: [SPEC_PLAN.md](SPEC_PLAN.md)
 - Living completed / pending checklist, architecture, and ordered gates: [docs/MASTER_EXECUTION_PLAN.md](docs/MASTER_EXECUTION_PLAN.md) (see §1.1 progress snapshot)

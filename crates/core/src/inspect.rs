@@ -571,6 +571,176 @@ fn bounded_text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(&bytes[start..]).into_owned()
 }
 
+/// Returns the canonical magick-lane format id for a file extension, or
+/// `None` when the extension is not a PSD/camera-RAW family member. `ffprobe`
+/// cannot demux these containers, so the `ImageMagick` engine serves as both
+/// the decoder and the inspector (pdfinfo-style engine-as-prober).
+#[must_use]
+pub fn magick_format_id(extension: &str) -> Option<&'static str> {
+    match extension.to_ascii_lowercase().as_str() {
+        "psd" => Some("psd"),
+        "dng" => Some("dng"),
+        "cr2" => Some("cr2"),
+        "cr3" => Some("cr3"),
+        "arw" => Some("arw"),
+        "nef" => Some("nef"),
+        "orf" => Some("orf"),
+        "rw2" => Some("rw2"),
+        "pef" => Some("pef"),
+        "raf" => Some("raf"),
+        _ => None,
+    }
+}
+
+/// Inspects a PSD or camera-RAW image with a pinned magick identity.
+///
+/// # Errors
+///
+/// Returns an engine error when the engine fails or times out and an input
+/// error when the file is not a single raster frame with parseable geometry.
+#[allow(clippy::too_many_lines)]
+pub async fn inspect_magick_image(
+    path: impl AsRef<Path>,
+    magick: &EngineIdentity,
+) -> Result<Probe> {
+    if magick.engine_id != "magick" {
+        return Err(FormatWrightError::new(
+            ErrorCode::EngineIncompatible,
+            Stage::Inspect,
+            "The magick inspector was given the wrong engine",
+            "Run doctor and use ImageMagick.",
+        ));
+    }
+    let artifact = identify_artifact(path).await?;
+    let extension = artifact
+        .canonical_path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default();
+    let format_id = magick_format_id(&extension).ok_or_else(|| {
+        FormatWrightError::new(
+            ErrorCode::Unsupported,
+            Stage::Inspect,
+            "The magick inspector only accepts PSD and camera-RAW inputs",
+            "Choose a PSD, DNG, CR2/CR3, ARW, NEF, ORF, RW2, PEF, or RAF file.",
+        )
+    })?;
+    let mut command = Command::new(&magick.binary_path);
+    command
+        .arg("identify")
+        .arg("-quiet")
+        .arg("-format")
+        // The trailing newline separates frames: multi-layer PSD prints
+        // one record per layer with no separator otherwise.
+        .arg("%m %w %h\n")
+        .arg(&artifact.canonical_path);
+    let future = command.output();
+    let output = tokio::time::timeout(Duration::from_secs(60), future)
+        .await
+        .map_err(|_| {
+            FormatWrightError::new(
+                ErrorCode::ExecutionFailed,
+                Stage::Inspect,
+                "ImageMagick inspection timed out",
+                "Check whether the file or storage device is responsive.",
+            )
+            .retryable(true)
+        })?
+        .map_err(|error| {
+            FormatWrightError::new(
+                ErrorCode::EngineIncompatible,
+                Stage::Inspect,
+                "Unable to start ImageMagick",
+                "Run doctor and verify the ImageMagick installation.",
+            )
+            .with_diagnostic(error.to_string())
+        })?;
+    if !output.status.success() {
+        return Err(FormatWrightError::new(
+            ErrorCode::InputInvalid,
+            Stage::Inspect,
+            "ImageMagick could not identify the file as a supported raster image",
+            "Choose a valid PSD or camera-RAW file.",
+        )
+        .with_diagnostic(bounded_text(&output.stderr)));
+    }
+    // Multi-layer PSD files print one line per frame; the first frame is the
+    // flattened composite the converter will produce.
+    let stdout_text = String::from_utf8_lossy(&output.stdout).into_owned();
+    let first_line = stdout_text.lines().next().unwrap_or_default();
+    let mut fields = first_line.split_whitespace();
+    let reported_format = fields.next().unwrap_or_default().to_ascii_lowercase();
+    let width = fields
+        .next()
+        .and_then(|value| value.parse::<u32>().ok())
+        .ok_or_else(|| {
+            FormatWrightError::new(
+                ErrorCode::InputInvalid,
+                Stage::Inspect,
+                "ImageMagick did not report a raster width",
+                "Choose a valid PSD or camera-RAW file.",
+            )
+        })?;
+    let height = fields
+        .next()
+        .and_then(|value| value.parse::<u32>().ok())
+        .ok_or_else(|| {
+            FormatWrightError::new(
+                ErrorCode::InputInvalid,
+                Stage::Inspect,
+                "ImageMagick did not report a raster height",
+                "Choose a valid PSD or camera-RAW file.",
+            )
+        })?;
+    let extension_matches = reported_format == format_id;
+    let stream = StreamProbe {
+        index: 0,
+        kind: StreamKind::Video,
+        codec: Some(format_id.to_owned()),
+        language: None,
+        duration_seconds: None,
+        width: Some(width),
+        height: Some(height),
+        frame_rate: None,
+        sample_rate: None,
+        channels: None,
+        properties: BTreeMap::new(),
+    };
+    Ok(Probe {
+        schema_version: SCHEMA_VERSION,
+        artifact,
+        format: FormatDescriptor {
+            id: format_id.to_owned(),
+            kind: FormatKind::Image,
+            mime_type: None,
+            container: Some(reported_format.clone()),
+            extension_matches: Some(extension_matches),
+            confidence: 1.0,
+        },
+        streams: vec![stream],
+        metadata: BTreeMap::new(),
+        warnings: if extension_matches {
+            Vec::new()
+        } else {
+            vec![DiagnosticMessage {
+                code: "EXTENSION_MISMATCH".to_owned(),
+                severity: "warning".to_owned(),
+                message: format!(
+                    "File extension .{extension} does not match detected format {reported_format}"
+                ),
+            }]
+        },
+        evidence: ProbeEvidence {
+            engine_id: magick.engine_id.clone(),
+            engine_version: magick.version.clone(),
+            engine_binary_sha256: Some(magick.binary_sha256.clone()),
+        },
+        duration_seconds: None,
+        bit_rate: None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::{

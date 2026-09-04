@@ -45,6 +45,16 @@ TABLE: dict[str, list[str]] = {
     "jpg": ["webp", "avif", "tiff", "bmp", "pdf", "txt"],
     "tiff": ["webp", "avif", "png", "pdf", "txt"],
     "bmp": ["webp", "avif", "png", "pdf", "txt"],
+    "psd": ["png", "jpg", "tiff"],
+    "dng": ["png", "jpg", "tiff"],
+    "cr2": ["png", "jpg", "tiff"],
+    "cr3": ["png", "jpg", "tiff"],
+    "arw": ["png", "jpg", "tiff"],
+    "nef": ["png", "jpg", "tiff"],
+    "orf": ["png", "jpg", "tiff"],
+    "rw2": ["png", "jpg", "tiff"],
+    "pef": ["png", "jpg", "tiff"],
+    "raf": ["png", "jpg", "tiff"],
     "mov": ["mp4", "gif", "mp3"],
     "mkv": ["mp4", "gif", "mp3"],
     "avi": ["mp4", "gif", "mp3"],
@@ -60,7 +70,9 @@ TABLE: dict[str, list[str]] = {
 }
 
 # Whitelisted one-hop chain intermediates (chain.rs INTERMEDIATE_WHITELIST).
-WHITELIST = {"html", "png", "jpg", "pdf", "docx", "txt", "json", "csv", "yaml", "xml", "wav"}
+WHITELIST = {
+    "html", "png", "jpg", "tiff", "pdf", "docx", "txt", "json", "csv", "yaml", "xml", "wav",
+}
 
 
 def count(table: dict[str, list[str]] | None = None) -> tuple[int, int]:
