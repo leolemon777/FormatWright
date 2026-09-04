@@ -470,3 +470,21 @@ Rehearsal runs 2-4 (`release-candidate.yml`, workflow_dispatch) all failed at up
 - **Linux matrix + OCR e2e parked**: the Tailscale relay dropped mid-sync (known intermittent outage); retry when it self-recovers. CI's Linux job has no engines, so tiff/bmp→txt stays unit-gated until then.
 - Windows OCR for tiff/bmp remains engine-gated on a host Tesseract (deferred, UAC).
 - C1 continues: RAW (dcraw/RawTherapee engine-discovery) and PSD (ImageMagick, Apache-2.0 packable) are the next waves.
+
+## 2026-09-04 — C1 wave 2: PSD + camera-RAW via the discovered ImageMagick engine
+
+### Design
+- ffprobe cannot demux PSD or camera-RAW, so the new `magick` engine is both decoder and inspector (engine-as-prober, pdfinfo precedent): `magick identify -format "%m %w %h\n"` builds the Probe (newline mandatory — multi-layer PSD prints unseparated frame records), and conversion pins the composite frame with the `input[0]` spec (a bare PSD input fans out to `output-0.png/output-1.png` side files on single-image writers). The raster output then validates through the normal ffprobe media checks; the workflow tuple's validation engine must be **ffprobe**, not magick (heif-lane precedent).
+- Inputs: psd/dng/cr2/cr3/arw/nef/orf/rw2/pef/raf → png/jpg/tiff directly. **TIFF joined the chain intermediate whitelist** (lossless pivot, png's peer), so RAW reaches webp/avif/pdf/txt/bmp through one-hop chains.
+- Engine posture: ImageMagick 7.1.2-31 portable at `E:\DevCaches\ImageMagick` (Apache-2.0, packable later), discovered via `FORMATWRIGHT_ENGINE_MAGICK`/PATH; never bundled for now. dcraw 9.28 was compiled locally (cl.exe + NO_JASPER/NO_JPEG/NO_LCMS + ftello/fseeko/getc_unlocked shims) as a reference but the single magick lane covers both C1 RAW and PSD waves.
+
+### Verification
+- e2e probes: psd→png/jpg/tiff, dng→tiff/png, cr2→png/jpg, chain dng→webp (via tiff) — all pass; `formatwright inspect sample.psd` now reports `psd (Image)` (the CLI inspect path routes magick-family extensions to the magick probe).
+- **Windows matrix 82/82** (71 prior + 11 magick rows incl. one raw→tiff→webp chain row). One earlier run showed 26 OutputConflict failures — a cancelled matrix run left a zombie writer racing the rerun's numbered outputs; clean rerun green.
+- core `--lib` 251 passed / 4 known symlink failures; workspace fmt/clippy/cargo-deny clean. Route figure: **252 canonical reachable = 133 direct + 119 chained** (`scripts/count_routes.py`), README badge/body updated.
+
+### Risks / Follow-up
+- **Linux verification parked again**: the Tailscale relay has been down for ~1h (longest outage yet; may need a box-side check). Linux matrix + OCR + magick rows queued for when it returns — ImageMagick needs a user-level install there (conda-forge into the ocr env, zero-sudo).
+- RAW fixtures are 10 MB real camera files (f-spot/raw-samples, CCL) gated on presence in the matrix scripts; a smaller synthetic DNG would shrink CI-less test cycles.
+- CR3 (Canon) decode depends on the host ImageMagick build's raw support; declared but not e2e-tested (no fixture).
+- jpeg quality default 92 on the magick lane (encoder default) vs 85 on the ffmpeg lane — intentional per-engine defaults, documented in the plan constraints.
