@@ -452,3 +452,21 @@ Rehearsal runs 2-4 (`release-candidate.yml`, workflow_dispatch) all failed at up
 - **Trademark screening (web-level, Nice 9/42)**: no registered "ANOLE" word mark covering file-conversion software found via public sources. Adjacent uses recorded in `docs/release/NAME_CLEARANCE.md` (ANOLE 360 smartglasses — different mark/goods; qdc Anole IEMs — hardware; legacy Anole Media Player — closest software use; Anolepay — fintech). Formal professional clearance still recommended before paid promotion or mark registration; recorded as such.
 - **README**: badges (CI, Release, Apache-2.0, website, platforms, 319 routes — all verified HTTP 200) + Status section rewritten from the stale 2026-08-15 alpha snapshot to the v0.1.0 Public Beta (Unsigned Alpha) facts, honest gaps included (no cert yet, host-Tesseract OCR on Windows, clean-VM evidence pending, macOS CI-only). Historical milestone list moved to a pointer at implementation-notes.
 - **Announcement copy**: `docs/release/v0.1.0_announcement.md` (中英 × 长短, plus channel candidates and the screening precondition). Not posted anywhere — promotion is Leo's call.
+
+## 2026-09-04 — C1 wave 1: TIFF/BMP raster family
+
+### Shipped
+- TIFF/TIF/BMP inputs reach **webp/avif/png** (ffmpeg still-image lane), **pdf** (soffice draw lane), and **txt** (tesseract OCR lane, Linux-verified pending below); png/jpg/jpeg gain lossless **tiff/bmp** targets. BMP blocks alpha sources at plan time (encoder alpha unreliable, same posture as JPEG); TIFF/BMP are lossless and reject `--quality`.
+- Two real bugs found by e2e and fixed: (1) ffprobe demuxes BMP files (sometimes TIFF too) as generic `image2`, so `normalized_format_id` now disambiguates by extension exactly like the JPEG precedent — without it BMP classified as Video and planning rejected it; (2) the office-PDF executor's `source_format` whitelist and draw-filter arm lacked tiff/bmp.
+- Header sniffing learns TIFF (`II*\0`/`MM\0*`) and BMP (`BM` + zero reserved word) magics.
+- `scripts/count_routes.py` is now the single source of truth for the route figure: **172 canonical reachable = 103 direct + 69 chained** (v0.1.0-era table counts 144 under the same method; the previously quoted 319 came from an undocumented alias-expanded ad-hoc count and is left frozen in the v0.1.0 release notes). README badge/body and announcement copy updated to the canonical number.
+
+### Verification
+- Unit: 5 new tests (capabilities lanes/targets ×2, planner tiff lossless + bmp alpha ×2, inspect sniffing) — core `--lib` 249 passed / 4 known Windows symlink failures; workspace fmt/clippy/cargo-deny rehearsal clean.
+- e2e Windows: manual route probes (incl. true-alpha TIFF→bmp PolicyBlocked through the chain's hop-2, TIFF→png alpha-preserved) plus **full matrix 71/71** with the 12 new tiff/bmp rows; tiff/bmp→pdf report `warning` from OFFICE_VISUAL_DRIFT exactly like the pre-existing png→pdf row (informational, not a regression).
+- Matrix scripts: Windows learns on-demand tiff/bmp fixtures + `rm -rf` out-dir (the old numbered outputs collided across runs and caused OutputConflict noise); Linux gains PIL tiff/bmp fixtures and `tiff/bmp → txt` OCR rows.
+
+### Risks / Follow-up
+- **Linux matrix + OCR e2e parked**: the Tailscale relay dropped mid-sync (known intermittent outage); retry when it self-recovers. CI's Linux job has no engines, so tiff/bmp→txt stays unit-gated until then.
+- Windows OCR for tiff/bmp remains engine-gated on a host Tesseract (deferred, UAC).
+- C1 continues: RAW (dcraw/RawTherapee engine-discovery) and PSD (ImageMagick, Apache-2.0 packable) are the next waves.
