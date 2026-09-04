@@ -101,8 +101,8 @@ jobs:
           $version = $env:TAG_NAME.TrimStart('v')
           Copy-Item dist/sbom.spdx.json "dist/Anole-$version-sbom.spdx.json"
           python scripts/generate_checksums.py `
-            "target/release/bundle/nsis/Anole-$version-x64-setup.exe" `
-            "target/release/bundle/nsis/Anole-$version-x64-setup.exe.sig" `
+            "target/release/bundle/nsis/Anole_${version}_x64-setup.exe" `
+            "target/release/bundle/nsis/Anole_${version}_x64-setup.exe.sig" `
             target/release/formatwright-desktop.exe `
             "dist/Anole-$version-sbom.spdx.json" `
             dist/latest.json
@@ -116,8 +116,8 @@ jobs:
           gh release create $env:TAG_NAME `
             --title "Anole v$version (Public Beta, Unsigned Alpha)" `
             --notes-file "docs/release/v$($version)_notes.md" `
-            "target/release/bundle/nsis/Anole-$version-x64-setup.exe" `
-            "target/release/bundle/nsis/Anole-$version-x64-setup.exe.sig" `
+            "target/release/bundle/nsis/Anole_${version}_x64-setup.exe" `
+            "target/release/bundle/nsis/Anole_${version}_x64-setup.exe.sig" `
             target/release/formatwright-desktop.exe `
             dist/SHA256SUMS `
             "dist/Anole-$version-sbom.spdx.json" `
