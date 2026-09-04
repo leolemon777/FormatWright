@@ -8,6 +8,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 
@@ -64,15 +65,40 @@ def audit_cargo(lockfile: str) -> tuple[int, int]:
 
 
 def audit_pnpm() -> int:
-    report, returncode = run_json(["pnpm", "audit", "--prod", "--json"])
-    if not isinstance(report, dict):
-        raise RuntimeError("pnpm audit returned an invalid report")
-    metadata = report.get("metadata", {})
-    severities = metadata.get("vulnerabilities", {}) if isinstance(metadata, dict) else {}
-    count = sum(int(value) for value in severities.values()) if isinstance(severities, dict) else 0
-    if count == 0 and returncode != 0:
-        raise RuntimeError(f"pnpm audit failed with exit code {returncode}")
-    return count
+    # The npm registry's bulk advisory endpoint has outages (e.g. 2026-09-04:
+    # every request timed out globally). Transport failures are distinct from
+    # findings: retry, then - only when AUDIT_ALLOW_ENDPOINT_OUTAGE is set
+    # (ci.yml does) - pass with a loud marker. Real findings stay fail-closed.
+    endpoint_failures = 0
+    for attempt in range(1, 4):
+        report, returncode = run_json(["pnpm", "audit", "--prod", "--json"])
+        if not isinstance(report, dict):
+            raise RuntimeError("pnpm audit returned an invalid report")
+        if isinstance(report.get("error"), dict):
+            endpoint_failures += 1
+            print(
+                f"WARNING: pnpm audit endpoint error (attempt {attempt}/3): {report['error']}",
+                file=sys.stderr,
+            )
+            if attempt < 3:
+                time.sleep(20 * attempt)
+            continue
+        metadata = report.get("metadata", {})
+        severities = metadata.get("vulnerabilities", {}) if isinstance(metadata, dict) else {}
+        count = sum(int(value) for value in severities.values()) if isinstance(severities, dict) else 0
+        if count == 0 and returncode != 0:
+            raise RuntimeError(f"pnpm audit failed with exit code {returncode}")
+        return count
+    if endpoint_failures == 3:
+        if os.environ.get("AUDIT_ALLOW_ENDPOINT_OUTAGE") == "1":
+            print(
+                "WARNING: npm audit endpoint unavailable after 3 attempts - "
+                "pnpm audit SKIPPED (registry outage; NOT a clean bill)",
+                file=sys.stderr,
+            )
+            return 0
+        raise RuntimeError("pnpm audit endpoint unavailable after 3 attempts")
+    raise RuntimeError("pnpm audit failed unexpectedly")
 
 
 def main() -> int:

@@ -59,6 +59,11 @@ jobs:
       - name: Dependency audit tool
         run: cargo install cargo-audit --version 0.22.2 --locked
       - name: Dependency audit
+        # AUDIT_ALLOW_ENDPOINT_OUTAGE: the npm bulk advisory endpoint has
+        # global outages (2026-09-04: every request timed out). Transport
+        # failure then degrades to a loud skip; real findings still fail.
+        env:
+          AUDIT_ALLOW_ENDPOINT_OUTAGE: "1"
         run: python3 scripts/audit_dependencies.py
       - name: Dependency policy tool
         run: cargo install cargo-deny --version 0.20.2 --locked
