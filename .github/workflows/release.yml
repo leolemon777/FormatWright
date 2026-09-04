@@ -1,0 +1,124 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  PNPM_VERSION: 11.16.0
+  NODE_VERSION: 24
+
+jobs:
+  windows-release:
+    name: Windows release
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Prepare pinned Windows Starter packs
+        shell: pwsh
+        run: scripts/prepare_windows_starter_pack.ps1
+      - name: Assert the starter pack is populated
+        shell: pwsh
+        run: |
+          $root = 'dist/engine-packs/windows-x86_64/starter'
+          $bundle = Join-Path $root 'bundle.json'
+          if (-not (Test-Path -LiteralPath $bundle)) {
+            throw "starter pack is empty or missing $bundle - an empty-directory workaround must never ship"
+          }
+          $entries = @(Get-ChildItem -LiteralPath $root -Recurse -File)
+          if ($entries.Count -lt 5) {
+            throw "starter pack looks incomplete: only $($entries.Count) files under $root"
+          }
+          Write-Output "starter pack verified: $($entries.Count) files, bundle.json present"
+      - name: Stage updater signing key
+        env:
+          DEV_KEY: ${{ secrets.TAURI_DEV_UPDATER_KEY }}
+          DEV_KEY_PASSWORD: ${{ secrets.TAURI_DEV_UPDATER_PASSWORD }}
+        shell: pwsh
+        run: |
+          # The updater keypair (private half + password) lives in repo secrets;
+          # rehearsals proved this exact staging path signs correctly.
+          $key = $env:DEV_KEY
+          if ([string]::IsNullOrWhiteSpace($key)) {
+            throw "TAURI_DEV_UPDATER_KEY is not set - a release cannot ship unsigned updater artifacts"
+          }
+          # Tauri's minisign loader is picky about file encoding; passing the
+          # key content directly as the env var value avoids the file layer.
+          echo "TAURI_SIGNING_PRIVATE_KEY=$key" >> $env:GITHUB_ENV
+          echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=$env:DEV_KEY_PASSWORD" >> $env:GITHUB_ENV
+      - name: Build offline NSIS installer
+        run: pnpm --filter @formatwright/desktop tauri build --bundles nsis
+      - name: Generate application SBOM
+        run: python scripts/generate_sbom.py
+      - name: Compose updater latest.json
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        shell: pwsh
+        run: |
+          $version = $env:TAG_NAME.TrimStart('v')
+          $setup = "Anole_${version}_x64-setup.exe"
+          $sigPath = "target/release/bundle/nsis/$setup.sig"
+          if (-not (Test-Path -LiteralPath $sigPath)) {
+            throw "missing updater signature at $sigPath"
+          }
+          $sig = (Get-Content -LiteralPath $sigPath -Raw).Trim()
+          $url = "https://github.com/${{ github.repository }}/releases/download/$($env:TAG_NAME)/$setup"
+          $json = @{
+            version = $version
+            notes = "Anole v$version (Public Beta, Unsigned Alpha)."
+            pub_date = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+            platforms = @{
+              'windows-x86_64' = @{
+                signature = $sig
+                url = $url
+              }
+            }
+          } | ConvertTo-Json -Depth 5
+          Set-Content -Path dist/latest.json -Value $json -NoNewline -Encoding ascii
+          Write-Output "latest.json composed for v$version"
+      - name: Generate checksums
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        shell: pwsh
+        run: |
+          $version = $env:TAG_NAME.TrimStart('v')
+          Copy-Item dist/sbom.spdx.json "dist/Anole-$version-sbom.spdx.json"
+          python scripts/generate_checksums.py `
+            "target/release/bundle/nsis/Anole-$version-x64-setup.exe" `
+            "target/release/bundle/nsis/Anole-$version-x64-setup.exe.sig" `
+            target/release/formatwright-desktop.exe `
+            "dist/Anole-$version-sbom.spdx.json" `
+            dist/latest.json
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+        shell: pwsh
+        run: |
+          $version = $env:TAG_NAME.TrimStart('v')
+          gh release create $env:TAG_NAME `
+            --title "Anole v$version (Public Beta, Unsigned Alpha)" `
+            --notes-file "docs/release/v$($version)_notes.md" `
+            "target/release/bundle/nsis/Anole-$version-x64-setup.exe" `
+            "target/release/bundle/nsis/Anole-$version-x64-setup.exe.sig" `
+            target/release/formatwright-desktop.exe `
+            dist/SHA256SUMS `
+            "dist/Anole-$version-sbom.spdx.json" `
+            dist/latest.json
