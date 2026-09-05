@@ -412,11 +412,16 @@ fn read_stream(compound: &mut cfb::CompoundFile<std::fs::File>, name: &str) -> O
 
 fn decode_property_string(bytes: &[u8], wide: bool) -> Option<String> {
     if wide {
-        let units: Vec<u16> = bytes
-            .chunks_exact(2)
-            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
-            .take_while(|unit| *unit != 0)
-            .collect();
+        let mut units = Vec::with_capacity(bytes.len() / 2);
+        let mut index = 0;
+        while index + 1 < bytes.len() {
+            let unit = u16::from_le_bytes([bytes[index], bytes[index + 1]]);
+            if unit == 0 {
+                break;
+            }
+            units.push(unit);
+            index += 2;
+        }
         String::from_utf16(&units).ok()
     } else {
         let end = bytes
