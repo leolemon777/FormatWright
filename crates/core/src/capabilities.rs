@@ -210,6 +210,8 @@ pub(crate) fn supported_targets(input: Option<&str>) -> BTreeSet<&'static str> {
         // EML/MSG 邮件导出走内置适配器（formatwright.eml /
         // formatwright.msg）；pdf/docx/epub 由主链路经 html→* 完成。
         "eml" | "msg" => &["txt", "html"],
+        // C3：MBOX 聚合。txt/html 纯内置；pdf = 逐封 html→pdf lane + qpdf 合并。
+        "mbox" => &["txt", "html", "pdf"],
         "tar.gz" => &["zip", "7z"],
         "7z" => &["zip", "tar.gz"],
         "png" | "jpg" | "jpeg" => &["webp", "avif", "tiff", "bmp", "pdf", "txt"],
@@ -265,6 +267,21 @@ pub(crate) fn required_engines(input: Option<&str>, target: &str) -> Vec<String>
     }
     if matches!(input, "eml" | "msg") && matches!(target.as_str(), "txt" | "html") {
         return Vec::new();
+    }
+    if input == "mbox" && matches!(target.as_str(), "txt" | "html") {
+        return Vec::new();
+    }
+    if input == "mbox" && target == "pdf" {
+        // Preferred lane mirrors html→pdf (browser print) plus qpdf; the
+        // snapshot layer falls back to the pandoc lane when browsers miss.
+        return engine_names(&[
+            "msedge",
+            "pdfinfo",
+            "pdftoppm",
+            "pdftotext",
+            "pdffonts",
+            "qpdf",
+        ]);
     }
     if input == "pdf" && matches!(target.as_str(), "jpg" | "png") {
         return engine_names(&["pdfinfo", "pdftoppm", "ffprobe"]);

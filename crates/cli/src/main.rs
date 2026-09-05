@@ -634,6 +634,12 @@ async fn run(cli: Cli) -> Result<(), FormatWrightError> {
                 .is_some_and(|value| value.eq_ignore_ascii_case("msg"))
             {
                 formatwright_core::msg::inspect_msg(&input).await?
+            } else if input
+                .extension()
+                .and_then(|value| value.to_str())
+                .is_some_and(|value| value.eq_ignore_ascii_case("mbox"))
+            {
+                formatwright_core::mbox::inspect_mbox(&input).await?
             } else {
                 let ffprobe = inspect_engine("ffprobe").await?;
                 inspect_media(input, &ffprobe).await?

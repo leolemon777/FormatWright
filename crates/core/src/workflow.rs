@@ -76,6 +76,25 @@ pub async fn prepare_conversion(
         let plan = plan_docx_markup_export(&probe, output, &pandoc, &target)?;
         return Ok((probe, plan, pandoc));
     }
+    // C3 MBOX 聚合导出：txt/html 纯内置；pdf = 逐封渲染 → html→pdf lane
+    // → qpdf 合并（页数守恒验收）。
+    if matches!(target.as_str(), "txt" | "html" | "pdf")
+        && input
+            .extension()
+            .and_then(|value| value.to_str())
+            .is_some_and(|value| value.eq_ignore_ascii_case("mbox"))
+    {
+        let engine = inspect_builtin_engine(crate::mbox::MBOX_ENGINE_ID).await?;
+        let probe = crate::mbox::inspect_mbox(input).await?;
+        let output = required_output(request, "MBOX export")?;
+        let qpdf = if target == "pdf" {
+            inspect_engine("qpdf").await?
+        } else {
+            inspect_builtin_engine(crate::mbox::MBOX_ENGINE_ID).await?
+        };
+        let plan = crate::mbox::plan_mbox_export(&probe, output, &engine, &qpdf, &target)?;
+        return Ok((probe, plan, engine));
+    }
     // MSG（Outlook）导出到 txt/html：内置 formatwright.msg 适配器
     // （CFB→EML→EML 管线复用），无外部引擎；pdf/docx/epub 经链组合。
     if matches!(target.as_str(), "txt" | "html")

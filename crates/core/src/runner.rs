@@ -218,6 +218,25 @@ where
             report,
         });
     }
+    if step.engine.engine_id == "formatwright.mbox" {
+        let (path, mut report) =
+            crate::mbox::execute_mbox_export(input, plan, job_id, cancellation).await?;
+        let _ = observer(ExecutionMilestone::EngineFinished);
+        if report.status == ValidationStatus::Fail {
+            let _ = std::fs::remove_file(&path);
+            return Err(FormatWrightError::new(
+                ErrorCode::ValidationFailed,
+                Stage::Validate,
+                "MBOX export failed validation",
+                "Inspect the validation report and adjust the source.",
+            )
+            .with_diagnostic(serde_json::to_string(&report).unwrap_or_default()));
+        }
+        return Ok(ExecutionResult {
+            output_path: path,
+            report,
+        });
+    }
     if step.engine.engine_id == "formatwright.archive" {
         return execute_archive_plan(
             input,
@@ -4635,7 +4654,7 @@ fn cleanup_partial(path: &Path) {
     }
 }
 
-fn commit_path_no_replace(source: &Path, destination: &Path) -> Result<()> {
+pub(crate) fn commit_path_no_replace(source: &Path, destination: &Path) -> Result<()> {
     rename_path_no_replace(source, destination).map_err(|error| {
         if error.kind() == std::io::ErrorKind::AlreadyExists || destination.exists() {
             return FormatWrightError::new(

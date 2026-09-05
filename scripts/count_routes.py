@@ -42,6 +42,7 @@ TABLE: dict[str, list[str]] = {
     "7z": ["zip", "tar.gz"],
     "eml": ["txt", "html"],
     "msg": ["txt", "html"],
+    "mbox": ["txt", "html", "pdf"],
     "png": ["webp", "avif", "tiff", "bmp", "pdf", "txt"],
     "jpg": ["webp", "avif", "tiff", "bmp", "pdf", "txt"],
     "tiff": ["webp", "avif", "png", "pdf", "txt"],

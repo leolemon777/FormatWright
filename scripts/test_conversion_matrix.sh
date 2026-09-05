@@ -93,6 +93,30 @@ for t in txt html; do run sample.eml "$t"; done
 if [ -f "$FX/sample.msg" ] || { cp "/e/Desktop/FormatWright/target/c2-msg/real.msg" "$FX/sample.msg" 2>/dev/null; [ -f "$FX/sample.msg" ]; }; then
   for t in txt html pdf; do run sample.msg "$t"; done
 fi
+# C3 MBOX aggregation (builtin split; pdf needs the html->pdf lane + qpdf)
+cat > "$FX/sample.mbox" <<'MBOXEOF'
+From alice@example.org Fri Sep  4 10:00:00 2026
+From: Alice <alice@example.org>
+To: bob@example.org
+Subject: First mail 440010147700
+
+ELECTRIC body one 998877.
+>From the escaped line stays.
+
+From carol@example.org Fri Sep  4 11:00:00 2026
+From: Carol <carol@example.org>
+Subject: Second mail MAIL2TOKEN
+
+Body two 552233.
+
+From dave@example.org Fri Sep  4 12:00:00 2026
+From: Dave <dave@example.org>
+Subject: Third mail MAIL3TOKEN
+Content-Type: text/html
+
+<html><body><p>MAIL3TOKEN html body</p><script>alert(1)</script></body></html>
+MBOXEOF
+for t in txt html pdf; do run sample.mbox "$t"; done
 # archives
 run sample.zip tar.gz
 echo "=== matrix summary: $pass pass / $fail fail / $n total ==="
