@@ -14,6 +14,10 @@ export FORMATWRIGHT_ENGINE_QPDF="$HOME/miniforge/envs/ocr/bin/qpdf"
 export FORMATWRIGHT_ENGINE_FFMPEG="$HOME/miniforge/envs/ocr/bin/ffmpeg"
 export FORMATWRIGHT_ENGINE_FFPROBE="$HOME/miniforge/envs/ocr/bin/ffprobe"
 export FORMATWRIGHT_ENGINE_TESSERACT="$HOME/miniforge/envs/ocr/bin/tesseract"
+# Browser print lane: Chrome for Testing, zero-sudo (never pass --user-data-dir on Linux).
+if [ -x "$HOME/browsers/chrome-linux64/chrome" ]; then
+  export FORMATWRIGHT_ENGINE_MSEDGE="$HOME/browsers/chrome-linux64/chrome"
+fi
 
 PY="$HOME/miniforge/envs/ocr/bin/python"
 "$PY" - <<'PYEOF'
@@ -61,7 +65,7 @@ p=PdfPages('/home/leo/linux-runs/FormatWright/fixtures/sample.pdf'); fig,ax=plt.
 print('fixtures done')
 PYEOF
 cd "$SRC"
-[ -x target/debug/formatwright ] || cargo build -p formatwright-cli --offline 2>&1 | tail -1
+[ -x target/debug/formatwright ] || cargo build -p formatwright-cli 2>&1 | tail -1
 
 n=0; pass=0; fail=0
 run() {
@@ -104,10 +108,8 @@ fi
 # PSD / camera-RAW through the discovered ImageMagick engine (opt-in:
 # install ImageMagick user-level and export FORMATWRIGHT_ENGINE_MAGICK).
 if command -v magick >/dev/null 2>&1 || [ -n "${FORMATWRIGHT_ENGINE_MAGICK:-}" ]; then
-  "$PY" - <<'PYEOF2'
-from PIL import Image
-Image.new('RGB',(640,480),(30,90,200)).save('/home/leo/linux-runs/FormatWright/fixtures/sample.psd')
-PYEOF2
+  # PIL cannot write PSD; the magick engine itself generates the fixture.
+  magick -size 320x240 gradient:blue-red "$FX/sample.psd"
   for t in png jpg tiff; do run sample.psd "$t"; done
   for rawext in dng cr2; do
     [ -f "$FX/sample.$rawext" ] || continue

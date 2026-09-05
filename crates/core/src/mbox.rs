@@ -625,14 +625,35 @@ async fn execute_mbox_pdf(
     Ok((output.to_path_buf(), report))
 }
 
-/// 单封 HTML 包：分隔标记 + 净化后的完整邮件渲染。
+/// 单封 HTML 包：分隔标记 + 净化后的邮件 body 片段。只嵌片段不嵌整文档
+/// ——嵌套 `<html>` 会让 pandox→DOCX 中间层的语义 token 守恒漂移。
 fn render_single_html_packet(mail: &MboxMail, index: usize, total: usize) -> String {
     let separator = mail_separator(index, total);
     let subject = mail.email.subject.as_deref().unwrap_or("");
+    let rendered = eml::render_html(&mail.email);
+    let fragment = extract_html_body_fragment(&rendered);
     format!(
-        "<!DOCTYPE html><html><head><meta charset=\"utf-8\"></head><body><h3>{separator} {subject}</h3>{}</body></html>",
-        eml::render_html(&mail.email)
+        "<!DOCTYPE html><html><head><meta charset=\"utf-8\"></head><body><h3>{separator} {subject}</h3>{fragment}</body></html>"
     )
+}
+
+/// 提取渲染结果 `<body>…</body>` 之间的片段；找不到标记时回退原文。
+fn extract_html_body_fragment(rendered: &str) -> &str {
+    let lowered_start = rendered.to_ascii_lowercase();
+    let Some(start) = lowered_start.find("<body") else {
+        return rendered;
+    };
+    let Some(open_end) = rendered[start..].find('>') else {
+        return rendered;
+    };
+    let body_start = start + open_end + 1;
+    let Some(end) = lowered_start.rfind("</body>") else {
+        return rendered;
+    };
+    if end < body_start {
+        return rendered;
+    }
+    &rendered[body_start..end]
 }
 
 async fn run_qpdf_merge(qpdf: &EngineIdentity, inputs: &[PathBuf], output: &Path) -> Result<()> {
