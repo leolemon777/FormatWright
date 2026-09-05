@@ -81,6 +81,18 @@ for s in wav flac mp3 m4a ogg opus; do for t in m4a mp3 wav; do
   [ "$s" = "$t" ] && continue
   run "sample.$s" "$t"
 done; done
+# email family (builtin adapters; regresses the immediate-path report persistence)
+printf 'From: a@example.org
+To: b@example.org
+Subject: Matrix EML 440010147700
+Content-Type: text/plain
+
+ELECTRIC body 998877.
+' > "$FX/sample.eml"
+for t in txt html; do run sample.eml "$t"; done
+if [ -f "$FX/sample.msg" ] || { cp "/e/Desktop/FormatWright/target/c2-msg/real.msg" "$FX/sample.msg" 2>/dev/null; [ -f "$FX/sample.msg" ]; }; then
+  for t in txt html pdf; do run sample.msg "$t"; done
+fi
 # archives
 run sample.zip tar.gz
 echo "=== matrix summary: $pass pass / $fail fail / $n total ==="

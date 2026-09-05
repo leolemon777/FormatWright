@@ -207,9 +207,9 @@ pub(crate) fn supported_targets(input: Option<&str>) -> BTreeSet<&'static str> {
         "pptx" | "xlsx" | "ods" | "odp" | "rtf" | "svg" => &["pdf"],
         "md" | "markdown" | "html" | "htm" | "txt" | "text" => &["pdf", "docx", "epub"],
         "zip" => &["tar.gz", "7z"],
-        // EML 邮件导出走内置 formatwright.eml 适配器（txt/html）；
-        // pdf 由主链路经 html→pdf 完成，不在此声明。
-        "eml" => &["txt", "html"],
+        // EML/MSG 邮件导出走内置适配器（formatwright.eml /
+        // formatwright.msg）；pdf/docx/epub 由主链路经 html→* 完成。
+        "eml" | "msg" => &["txt", "html"],
         "tar.gz" => &["zip", "7z"],
         "7z" => &["zip", "tar.gz"],
         "png" | "jpg" | "jpeg" => &["webp", "avif", "tiff", "bmp", "pdf", "txt"],
@@ -263,7 +263,7 @@ pub(crate) fn required_engines(input: Option<&str>, target: &str) -> Vec<String>
     {
         return Vec::new();
     }
-    if input == "eml" && matches!(target.as_str(), "txt" | "html") {
+    if matches!(input, "eml" | "msg") && matches!(target.as_str(), "txt" | "html") {
         return Vec::new();
     }
     if input == "pdf" && matches!(target.as_str(), "jpg" | "png") {

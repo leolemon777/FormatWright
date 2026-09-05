@@ -177,7 +177,7 @@ fn first_body(part: &mailparse::ParsedMail, mimetype: &str) -> Option<String> {
 }
 
 /// 检测 HTML body 是否引用远程资源（http/https/协议相对 URL）。
-fn contains_remote_reference(html: &str) -> bool {
+pub(crate) fn contains_remote_reference(html: &str) -> bool {
     let lowered = html.to_ascii_lowercase();
     ["src=\"", "src='", "href=\"", "href='", "src=", "href="]
         .iter()
@@ -501,7 +501,7 @@ pub async fn execute_eml_export(probe: &Probe, plan: &Plan) -> Result<(PathBuf, 
         "html" => render_html(&email),
         _ => render_txt(&email),
     };
-    fs::write(&output, rendered).map_err(|error| {
+    fs::write(&output, rendered.as_str()).map_err(|error| {
         FormatWrightError::new(
             ErrorCode::ExecutionFailed,
             Stage::Execute,
@@ -517,7 +517,7 @@ pub async fn execute_eml_export(probe: &Probe, plan: &Plan) -> Result<(PathBuf, 
             return Err(error);
         }
     };
-    let report = validate_eml_export_output(probe, &output_probe, plan, Uuid::new_v4());
+    let report = validate_eml_export_output(probe, &output_probe, plan, Uuid::new_v4(), &rendered);
     if report.status == ValidationStatus::Fail {
         let _ = fs::remove_file(&output);
         return Err(FormatWrightError::new(
@@ -539,6 +539,7 @@ pub fn validate_eml_export_output(
     output: &Probe,
     plan: &Plan,
     job_id: Uuid,
+    rendered_output: &str,
 ) -> ValidationReport {
     let target_format = plan.target_format.clone();
     let expected_output_format = if target_format == "html" {
@@ -579,7 +580,7 @@ pub fn validate_eml_export_output(
         // 输出 HTML 里不应出现未剥除的 script 标记（安全红线，必检）。
         checks.push(validation_check(
             "EML_HTML_SCRIPT_FREE",
-            status(!output_html_has_script(input, plan)),
+            status(!rendered_output.to_ascii_lowercase().contains("<script")),
             json!("no <script"),
             json!("checked"),
             "The exported HTML contains no <script> element.",
@@ -616,18 +617,6 @@ pub fn validate_eml_export_output(
             metadata_values_redacted: true,
         },
     }
-}
-
-fn output_html_has_script(input: &Probe, plan: &Plan) -> bool {
-    let email = parse_eml_file(&input.artifact.canonical_path).ok();
-    let rendered = email.as_ref().map(|email| {
-        if plan.target_format == "html" {
-            render_html(email)
-        } else {
-            render_txt(email)
-        }
-    });
-    rendered.is_some_and(|html| html.to_ascii_lowercase().contains("<script"))
 }
 
 fn property(probe: &Probe, name: &str) -> Value {
@@ -952,7 +941,7 @@ mod tests {
         let empty_probe = crate::document::inspect_document(&output)
             .await
             .expect("empty inspection");
-        let report = validate_eml_export_output(&probe, &empty_probe, &plan, Uuid::new_v4());
+        let report = validate_eml_export_output(&probe, &empty_probe, &plan, Uuid::new_v4(), "");
         assert!(
             report
                 .checks
@@ -966,7 +955,8 @@ mod tests {
         let text_probe = crate::document::inspect_document(&output)
             .await
             .expect("txt inspection");
-        let report = validate_eml_export_output(&probe, &text_probe, &plan, Uuid::new_v4());
+        let report =
+            validate_eml_export_output(&probe, &text_probe, &plan, Uuid::new_v4(), "sample text");
         assert_eq!(report.status, ValidationStatus::Pass);
         assert!(
             report
@@ -978,16 +968,13 @@ mod tests {
         // html 目标 → EML_HTML_SCRIPT_FREE 必检存在。
         let html_plan = plan_eml_export(&probe, directory.path().join("o.html"), &engine, "html")
             .expect("html plan");
-        fs::write(
-            directory.path().join("o.html"),
-            render_html(&parse_eml_bytes(SINGLE_PART.as_bytes()).expect("parse")),
-        )
-        .expect("html output");
+        let html = render_html(&parse_eml_bytes(SINGLE_PART.as_bytes()).expect("parse"));
+        fs::write(directory.path().join("o.html"), &html).expect("html output");
         let html_probe = crate::document::inspect_document(directory.path().join("o.html"))
             .await
             .expect("html inspection");
         let html_report =
-            validate_eml_export_output(&probe, &html_probe, &html_plan, Uuid::new_v4());
+            validate_eml_export_output(&probe, &html_probe, &html_plan, Uuid::new_v4(), &html);
         assert_eq!(html_report.status, ValidationStatus::Pass);
         assert!(
             html_report

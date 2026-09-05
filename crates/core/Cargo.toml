@@ -15,6 +15,7 @@ sevenz-rust.workspace = true
 fs2.workspace = true
 formatwright-engine-sdk = { version = "=0.1.0", path = "../engine-sdk" }
 image.workspace = true
+cfb.workspace = true
 mailparse.workspace = true
 quick-xml.workspace = true
 rusqlite.workspace = true

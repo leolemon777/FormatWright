@@ -76,6 +76,20 @@ pub async fn prepare_conversion(
         let plan = plan_docx_markup_export(&probe, output, &pandoc, &target)?;
         return Ok((probe, plan, pandoc));
     }
+    // MSG（Outlook）导出到 txt/html：内置 formatwright.msg 适配器
+    // （CFB→EML→EML 管线复用），无外部引擎；pdf/docx/epub 经链组合。
+    if matches!(target.as_str(), "txt" | "html")
+        && input
+            .extension()
+            .and_then(|value| value.to_str())
+            .is_some_and(|value| value.eq_ignore_ascii_case("msg"))
+    {
+        let engine = inspect_builtin_engine(crate::msg::MSG_ENGINE_ID).await?;
+        let probe = crate::msg::inspect_msg(input).await?;
+        let output = required_output(request, "MSG export")?;
+        let plan = crate::msg::plan_msg_export(&probe, output, &engine, &target)?;
+        return Ok((probe, plan, engine));
+    }
     // EML 邮件导出到 txt/html：纯 Rust 内置适配器，无外部引擎。
     if matches!(target.as_str(), "txt" | "html")
         && input

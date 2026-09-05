@@ -11,6 +11,7 @@ pub mod domain;
 pub mod eml;
 pub mod engine_pack;
 pub mod engine_registry;
+pub mod msg;
 pub use engine_registry::{EngineFallback, EngineRecovery, EngineRegistry, InstalledEngineVersion};
 mod edge_pdf;
 pub mod error;

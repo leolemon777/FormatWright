@@ -189,6 +189,29 @@ where
             )
             .with_diagnostic(serde_json::to_string(&report).unwrap_or_default()));
         }
+        // The built-in adapter mints a fresh report id; persistence requires
+        // the executing job's id.
+        report.job_id = job_id;
+        report.output.display_path = Some(output_path.to_string_lossy().into_owned());
+        return Ok(ExecutionResult {
+            output_path: path,
+            report,
+        });
+    }
+    if step.engine.engine_id == "formatwright.msg" {
+        let (path, mut report) = crate::msg::execute_msg_export(input, plan).await?;
+        let _ = observer(ExecutionMilestone::EngineFinished);
+        if report.status == ValidationStatus::Fail {
+            cleanup_partial(&path);
+            return Err(FormatWrightError::new(
+                ErrorCode::ValidationFailed,
+                Stage::Validate,
+                "MSG export failed validation",
+                "Inspect the validation report and adjust the source.",
+            )
+            .with_diagnostic(serde_json::to_string(&report).unwrap_or_default()));
+        }
+        report.job_id = job_id;
         report.output.display_path = Some(output_path.to_string_lossy().into_owned());
         return Ok(ExecutionResult {
             output_path: path,
