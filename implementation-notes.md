@@ -508,3 +508,19 @@ Rehearsal runs 2-4 (`release-candidate.yml`, workflow_dispatch) all failed at up
 - Attachments and recipient tables are intentionally dropped (mirrors the EML posture); the txt render carries the synthesized MIME housekeeping headers — cosmetic, inherited from the shared renderer.
 - Linux verification still parked on the Tailscale relay outage; cfb is pure Rust so CI's Linux test job exercises the unit layer regardless.
 - C3 (MBOX→single PDF) remains: MBOX split → per-mail EML lane → pdf-merge.
+
+## 2026-09-05 — C3: whole-mailbox MBOX export (the rival-absent combo)
+
+### Design
+- Built-in `formatwright.mbox` (`mbox.rs`): mboxrd split on envelope `From_` lines (one-level `>From` unescape; fail-closed with no envelope line, non-UTF-8, >1000 mails, or 256 MiB), every mail parsed through the shared EML pipeline.
+- **txt/html**: all mails rendered with `==== Anole Mail i/N ====` separators; checks = target format + every separator in the output + text nonempty (+ script-free for html).
+- **pdf**: per-mail sanitized HTML packets (separator + subject header inside) → each rides the html→pdf lane via the chain's prepare/execute pattern (own plans + receipts) → qpdf `--empty --pages … 1-z` merge → acceptance proves **page conservation** (pdfinfo: sum of per-mail pages == merged pages) and **every separator in the merged text layer** (pdftotext). The runner dispatch boxes the mbox→execute_plan→mbox recursion edge.
+
+### Verification
+- 6 unit tests (split/unescape, fail-closed ×2, single-mail round-trip, txt/html export+validate, remote-resource PolicyBlocked, pdf composite e2e that self-skips when engines are absent). core `--lib` 263 passed + 4 known symlink failures; fmt/clippy/deny clean.
+- Windows matrix **90/90** with a three-mail fixture (Chinese RFC 2047 subject, mboxrd escape, script-bearing HTML); the first run's three mbox FAILs were a stale debug binary — rebuilt and all Pass, including the merged PDF.
+- Route figure: **264 canonical = 138 direct + 126 chained** (`scripts/count_routes.py`).
+
+### Risks / Follow-up
+- mboxcl/mboxo variants beyond one-level `>From` unescape are not distinguished; Content-Length-based splits unsupported (mboxrd is the dominant modern dialect).
+- The whole C batch (C1/C2/C3) still awaits the Linux-side matrix run — relay outage persists.
