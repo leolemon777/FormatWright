@@ -22,7 +22,7 @@ axum = "0.8"
 blake3 = "1"
 clap = { version = "4", features = ["derive", "env"] }
 csv = "1.4.0"
-ed25519-dalek = "2"
+ed25519-dalek = "3"
 fs2 = "0.4.3"
 image = { version = "=0.25.9", default-features = false, features = ["jpeg", "png"] }
 cfb = "0.14.0"
