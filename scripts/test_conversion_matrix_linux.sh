@@ -4,6 +4,7 @@ set -u
 SRC="${FW_SRC:-/home/leo/linux-runs/FormatWright/src}"
 FX="${FW_FIXTURES:-/home/leo/linux-runs/FormatWright/fixtures}"
 OUT="${FW_OUT:-/home/leo/linux-runs/FormatWright/out}"
+rm -rf "$OUT"
 mkdir -p "$FX" "$OUT"
 export PATH="$HOME/.cargo/bin:$HOME/miniforge/envs/ocr/bin:$PATH"
 export FORMATWRIGHT_ENGINE_PDFINFO="$HOME/miniforge/envs/ocr/bin/pdfinfo"
@@ -39,14 +40,17 @@ with tarfile.open('/home/leo/linux-runs/FormatWright/fixtures/sample.tar.gz','w:
 from PIL import Image, ImageDraw
 img = Image.new('RGB',(1240,1754),'white'); ImageDraw.Draw(img).text((100,200),'MATRIX IMAGE 440010147700',fill='black'); img.save('/home/leo/linux-runs/FormatWright/fixtures/sample.png'); img.save('/home/leo/linux-runs/FormatWright/fixtures/sample.jpg',quality=90)
 img.save('/home/leo/linux-runs/FormatWright/fixtures/sample.tiff'); img.save('/home/leo/linux-runs/FormatWright/fixtures/sample.bmp')
-open('/home/leo/linux-runs/FormatWright/fixtures/sample.eml','w').write('From: a@example.org
+import os
+def write_crlf(name, text):
+    open(f'/home/leo/linux-runs/FormatWright/fixtures/{name}','w',newline='').write(text.replace('\n', '\r\n'))
+write_crlf('sample.eml', '''From: a@example.org
 To: b@example.org
 Subject: Matrix EML 440010147700
 Content-Type: text/plain
 
 ELECTRIC body 998877.
-')
-open('/home/leo/linux-runs/FormatWright/fixtures/sample.mbox','w').write('From alice@example.org Fri Sep  4 10:00:00 2026
+''')
+write_crlf('sample.mbox', '''From alice@example.org Fri Sep  4 10:00:00 2026
 From: Alice <alice@example.org>
 Subject: First mail 440010147700
 
@@ -57,7 +61,7 @@ From: Carol <carol@example.org>
 Subject: Second mail MAIL2TOKEN
 
 Body two 552233.
-')
+''')
 import matplotlib; matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
