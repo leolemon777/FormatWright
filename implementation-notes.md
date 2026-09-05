@@ -488,3 +488,23 @@ Rehearsal runs 2-4 (`release-candidate.yml`, workflow_dispatch) all failed at up
 - RAW fixtures are 10 MB real camera files (f-spot/raw-samples, CCL) gated on presence in the matrix scripts; a smaller synthetic DNG would shrink CI-less test cycles.
 - CR3 (Canon) decode depends on the host ImageMagick build's raw support; declared but not e2e-tested (no fixture).
 - jpeg quality default 92 on the magick lane (encoder default) vs 85 on the ffmpeg lane — intentional per-engine defaults, documented in the plan constraints.
+
+## 2026-09-04 — C2: Outlook MSG input via the built-in CFB adapter
+
+### Design
+- New `formatwright.msg` builtin engine (`msg.rs`): the `cfb` crate (0.14, MIT) reads the compound document; root `__substg1.0_<tag><type>` streams supply transport headers (0x007D), subject (0x0037), sender (0x0C1A), submit FILETIME (0x0039 → hand-rolled RFC 2822), plain body (0x1000), HTML body (0x1013). A **single-part EML is synthesized** (body-describing transport headers dropped, our own Content-Type appended) and the entire EML pipeline is reused: RFC 2047 decoding, script/remote-resource sanitization, renderers, validation receipts. Direct targets txt/html; pdf/docx/epub compose through the html chain hop. Non-CFB or payload-less containers fail closed (`InputInvalid`).
+- Unit fixtures are synthesized with the cfb **writer** (structurally faithful root property streams); the e2e fixture is a real Outlook export (msg-extractor's multi-to.msg).
+
+### Bugs found by the work
+1. **Latent EML immediate-path bug**: builtin adapters mint a fresh report id, so `ReportService::save` rejected the executing job ("ValidationReport job ID does not match its destination"). EML carried this since its landing (matrix lacked eml rows; unit tests bypass persistence). Both eml and msg dispatches now rebind `report.job_id = job_id`; the matrix gained eml+msg rows to pin the path.
+2. **Vacuous EML script check**: `output_html_has_script` re-parsed the INPUT as EML, so non-EML callers always passed. `validate_eml_export_output` now takes the rendered output string.
+
+### Verification
+- Unit: 6 new msg tests (synthesis, plain-only selection, fail-closed, FILETIME math, txt/html export+validate, remote-resource PolicyBlocked) — core `--lib` 257 passed + 4 known symlink failures; workspace fmt/clippy/deny clean.
+- e2e with the real .msg: inspect reports `msg` with decoded from/subject/text-chars; msg→txt/html Pass, msg→pdf Pass through the `msg -> pdf via intermediate HTML` chain (fresh state-db per run — stale reservations from failed runs bite again).
+- **Windows matrix 87/87** (82 + eml×2 + msg×3). Route figure: **257 canonical = 135 direct + 122 chained** (`scripts/count_routes.py`).
+
+### Risks / Follow-up
+- Attachments and recipient tables are intentionally dropped (mirrors the EML posture); the txt render carries the synthesized MIME housekeeping headers — cosmetic, inherited from the shared renderer.
+- Linux verification still parked on the Tailscale relay outage; cfb is pure Rust so CI's Linux test job exercises the unit layer regardless.
+- C3 (MBOX→single PDF) remains: MBOX split → per-mail EML lane → pdf-merge.
