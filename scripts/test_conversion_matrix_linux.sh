@@ -35,6 +35,25 @@ with tarfile.open('/home/leo/linux-runs/FormatWright/fixtures/sample.tar.gz','w:
 from PIL import Image, ImageDraw
 img = Image.new('RGB',(1240,1754),'white'); ImageDraw.Draw(img).text((100,200),'MATRIX IMAGE 440010147700',fill='black'); img.save('/home/leo/linux-runs/FormatWright/fixtures/sample.png'); img.save('/home/leo/linux-runs/FormatWright/fixtures/sample.jpg',quality=90)
 img.save('/home/leo/linux-runs/FormatWright/fixtures/sample.tiff'); img.save('/home/leo/linux-runs/FormatWright/fixtures/sample.bmp')
+open('/home/leo/linux-runs/FormatWright/fixtures/sample.eml','w').write('From: a@example.org
+To: b@example.org
+Subject: Matrix EML 440010147700
+Content-Type: text/plain
+
+ELECTRIC body 998877.
+')
+open('/home/leo/linux-runs/FormatWright/fixtures/sample.mbox','w').write('From alice@example.org Fri Sep  4 10:00:00 2026
+From: Alice <alice@example.org>
+Subject: First mail 440010147700
+
+ELECTRIC body one 998877.
+
+From carol@example.org Fri Sep  4 11:00:00 2026
+From: Carol <carol@example.org>
+Subject: Second mail MAIL2TOKEN
+
+Body two 552233.
+')
 import matplotlib; matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
@@ -76,6 +95,12 @@ for s in tiff bmp; do for t in webp avif png; do run "sample.$s" "$t"; done; don
 run sample.png txt
 run sample.tiff txt
 run sample.bmp txt
+# email family (builtin adapters + chains; pdf needs the html->pdf lane)
+for t in txt html; do run sample.eml "$t"; done
+for t in txt html pdf; do run sample.mbox "$t"; done
+if [ -f "$FX/sample.msg" ]; then
+  for t in txt html pdf; do run sample.msg "$t"; done
+fi
 # PSD / camera-RAW through the discovered ImageMagick engine (opt-in:
 # install ImageMagick user-level and export FORMATWRIGHT_ENGINE_MAGICK).
 if command -v magick >/dev/null 2>&1 || [ -n "${FORMATWRIGHT_ENGINE_MAGICK:-}" ]; then
