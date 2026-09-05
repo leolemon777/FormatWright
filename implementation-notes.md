@@ -524,3 +524,22 @@ Rehearsal runs 2-4 (`release-candidate.yml`, workflow_dispatch) all failed at up
 ### Risks / Follow-up
 - mboxcl/mboxo variants beyond one-level `>From` unescape are not distinguished; Content-Length-based splits unsupported (mboxrd is the dominant modern dialect).
 - The whole C batch (C1/C2/C3) still awaits the Linux-side matrix run — relay outage persists.
+
+## 2026-09-05 — C batch Linux verification CLOSED (relay bypassed via LAN)
+
+### Outage diagnosis (Leo asked)
+- The box itself was healthy the whole time: uptime 2d15h, load ~0, LAN 3 ms, SSH fine. Only the **Tailscale data plane** was dead: control plane `active; relay "tok"` with `tx 9516 / rx 0`, `tailscale ping` no reply — the same fingerprint as the 2026-09-03 Clash-TUN-conflict outage (that one healed after a box reboot; this one never got one).
+- Fix applied: **no config touched** — the LAN alias `macair-wifi` (192.168.0.192) carries SSH directly; all Linux work now runs over it.
+
+### Fixes the Linux run itself surfaced
+1. **Nested-HTML drift (real bug)**: mbox per-mail packets embedded `render_html`'s full `<html>` document inside another `<html>` — on engine paths without a browser lane, html→pdf falls back to the pandoc lane whose DOCX intermediate failed semantic-token conservation. Windows never saw it (browser lane skips the DOCX hop). Fix: embed only the extracted `<body>` fragment (`ab28800`).
+2. Linux matrix script: CfT-chrome `FORMATWRIGHT_ENGINE_MSEDGE` export, PSD fixture via magick (PIL cannot write PSD), build without `--offline` (fresh cfb dep), out-dir cleanup (stale numbered outputs caused 30 OutputConflict), email fixtures via `newline=''` CRLF writer (shell heredoc had eaten the escapes).
+
+### Verification (Linux, via LAN)
+- **Core `--lib`: 255 passed / 0 failed** — includes the Windows-impossible symlink class and the mbox/MSG engine-dependent e2e (qpdf/poppler/pandoc/soffice 24.2.7.2/magick 7.1.2-31 all discovered; conda imagemagick install automated in the verify script).
+- **Conversion matrix: 52/52** — structured, markup→pdf via browser lane (CfT chrome), office/pdf→image, raster family incl. tiff/bmp/psd and OCR rows, email family (eml/mbox/msg incl. chained pdf), audio, archives.
+- Route surface cross-platform parity confirmed; CI green on all pushes (latest `b84b769`).
+
+### Follow-up
+- Tailscale data plane on the box still needs Leo's attention when convenient (LAN works; nothing blocked).
+- The 20-minute auto-probe automation is obsolete (verification closed) — deleted.
