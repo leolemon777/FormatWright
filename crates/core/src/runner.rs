@@ -219,7 +219,7 @@ where
         });
     }
     if step.engine.engine_id == "formatwright.mbox" {
-        let (path, mut report) =
+        let (path, report) =
             crate::mbox::execute_mbox_export(input, plan, job_id, cancellation).await?;
         let _ = observer(ExecutionMilestone::EngineFinished);
         if report.status == ValidationStatus::Fail {

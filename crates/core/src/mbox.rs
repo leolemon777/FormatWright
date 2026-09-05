@@ -25,6 +25,7 @@ const MAX_MBOX_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_MBOX_MAILS: usize = 1000;
 
 /// 一封从 MBOX 拆出的邮件：原始 EML 字节 + 解析结果。
+#[derive(Debug)]
 pub struct MboxMail {
     pub eml_bytes: Vec<u8>,
     pub email: ParsedEmail,
@@ -247,6 +248,7 @@ fn mail_separator(index: usize, total: usize) -> String {
 ///
 /// `Unsupported` for wrong input/target/engine, `PolicyBlocked` when any
 /// mail's HTML references remote resources under deny-all.
+#[allow(clippy::too_many_lines)]
 pub fn plan_mbox_export(
     probe: &Probe,
     output_path: PathBuf,
@@ -403,7 +405,6 @@ pub async fn execute_mbox_export(
         ));
     }
     let mails = parse_mbox_file(&probe.artifact.canonical_path)?;
-    let mail_count = mails.len();
     let parent = output.parent().ok_or_else(|| {
         FormatWrightError::new(
             ErrorCode::InputInvalid,
@@ -467,8 +468,8 @@ async fn run_mbox_export(
             move || std::fs::write(&output, rendered)
         })
         .await
-        .map_err(worker_error)?
-        .map_err(write_error)?;
+        .map_err(|error| worker_error(&error))?
+        .map_err(|error| write_error(&error))?;
         let output_probe = match crate::document::inspect_document(output).await {
             Ok(probe) => probe,
             Err(error) => {
@@ -484,7 +485,7 @@ async fn run_mbox_export(
             plan,
             job_id,
             if target == "html" { "html" } else { "plain" },
-            output_probe.format.id.clone(),
+            &output_probe.format.id,
             output,
             None,
             None,
@@ -558,8 +559,8 @@ async fn execute_mbox_pdf(
             move || std::fs::write(&path, packet)
         })
         .await
-        .map_err(worker_error)?
-        .map_err(write_error)?;
+        .map_err(|error| worker_error(&error))?
+        .map_err(|error| write_error(&error))?;
         let pdf_path = staging.join(format!("mail-{index}.pdf"));
         let request = PlanRequest {
             target_format: "pdf".to_owned(),
@@ -597,7 +598,7 @@ async fn execute_mbox_pdf(
         plan,
         job_id,
         "pdf",
-        merged_probe.format.id.clone(),
+        &merged_probe.format.id,
         &merged,
         Some(expected_pages),
         Some(observed_pages),
@@ -719,13 +720,13 @@ async fn extract_pdf_text(path: &Path, pdftotext: &EngineIdentity) -> Result<Str
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn build_mbox_report(
     mails: &[MboxMail],
     plan: &Plan,
     job_id: Uuid,
     expected_format: &str,
-    observed_format: String,
+    observed_format: &str,
     output: &Path,
     expected_pages: Option<usize>,
     observed_pages: Option<usize>,
@@ -823,7 +824,7 @@ fn check(
     }
 }
 
-fn worker_error(error: tokio::task::JoinError) -> FormatWrightError {
+fn worker_error(error: &tokio::task::JoinError) -> FormatWrightError {
     FormatWrightError::new(
         ErrorCode::Internal,
         Stage::Execute,
@@ -833,7 +834,7 @@ fn worker_error(error: tokio::task::JoinError) -> FormatWrightError {
     .with_diagnostic(error.to_string())
 }
 
-fn write_error(error: std::io::Error) -> FormatWrightError {
+fn write_error(error: &std::io::Error) -> FormatWrightError {
     FormatWrightError::new(
         ErrorCode::ExecutionFailed,
         Stage::Execute,
@@ -845,8 +846,6 @@ fn write_error(error: std::io::Error) -> FormatWrightError {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
-
     use tempfile::TempDir;
 
     use super::{MBOX_ENGINE_ID, split_mbox_bytes};
